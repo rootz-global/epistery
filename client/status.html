@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <link rel="icon" href="favicon.ico">
+    <script type="module" lang="javascript">
+        import DataWallet from '/.epistery/lib/DataWallet.js';
+        (async ()=>{
+            const dataWallet = await DataWallet.connect();
+            await dataWallet.writeEvent({event:'pageload',url:location.href,domain:location.hostname});
+            const localWalletAddress = document.querySelector('#local-wallet-address');
+            localWalletAddress.innerHTML = dataWallet.client.wallet.address;
+        })()
+    </script>
+</head>
+<body>
+<h2>Data Wallet for {{domain}}</h2>
+<p>Wallet Address: <b>{{wallet.address}}</b></p>
+<p>Provider: <b>{{provider.name}}</b></p>
+<h2>Local Wallet</h2>
+<p>Address: <b><span id="local-wallet-address"></span></b></p>
+</body>
+</html>
