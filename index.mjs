@@ -33,10 +33,10 @@ export default class Epistery {
   async setDomain(domain) {
     this.domain = await this.config.loadDomain(domain);
     if (this.domain.provider) {
-      this.rpc = new JsonRpcProvider(dw.config.data.provider.rpc);
+      this.rpc = new JsonRpcProvider(this.domain.provider.rpc);
     }
-    if (this.config.domain.wallet && this.rpc) {
-      this.wallet = ethers.Wallet.fromPhrase(this.config.domain.wallet.mnemonic).connect(this.rpc);
+    if (this.domain.wallet && this.rpc) {
+      this.wallet = ethers.Wallet.fromPhrase(this.domain.wallet.mnemonic).connect(this.rpc);
     }
 
   }
