@@ -57,8 +57,8 @@ export default class Certify {
   }
 
   async getCert(servername, attempt = 0) {
-    if (this.epistery.config.domain.ssl) {
-      return this.epistery.config.domain.ssl.cert;
+    if (this.epistery.domain.ssl) {
+      return this.epistery.domain.ssl.cert;
     }
     if (servername in this.pending) {
       if (attempt >= 10) {
