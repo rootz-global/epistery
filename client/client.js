@@ -1,7 +1,8 @@
-import DataWallet from '/.data-wallet/lib/datawallet.js';
+import Witness from '/.epistery/lib/witness.js';
 
 (async ()=>{
-    const dataWallet = await DataWallet.connect();
-    await dataWallet.writeEvent({event:'pageload',url:location.href,domain:location.hostname});
-    window.DataWallet = DataWallet;
+  console.log('Client started');
+    const witness = await Witness.connect();
+    await witness.writeEvent({event:'pageload',url:location.href,domain:location.hostname});
+    window.witness = witness;
 })()

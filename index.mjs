@@ -3,10 +3,11 @@ import Config from './utils/Config.mjs';
 import TemplateText from './utils/TemplateText.mjs';
 import fs from "fs";
 import {resolve,join} from "path";
+import {ethers, JsonRpcProvider} from "ethers";
 
 const library = {
   "client.js": "client/client.js",
-  "DataWallet.js": "client/DataWallet.js",
+  "witness.js": "client/witness.js",
   "ethers.js": "node_modules/ethers/dist/ethers.js",
   "ethers.min.js": "node_modules/ethers/dist/ethers.min.js",
   "ethers.js.map": "node_modules/ethers/dist/ethers.js.map"
@@ -24,13 +25,6 @@ export default class Epistery {
     try {
       const epistery = new Epistery(options);
       await epistery.loadModules();
-
-      // if (dw.config.data.provider) {
-      //   dw.rpc = new JsonRpcProvider(dw.config.data.provider.rpc);
-      // }
-      // if (dw.config.data.wallet && dw.rpc) {
-      //   dw.wallet = ethers.Wallet.fromPhrase(dw.config.data.wallet.mnemonic).connect(dw.rpc);
-      // }
       return epistery;
     } catch (e) {
       console.log(e)
@@ -38,12 +32,19 @@ export default class Epistery {
   }
   async setDomain(domain) {
     this.domain = await this.config.loadDomain(domain);
+    if (this.domain.provider) {
+      this.rpc = new JsonRpcProvider(dw.config.data.provider.rpc);
+    }
+    if (this.config.domain.wallet && this.rpc) {
+      this.wallet = ethers.Wallet.fromPhrase(this.config.domain.wallet.mnemonic).connect(this.rpc);
+    }
+
   }
 
   async attach(app) {
     app.locals.epistery = this;
     app.use(async (req, res, next) => {
-      if (req.app.locals.epistery.domain !== req.hostname) {
+      if (req.app.locals.epistery.domain?.name !== req.hostname) {
         const epistery = app.locals.epistery;
         await app.locals.epistery.setDomain(req.hostname);
       }
@@ -88,6 +89,10 @@ export default class Epistery {
         publicKey: data.wallet.publicKey
       }
       res.status(200).json(body);
+    })
+    router.get('/favicon.ico', (req, res) => {
+      res.set('Content-Type','image/png');
+      res.sendFile(resolve('favicon.ico'));
     })
     router.get('/status', (req, res) => {
       let data = req.app.locals.epistery.config.data;

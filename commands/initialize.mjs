@@ -1,6 +1,6 @@
 import {ethers} from "ethers";
 
-export async function initialize(context,domain) {
+export async function initialize(context, domain) {
     if (domain) {
         await context.epistery.setDomain(domain);
         context.log(`Registering ${domain} ...`);

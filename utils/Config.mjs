@@ -30,7 +30,7 @@ export default class Config {
       const domainConfigDir = join(this.configDir, domain);
       const domainConfigFile = join(this.configDir, domain, 'config.ini');
       if (!fs.existsSync(domainConfigFile)) {
-        const text = ini.stringify(Object.assign({domain:domain},this.data.defaultDomainConfig));
+        const text = ini.stringify(Object.assign({name:domain},this.data.defaultDomainConfig));
         if (!fs.existsSync(domainConfigDir)) {
           fs.mkdirSync(domainConfigDir);
         }
@@ -50,7 +50,7 @@ export default class Config {
     if (!fs.existsSync(domainConfigDir)) {
       fs.mkdirSync(domainConfigDir);
     }
-    const text = ini.stringify(Object.assign({domain:domain},this.domains[domain]));
+    const text = ini.stringify(Object.assign({name:domain},this.domains[domain]));
     fs.writeFileSync(domainConfigFile, text);
   }
   load() {

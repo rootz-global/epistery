@@ -12,10 +12,14 @@
   },
   "license": "MIT",
   "author": "Michael Sprague",
-  "type": "commonjs",
+  "type": "module",
+  "bin": "./cli.mjs",
   "main": "index.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "debug": "node --env-file=.env --inspect=0.0.0.0:9229 server.mjs",
+    "start": "node --env-file=.env test/server.mjs",
+    "initialize": "node --env-file=.env cli.mjs initialize",
+    "certify": "node --env-file=.env cli.mjs certify"
   },
   "dependencies": {
     "@parity/revive": "^0.0.21",
