@@ -10,7 +10,6 @@ export class CreateController extends Controller {
       mnemonic: wallet.mnemonic?.phrase || '',
       publicKey: wallet.publicKey,
       privateKey: wallet.privateKey,
-      signingKey: wallet.signingKey
     };
     const clientCookie = {
       wallet: walletInfo

@@ -52,7 +52,7 @@ export class WriteController extends Controller {
       }
 
       // Use either user-given wallet or a generated data-wallet 
-      let clientWallet: ethers.HDNodeWallet | ethers.Wallet;
+      let clientWallet: ethers.Wallet;
       let clientWalletInfo: any;
       
       if (data.wallet && data.wallet.privateKey) {
@@ -64,10 +64,9 @@ export class WriteController extends Controller {
         clientWallet = ethers.Wallet.createRandom();
         clientWalletInfo = {
           address: clientWallet.address,
-          mnemonic: (clientWallet as ethers.HDNodeWallet).mnemonic?.phrase || '',
-          publicKey: clientWallet.signingKey.publicKey,
+          mnemonic: (clientWallet as ethers.Wallet).mnemonic?.phrase || '',
+          publicKey: clientWallet.publicKey,
           privateKey: clientWallet.privateKey,
-          signingKey: clientWallet.signingKey
         };
         console.log('Generated new wallet:', clientWallet.address);
       }
@@ -78,8 +77,8 @@ export class WriteController extends Controller {
       
       // Create message hash and sign it
       const dataString = JSON.stringify(data);
-      const messageHash = ethers.keccak256(ethers.toUtf8Bytes(dataString));
-      const signature = await clientWallet.signMessage(ethers.getBytes(messageHash));
+      const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString));
+      const signature = await clientWallet.signMessage(messageHash);
 
       // Create the JSON object to store in IPFS
       const ipfsData = {

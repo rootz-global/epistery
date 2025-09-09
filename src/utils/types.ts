@@ -9,7 +9,6 @@ export interface WalletConfig {
   mnemonic: string;
   publicKey: string;
   privateKey: string;
-  signingKey: any;
 }
 
 export interface DomainConfig {

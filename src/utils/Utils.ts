@@ -4,9 +4,9 @@ import { DomainConfig, WalletConfig } from './types';
 
 export class Utils {
   private static config: Config;
-  private static serverWallet: ethers.HDNodeWallet | null = null;
+  private static serverWallet: ethers.Wallet| null = null;
 
-  public static InitServerWallet(domain: string = 'localhost'): ethers.HDNodeWallet | null {
+  public static InitServerWallet(domain: string = 'localhost'): ethers.Wallet | null {
     try {
       if (!this.config) {
         this.config = new Config();
@@ -23,7 +23,6 @@ export class Utils {
           mnemonic: wallet.mnemonic?.phrase || '',
           publicKey: wallet.publicKey,
           privateKey: wallet.privateKey,
-          signingKey: wallet.signingKey
         };
 
         const newDomainConfig: DomainConfig = {
@@ -40,8 +39,8 @@ export class Utils {
       }
 
       if (domainConfig.wallet) {
-        const provider = new ethers.JsonRpcProvider(domainConfig.provider?.rpc || this.config.data.provider.rpc);
-        this.serverWallet = ethers.Wallet.fromPhrase(domainConfig.wallet.mnemonic).connect(provider);
+        const provider = new ethers.providers.JsonRpcProvider(domainConfig.provider?.rpc || this.config.data.provider.rpc);
+        this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(provider);
         
         console.log(`Server wallet initialized for domain: ${domain}`);
         console.log(`Wallet address: ${domainConfig.wallet.address}`);
@@ -57,7 +56,7 @@ export class Utils {
     }
   }
 
-  public static GetServerWallet(): ethers.HDNodeWallet | null {
+  public static GetServerWallet(): ethers.Wallet | null {
     return this.serverWallet;
   }
 
