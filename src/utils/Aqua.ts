@@ -1,6 +1,10 @@
 import Aquafier, { CredentialsData, Result, FileObject, AquaTreeWrapper, AquaOperationData, LogData, OkResult, AquaTree } from "aqua-js-sdk";
 import { ClientWalletInfo } from "./types";
 
+/**
+  * Function for signing data with AQUA Protocol.
+  * Creates an entire AQUA Tree with verifiable revisions.
+  */
 export const Aquafy = async (obj: string, clientWallet:ClientWalletInfo):Promise<AquaTree | undefined> => {
   try {
     console.log("Starting Aquafier process...");
@@ -11,7 +15,7 @@ export const Aquafy = async (obj: string, clientWallet:ClientWalletInfo):Promise
       fileContent: obj,
       path: ""
     }
-
+    
     const genResult = await createGenesisRevisions(aq, file);
     if (!genResult)
       return undefined;
@@ -21,7 +25,8 @@ export const Aquafy = async (obj: string, clientWallet:ClientWalletInfo):Promise
       return undefined;
     }
 
-    // Step 2: Link trees
+    // Allows for linkage of multiple blobs of data together
+    // Commented out for now since we're only signing individual strings
     /* const linkResult = await linkTrees(aq, genResult);
     if (!linkResult) return;
 
@@ -30,22 +35,23 @@ export const Aquafy = async (obj: string, clientWallet:ClientWalletInfo):Promise
       return;
     } */
 
-    // Step 3: Sign tree
     const creds: CredentialsData = {
       mnemonic: clientWallet.mnemonic,
       nostr_sk: "",
       did_key: "",
-      alchemy_key: "",
+      alchemy_key: "", // Needed if using the Witness function
       witness_eth_network: "sepolia",
       witness_method: "cli"
     };
+
     const signResult = await signTree(aq, genResult.data.aquaTree!, file, creds);
     if (!signResult || signResult?.isErr()) {
       console.error("Error while processing witness result.");
       return undefined;
     }
 
-    // Step 4: Witness tree (Has Gas Fees)
+    // Commenting out for now (demo purposes)
+    // Needs a wallet to pay gas fees or use an Alchemy key
     /* const witnessResult = await witnessTree(aq, signResult, file, creds);
     if (witnessResult.isErr()) {
       console.error("Error while processing witness result.");
