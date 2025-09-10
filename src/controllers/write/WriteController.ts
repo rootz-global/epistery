@@ -1,14 +1,16 @@
 import { Request, Response } from 'express';
 import { Controller } from '@baseController';
 import { ethers } from 'ethers';
-import { Utils } from '@utils';
+import { ClientWalletInfo, Utils, WalletConfig } from '@utils';
+import { Aquafy } from '@utils/Aqua';
+import { AquaTree } from 'aqua-js-sdk';
 
 export class WriteController extends Controller {
-  private ipfsApiUrl: string;
+  private ipfsApiUrl: string | undefined;
 
   constructor() {
     super();
-    this.ipfsApiUrl = 'http://127.0.0.1:5001/api/v0';
+    this.ipfsApiUrl = process.env.IPFS_URL ?? 'http://127.0.0.1:5001/api/v0';
     this.initIPFS();
   }
 
@@ -53,7 +55,7 @@ export class WriteController extends Controller {
 
       // Use either user-given wallet or a generated data-wallet 
       let clientWallet: ethers.Wallet;
-      let clientWalletInfo: any;
+      let clientWalletInfo:ClientWalletInfo;
       
       if (data.wallet && data.wallet.privateKey) {
         clientWalletInfo = data.wallet;
@@ -72,17 +74,25 @@ export class WriteController extends Controller {
       }
       
       // Get server info
-      const domain = process.env.SERVER_DOMAIN || 'localhost';
-      const serverWallet = Utils.GetDomainInfo(domain)?.wallet;
+      const domain:string = process.env.SERVER_DOMAIN || 'localhost';
+      const serverWallet:WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+
+      // Aquafy the message
+      const dataString:string = JSON.stringify(data);
+      const aquaTree:AquaTree | undefined = await Aquafy(dataString, clientWalletInfo);
+      
+      if (aquaTree === undefined) {
+        return this.sendError(res, "Aqua Tree is undefined.", 400);
+      }
       
       // Create message hash and sign it
-      const dataString = JSON.stringify(data);
-      const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString));
+      const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(JSON.stringify(aquaTree)));
       const signature = await clientWallet.signMessage(messageHash);
 
       // Create the JSON object to store in IPFS
       const ipfsData = {
         data: data,
+        aquaTree: aquaTree,
         signature: signature,
         messageHash: messageHash,
         client: {
@@ -104,6 +114,7 @@ export class WriteController extends Controller {
       if (result?.Hash) {
         const response = {
           success: true,
+          aquaTree: aquaTree,
           ipfsHash: result.Hash,
           dataSize: jsonString.length,
           signature: signature,

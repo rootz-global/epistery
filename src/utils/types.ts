@@ -20,3 +20,10 @@ export interface DomainConfig {
 export interface RootConfig {
   provider: ProviderConfig;
 }
+
+export interface ClientWalletInfo {
+  address: string,
+  mnemonic: string,
+  publicKey: string,
+  privateKey: string,
+}
