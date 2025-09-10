@@ -9,14 +9,14 @@ export class StatusController extends Controller {
     const domain: string = (process.env.SERVER_DOMAIN) as string;
     const serverWallet = Utils.GetDomainInfo(domain)?.wallet;
     const config = Utils.GetConfig();
-    
+
     const statusObj = {
       server: {
         walletAddress: serverWallet?.address,
         publicKey: serverWallet?.publicKey,
-        provider: config.data.provider.name,
-        chainId: config.data.provider.chainId,
-        rpc: config.data.provider.rpc
+        provider: config.activeDomain.provider?.name,
+        chainId: config.activeDomain.provider?.chainId,
+        rpc: config.activeDomain.provider?.rpc
       },
       client: {
         walletAddress: clientCookie?.wallet?.address,
@@ -24,7 +24,7 @@ export class StatusController extends Controller {
       },
       timestamp: new Date().toISOString()
     }
-    
-    this.sendResponse(res, statusObj); 
+
+    this.sendResponse(res, statusObj);
   }
 }

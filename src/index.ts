@@ -9,12 +9,19 @@ import { WriteController } from '@controllers/write/WriteController';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// init server-side wallet that reads from HOME/.data-wallet
-const domain: string = (process.env.SERVER_DOMAIN) as string;
-Utils.InitServerWallet(domain);
 
 app.use(express.json());
 app.use(cookieParser());
+
+// attach to the active domain. The domain is declared by context not by the environment
+app.use(async (req, res, next) => {
+  if (req.app.locals.episteryConfig?.domain?.name !== req.hostname) {
+    req.app.locals.episteryConfig = Utils.GetConfig();
+    Utils.InitServerWallet(req.hostname);
+    await app.locals.episteryConfig.loadDomain(req.hostname);
+  }
+  next();
+})
 
 const createController = new CreateController();
 const statusController = new StatusController();
