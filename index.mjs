@@ -3,28 +3,19 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Epistery } from './dist/epistery.js';
+import { Utils } from './dist/utils/Utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Domain storage for multi-tenant support
-const domains = {};
-
-// Helper function to create domain configurations
-function createDomainConfig(domain) {
-  if (!domains[domain]) {
-    const wallet = Epistery.createWallet();
-    domains[domain] = {
-      name: domain,
-      wallet: wallet,
-      provider: {
-        name: 'local-testnet',
-        chainId: 31337,
-        rpc: 'http://localhost:8545'
-      }
-    };
+// Helper function to get or create domain configurations src/utils/Config.ts system
+function getDomainConfig(domain) {
+  let domainConfig = Utils.GetDomainInfo(domain);
+  if (!domainConfig) {
+    Utils.InitServerWallet(domain);
+    domainConfig = Utils.GetDomainInfo(domain);
   }
-  return domains[domain];
+  return domainConfig;
 }
 
 export default class EpisteryAttach {
@@ -40,8 +31,7 @@ export default class EpisteryAttach {
   }
 
   async setDomain(domain) {
-    // Create domain config using the helper function
-    this.domain = createDomainConfig(domain);
+    this.domain = getDomainConfig(domain);
   }
 
   async attach(app) {
@@ -139,7 +129,7 @@ export default class EpisteryAttach {
         }
 
         // Set the domain for the write operation
-        process.env.SERVER_DOMAIN = req.hostname;
+        //process.env.SERVER_DOMAIN = req.hostname;
         
         const result = await Epistery.write(clientWalletInfo, data);
         if (!result) {

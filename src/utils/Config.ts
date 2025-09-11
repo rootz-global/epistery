@@ -48,6 +48,7 @@ export class Config {
   public get activeDomain() {
     return this.domains[this._activeDomain];
   }
+
   public loadDomain(domain: string): DomainConfig | null {
     try {
       this._activeDomain = domain;
