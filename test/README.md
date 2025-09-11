@@ -1,40 +1,24 @@
 # Epistery Test Site
 
-This directory contains a demonstration of how external websites can integrate Epistery functionality using simple script tags.
+This directory contains a demonstration of how external websites can integrate Epistery functionality using simple <script> tags.
 
 ## How it works
 
-1. The main Epistery server runs on port 3000 and provides the `/.epistery` routes
-2. This test server runs on port 3001 and simulates an external website
-3. The test server proxies `/.epistery` requests to the main server
-4. The HTML pages use ES6 modules to import the Epistery client library
+1. This test server runs on port 3001 and demonstrates a self-contained Epistery integration
+2. The Epistery functionality is built directly into this Express.js app using `epistery.attach(app)`
+3. No external server or proxying required - all `/.epistery` routes are served directly
+4. The HTML pages use ES6 modules to import the Epistery client library from the integrated routes
 
 ## Running the test
 
-1. Start the main Epistery server:
+1. Start the Test App:
    ```bash
-   cd ..
-   npm run dev
-   ```
-
-2. In a new terminal, start the test server:
-   ```bash
-   cd test
-   npm install
    npm start
    ```
 
-3. Open your browser to:
-   - http://localhost:3001 - Main test page
-   - http://localhost:3001/about - About page with automatic event logging
-
-## What this demonstrates
-
-- **Easy Integration**: External websites can add Epistery by simply including script tags
-- **Automatic Routes**: The `/.epistery` routes are automatically available
-- **Client Wallet**: Each visitor gets a local wallet for signing data
-- **Data Writing**: Events can be written to IPFS with cryptographic signatures
-- **Cross-page Tracking**: Epistery works across different pages of a website
+2. Open your browser to:
+   - http://localhost:3001 - Main (mock) test page
+   - http://localhost:3001/.epistery/status - Epistery Status page
 
 ## Real-world Usage
 

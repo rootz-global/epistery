@@ -61,7 +61,7 @@ export default class Witness {
       
       if (result.ok) {
         const response = await result.json();
-        this.client = response.wallet; // Extract wallet from {wallet: ...} response
+        this.client = response.wallet;
         this.save();
       }
     } catch (e) {

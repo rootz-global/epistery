@@ -1,7 +1,7 @@
 /*
  * Epistery Client Library
  * 
- * Main client library that can be included via script tag
+ * Main client library that can be included via <script> tag
  * Provides easy access to Epistery functionality
  */
 

@@ -2,15 +2,10 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { ethers } from 'ethers';
 import { Epistery } from './dist/epistery.js';
-import { Utils } from './dist/utils/Utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Import your actual controllers and utilities
-// For now, we'll create a bridge to your TypeScript functionality
 
 // Domain storage for multi-tenant support
 const domains = {};
@@ -52,7 +47,6 @@ export default class EpisteryAttach {
   async attach(app) {
     app.locals.epistery = this;
     
-    // Domain middleware
     app.use(async (req, res, next) => {
       if (req.app.locals.epistery.domain?.name !== req.hostname) {
         await req.app.locals.epistery.setDomain(req.hostname);
@@ -98,7 +92,6 @@ export default class EpisteryAttach {
       res.sendFile(modulePath);
     });
 
-    // Status page (HTML) - moved from /status.html to /status
     router.get('/status', (req, res) => {
       const domain = req.hostname;
       const serverWallet = this.domain;
@@ -120,7 +113,7 @@ export default class EpisteryAttach {
       res.send(template);
     });
 
-    // API Routes - Using your epistery.ts equivalent functions
+    // API routes using the 'src/epistery.ts' defined functions
     router.get('/api/status', (req, res) => {
       const serverWallet = this.domain;
       
@@ -137,7 +130,6 @@ export default class EpisteryAttach {
       res.json({ wallet });
     });
 
-    // This now uses your epistery.ts write function equivalent
     router.post('/data/write', express.json(), async (req, res) => {
       try {
         const { clientWalletInfo, data } = req.body;
@@ -149,9 +141,7 @@ export default class EpisteryAttach {
         // Set the domain for the write operation
         process.env.SERVER_DOMAIN = req.hostname;
         
-        // Use the actual Epistery class from your TypeScript implementation
         const result = await Epistery.write(clientWalletInfo, data);
-        
         if (!result) {
           return res.status(500).json({ error: 'Write operation failed' });
         }
