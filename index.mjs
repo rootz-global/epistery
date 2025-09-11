@@ -3,80 +3,50 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { ethers } from 'ethers';
+import { Epistery } from './dist/epistery.js';
+import { Utils } from './dist/utils/Utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Simple in-memory storage for demo purposes
+// Import your actual controllers and utilities
+// For now, we'll create a bridge to your TypeScript functionality
+
+// Domain storage for multi-tenant support
 const domains = {};
-const clients = {};
 
-class EpisteryClient {
-  static createWallet() {
-    const wallet = ethers.Wallet.createRandom();
-    return {
-      address: wallet.address,
-      mnemonic: wallet.mnemonic?.phrase || '',
-      publicKey: wallet.publicKey,
-      privateKey: wallet.privateKey,
+// Helper function to create domain configurations
+function createDomainConfig(domain) {
+  if (!domains[domain]) {
+    const wallet = Epistery.createWallet();
+    domains[domain] = {
+      name: domain,
+      wallet: wallet,
+      provider: {
+        name: 'local-testnet',
+        chainId: 31337,
+        rpc: 'http://localhost:8545'
+      }
     };
   }
-
-  static async writeEvent(clientWalletInfo, data) {
-    // Create real wallet from client info
-    const clientWallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic);
-    
-    // Create message hash and sign it
-    const dataString = JSON.stringify(data);
-    const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString));
-    const signature = await clientWallet.signMessage(messageHash);
-
-    // Simulate IPFS storage (in real implementation, this would upload to IPFS)
-    const mockHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString + Date.now())).slice(2, 48);
-    
-    const result = {
-      data: data,
-      signature: signature,
-      messageHash: messageHash,
-      client: {
-        address: clientWallet.address,
-        publicKey: clientWalletInfo.publicKey
-      },
-      timestamp: new Date().toISOString(),
-      signedBy: clientWallet.address,
-      ipfsHash: mockHash,
-      ipfsUrl: `https://ipfs.io/ipfs/${mockHash}`,
-    };
-
-    return result;
-  }
+  return domains[domain];
 }
 
-export default class Epistery {
+export default class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
-    this.rootDir = path.resolve('.');
     this.domain = null;
   }
 
   static async connect(options) {
-    const epistery = new Epistery(options);
-    return epistery;
+    const attach = new EpisteryAttach(options);
+    await Epistery.initialize();
+    return attach;
   }
 
   async setDomain(domain) {
-    if (!domains[domain]) {
-      domains[domain] = {
-        name: domain,
-        wallet: EpisteryClient.createWallet(),
-        provider: {
-          name: 'local-testnet',
-          chainId: 31337,
-          rpc: 'http://localhost:8545'
-        }
-      };
-    }
-    this.domain = domains[domain];
+    // Create domain config using the helper function
+    this.domain = createDomainConfig(domain);
   }
 
   async attach(app) {
@@ -128,51 +98,8 @@ export default class Epistery {
       res.sendFile(modulePath);
     });
 
-    // API Routes
+    // Status page (HTML) - moved from /status.html to /status
     router.get('/status', (req, res) => {
-      const domain = req.hostname;
-      const serverWallet = this.domain;
-      
-      const status = {
-        server: {
-          walletAddress: serverWallet?.wallet?.address,
-          publicKey: serverWallet?.wallet?.publicKey,
-          provider: serverWallet?.provider?.name,
-          chainId: serverWallet?.provider?.chainId,
-          rpc: serverWallet?.provider?.rpc,
-          domain: domain
-        },
-        client: {},
-        timestamp: new Date().toISOString()
-      };
-
-      res.json(status);
-    });
-
-    router.get('/create', (req, res) => {
-      const wallet = EpisteryClient.createWallet();
-      res.json({ wallet });
-    });
-
-    router.post('/data/write', express.json(), async (req, res) => {
-      try {
-        const { clientWalletInfo, data } = req.body;
-        
-        if (!clientWalletInfo || !data) {
-          return res.status(400).json({ error: 'Missing clientWalletInfo or data' });
-        }
-
-        const result = await EpisteryClient.writeEvent(clientWalletInfo, data);
-        res.json(result);
-        
-      } catch (error) {
-        console.error('Write error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // HTML status page
-    router.get('/status.html', (req, res) => {
       const domain = req.hostname;
       const serverWallet = this.domain;
       
@@ -191,6 +118,50 @@ export default class Epistery {
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
       
       res.send(template);
+    });
+
+    // API Routes - Using your epistery.ts equivalent functions
+    router.get('/api/status', (req, res) => {
+      const serverWallet = this.domain;
+      
+      if (!serverWallet) {
+        return res.status(500).json({ error: 'Server wallet not found' });
+      }
+
+      const status = Epistery.getStatus({}, serverWallet);
+      res.json(status);
+    });
+
+    router.get('/create', (req, res) => {
+      const wallet = Epistery.createWallet();
+      res.json({ wallet });
+    });
+
+    // This now uses your epistery.ts write function equivalent
+    router.post('/data/write', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, data } = req.body;
+        
+        if (!clientWalletInfo || !data) {
+          return res.status(400).json({ error: 'Missing clientWalletInfo or data' });
+        }
+
+        // Set the domain for the write operation
+        process.env.SERVER_DOMAIN = req.hostname;
+        
+        // Use the actual Epistery class from your TypeScript implementation
+        const result = await Epistery.write(clientWalletInfo, data);
+        
+        if (!result) {
+          return res.status(500).json({ error: 'Write operation failed' });
+        }
+        
+        res.json(result);
+        
+      } catch (error) {
+        console.error('Write error:', error);
+        res.status(500).json({ error: error.message });
+      }
     });
 
     return router;

@@ -96,14 +96,14 @@ export class Epistery {
     const hash:string | undefined = await Epistery.addToIPFS(jsonString);
 
     ipfsData.ipfsHash = hash;
-    ipfsData.ipfsUrl = `https://ipfs.io/ipfs/${hash}`;
+    ipfsData.ipfsUrl = `http://localhost:8080/ipfs/${hash}`;
     
     return ipfsData;
   }
 
   private static async initIPFS(): Promise<void> {
     try {
-      console.log("IPFS Node URL:", process.env.IPFS_URL);
+      console.log("IPFS Node URL:", Epistery.ipfsApiUrl);
       const response = await fetch(`${Epistery.ipfsApiUrl}/id`, { method: 'POST' });
       if (!response.ok) {
         console.error('IPFS node not responding properly');

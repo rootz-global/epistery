@@ -32,7 +32,7 @@ export default class Witness {
     witness.load();
     
     try {
-      let result = await fetch('/.epistery/status', {
+      let result = await fetch('/.epistery/api/status', {
         method: 'GET',
         credentials: 'include',
         headers: {'Content-Type': 'application/json'}
@@ -60,7 +60,8 @@ export default class Witness {
       });
       
       if (result.ok) {
-        this.client = await result.json();
+        const response = await result.json();
+        this.client = response.wallet; // Extract wallet from {wallet: ...} response
         this.save();
       }
     } catch (e) {

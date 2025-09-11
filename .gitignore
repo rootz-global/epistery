@@ -19,3 +19,4 @@ package-lock\.json
 .vscode/
 server.cert
 server.key
+dist/
