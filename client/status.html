@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <link rel="icon" href="/.epistery/favicon.ico">
+    <title>Epistery Status - {{server.domain}}</title>
+    <script type="module">
+        import Witness from '/.epistery/lib/witness.js';
+        
+        (async () => {
+            try {
+                const witness = await Witness.connect();
+                await witness.writeEvent({
+                    event: 'pageload',
+                    url: location.href,
+                    domain: location.hostname,
+                    timestamp: new Date().toISOString()
+                });
+                
+                const status = witness.getStatus();
+                
+                // Update UI with client wallet info
+                if (status.client) {
+                    document.getElementById('local-wallet-address').textContent = status.client.address;
+                    document.getElementById('local-wallet-public-key').textContent = status.client.publicKey;
+                }
+                
+                // Update connection status
+                document.getElementById('connection-status').textContent = status.connected ? 'Connected' : 'Disconnected';
+                document.getElementById('connection-status').className = status.connected ? 'connected' : 'disconnected';
+                
+            } catch (error) {
+                console.error('Failed to initialize Epistery:', error);
+                document.getElementById('connection-status').textContent = 'Error';
+                document.getElementById('connection-status').className = 'error';
+            }
+        })();
+    </script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .status { padding: 10px; border-radius: 5px; font-weight: bold; }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .wallet-info { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
+        .address { font-family: monospace; word-break: break-all; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>Epistery Status</h1>
+    
+    <h2>Connection Status</h2>
+    <div id="connection-status" class="status">Connecting...</div>
+    
+    <h2>Server Wallet</h2>
+    <div class="wallet-info">
+        <p><strong>Domain:</strong> {{server.domain}}</p>
+        <p><strong>Address:</strong> <span class="address">{{server.walletAddress}}</span></p>
+        <p><strong>Provider:</strong> {{server.provider}}</p>
+        <p><strong>Chain ID:</strong> {{server.chainId}}</p>
+    </div>
+    
+    <h2>Local Client Wallet</h2>
+    <div class="wallet-info">
+        <p><strong>Address:</strong> <span id="local-wallet-address" class="address">Loading...</span></p>
+        <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading...</span></p>
+    </div>
+    
+    <h2>Timestamp</h2>
+    <p><strong>Generated:</strong> {{timestamp}}</p>
+</body>
+</html>
