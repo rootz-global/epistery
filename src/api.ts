@@ -1,14 +1,17 @@
+import * as dotenv from 'dotenv'
 import express, { Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import { Utils } from '@utils';
 import { CreateController } from '@controllers/create/CreateController';
 import { StatusController } from '@controllers/status/StatusController';
 import { WriteController } from '@controllers/write/WriteController';
+import { Epistery } from 'epistery';
 
+dotenv.config();
+Epistery.initialize();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 
 app.use(express.json());
 app.use(cookieParser());
