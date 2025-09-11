@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
-import { Controller } from '@baseController';
+import { Controller } from '../baseController.js';
 import { ethers } from 'ethers';
-import { ClientWalletInfo, EpisteryWrite, HashResult, Utils, WalletConfig } from '@utils';
-import { Aquafy } from '@utils/Aqua';
+import { ClientWalletInfo, EpisteryWrite, HashResult, Utils, WalletConfig } from '../../utils/index.js';
+import { Aquafy } from '../../utils/Aqua.js';
 import { AquaTree } from 'aqua-js-sdk';
 import { Epistery } from 'epistery';
 

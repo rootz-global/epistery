@@ -4,8 +4,8 @@
   "description": "ExpressJS server with TypeScript",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && sed -i '' 's/@utils\\/Aqua/.\\/utils\\/Aqua.js/g' dist/epistery.js && sed -i '' 's/@utils/.\\/utils\\/index.js/g' dist/epistery.js",
-    "start": "npm run build && cd test && node server.mjs",
+    "build": "tsc",
+    "start": "npm run build && node test/server.mjs",
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts"
   },

@@ -3,10 +3,10 @@ import express, { Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import fs from 'fs';
-import { Utils } from '@utils';
-import { CreateController } from '@controllers/create/CreateController';
-import { StatusController } from '@controllers/status/StatusController';
-import { WriteController } from '@controllers/write/WriteController';
+import { Utils } from './utils/index.js';
+import { CreateController } from './controllers/create/CreateController.js';
+import { StatusController } from './controllers/status/StatusController.js';
+import { WriteController } from './controllers/write/WriteController.js';
 import { Epistery } from 'epistery';
 
 dotenv.config();

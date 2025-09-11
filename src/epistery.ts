@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, HashResult, Utils, WalletConfig } from '@utils';
+import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, HashResult, Utils, WalletConfig } from './utils/index.js';
 import { AquaTree } from 'aqua-js-sdk';
-import { Aquafy } from '@utils/Aqua';
+import { Aquafy } from './utils/Aqua.js';
 
 export class Epistery {
   private static ipfsApiUrl: string | undefined;

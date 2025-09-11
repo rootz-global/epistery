@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { Controller } from '@baseController';
-import { Config, ClientWalletInfo, Utils, DomainConfig } from '@utils';
+import { Controller } from '../baseController.js';
+import { Config, ClientWalletInfo, Utils, DomainConfig } from '../../utils/index.js';
 import { Epistery } from 'epistery';
 
 export class StatusController extends Controller {

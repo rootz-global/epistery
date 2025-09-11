@@ -13,13 +13,7 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "baseUrl": "./src",
-    "paths": {
-      "@controllers/*": ["controllers/*"],
-      "@baseController": ["controllers/baseController"],
-      "@utils": ["utils/index"],
-      "@utils/*": ["utils/*"]
-    }
+    "baseUrl": "./src"
   },
   "include": [
     "src/**/*"
