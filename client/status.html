@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="icon" href="/.epistery/favicon.ico">
+  <title>Epistery Status - {{server.domain}}</title>
+  <script type="module">
+    import Witness from '/.epistery/lib/witness.js';
+    
+    let witness = null;
+    
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        // Connect to Epistery and get/create client wallet
+        witness = await Witness.connect();
+        
+        const status = witness.getStatus();
+        
+        // Update UI with client wallet info
+        if (status.client) {
+            document.getElementById('local-wallet-address').textContent = status.client.address;
+            document.getElementById('local-wallet-public-key').textContent = status.client.publicKey;
+        } else {
+            document.getElementById('local-wallet-address').textContent = 'No wallet found';
+            document.getElementById('local-wallet-public-key').textContent = 'No wallet found';
+        }
+        
+        // Set up write event button
+        const writeButton = document.getElementById('write-button');
+        const writeInput = document.getElementById('write-input');
+        const writeOutput = document.getElementById('write-output');
+        
+        writeButton.onclick = async () => {
+          try {
+            writeButton.disabled = true;
+            writeButton.textContent = 'Writing...';
+            writeOutput.innerHTML = '<div class="loading">Submitting to Epistery...</div>';
+            
+            const inputData = writeInput.value || 'Default test message';
+            
+            const result = await witness.writeEvent({
+              message: inputData,
+              timestamp: new Date().toISOString(),
+              page: 'status',
+              url: location.href
+            });
+            
+            writeOutput.innerHTML = `
+              <div class="success">
+                <h4>Write Successful!</h4>
+                <div class="result-section">
+                  <h5>IPFS Storage:</h5>
+                  <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
+                  <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
+                </div>
+                <div class="result-section">
+                  <h5>Cryptographic Proof:</h5>
+                  <p><strong>Message Hash:</strong> <code>${result.messageHash}</code></p>
+                  <p><strong>Signature:</strong> <code>${result.signature}</code></p>
+                  <p><strong>Signed By:</strong> <code>${result.signedBy}</code></p>
+                </div>
+                <div class="result-section">
+                  <h5>Metadata:</h5>
+                  <p><strong>Timestamp:</strong> ${result.timestamp}</p>
+                  <p><strong>Client Address:</strong> <code>${result.client.address}</code></p>
+                  <p><strong>Server Domain:</strong> ${result.server.domain}</p>
+                </div>
+                <div class="result-section">
+                  <h5>Raw Data:</h5>
+                  <pre><code>${JSON.stringify(result.data, null, 2)}</code></pre>
+                </div>
+                ${result.aquaTree ? `
+                <div class="result-section">
+                  <h5>Aqua Tree:</h5>
+                  <pre><code>${JSON.stringify(result.aquaTree, null, 2)}</code></pre>
+                </div>
+                ` : ''}
+              </div>
+            `;
+            
+            writeInput.value = '';
+          }
+          catch (error) {
+            writeOutput.innerHTML = `
+              <div class="error">
+                  <h4>Write Failed</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          }
+          finally {
+            writeButton.disabled = false;
+            writeButton.textContent = 'Write to Epistery';
+          }
+        };
+      }
+      catch (error) {
+        console.error('Failed to initialize Epistery:', error);
+        document.getElementById('connection-status').textContent = 'Error';
+        document.getElementById('connection-status').className = 'error';
+        document.getElementById('local-wallet-address').textContent = 'Error loading wallet';
+        document.getElementById('local-wallet-public-key').textContent = 'Error loading wallet';
+      }
+    });
+  </script>
+  <style>
+      body { font-family: Arial, sans-serif; margin: 40px; }
+      .status { padding: 10px; border-radius: 5px; font-weight: bold; }
+      .connected { background-color: #d4edda; color: #155724; }
+      .disconnected { background-color: #f8d7da; color: #721c24; }
+      .error { background-color: #f8d7da; color: #721c24; }
+      .wallet-info { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
+      .address { font-family: monospace; word-break: break-all; font-size: 0.9em; }
+      .write-section { background-color: #e9ecef; padding: 20px; border-radius: 5px; margin: 20px 0; }
+      .write-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; font-size: 14px; box-sizing: border-box; }
+      .write-button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+      .write-button:hover { background-color: #0056b3; }
+      .write-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .success { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 10px 0; }
+      .error { background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 10px 0; }
+      .loading { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 5px; margin: 10px 0; }
+      .result-section { margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 3px; }
+      .result-section h5 { margin: 0 0 10px 0; color: #495057; }
+      .result-section code { background-color: #e9ecef; padding: 2px 4px; border-radius: 2px; font-size: 0.9em; word-break: break-all; }
+      .result-section pre { background-color: #f1f3f4; padding: 10px; border-radius: 3px; overflow-x: auto; white-space: pre-wrap; font-size: 0.8em; }
+  </style>
+</head>
+<body>
+    <h1>Epistery Status</h1>
+    
+    <h2>Server Wallet</h2>
+    <div class="wallet-info">
+        <p><strong>Domain:</strong> {{server.domain}}</p>
+        <p><strong>Address:</strong> <span class="address">{{server.walletAddress}}</span></p>
+        <p><strong>Provider:</strong> {{server.provider}}</p>
+        <p><strong>Chain ID:</strong> {{server.chainId}}</p>
+    </div>
+    
+    <h2>Local Client Wallet</h2>
+    <div class="wallet-info">
+        <p><strong>Address:</strong> <span id="local-wallet-address" class="address">Loading...</span></p>
+        <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading...</span></p>
+    </div>
+    
+    <h2>Write Event Test</h2>
+    <div class="write-section">
+        <p>Test the Epistery write functionality by entering a message below:</p>
+        <input type="text" id="write-input" class="write-input" placeholder="Enter your message here..." />
+        <button id="write-button" class="write-button">Sign Message (w/AQUA)</button>
+        <div id="write-output"></div>
+    </div>
+    
+    <h2>Timestamp</h2>
+    <p><strong>Generated:</strong> {{timestamp}}</p>
+</body>
+</html>

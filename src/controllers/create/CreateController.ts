@@ -1,16 +1,11 @@
 import { Request, Response } from 'express';
 import { Controller } from '../baseController';
-import { ethers } from 'ethers'
+import { Epistery } from 'epistery';
+import { ClientWalletInfo } from '../../utils/index.js';
 
 export class CreateController extends Controller {
   public index(req: Request, res: Response) {
-    const wallet = ethers.Wallet.createRandom();
-    const walletInfo = {
-      address: wallet.address,
-      mnemonic: wallet.mnemonic?.phrase || '',
-      publicKey: wallet.publicKey,
-      privateKey: wallet.privateKey,
-    };
+    const walletInfo:ClientWalletInfo = Epistery.createWallet();
     const clientCookie = {
       wallet: walletInfo
     };

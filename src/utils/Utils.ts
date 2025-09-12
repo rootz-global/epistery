@@ -73,6 +73,9 @@ export class Utils {
     }
     
     const domainConfig = this.config.loadDomain(domain);
-    return domainConfig || null;
+    if (!domainConfig)
+      return null;
+
+    return domainConfig;
   }
 }
