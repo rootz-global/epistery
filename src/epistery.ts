@@ -54,9 +54,10 @@ export class Epistery {
     // Create real wallet from client info
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic);
 
+    // TODO: The environment should not define the domain. The domain is in req.app.locals.epistery
     // Get server info
     const domain: string = process.env.SERVER_DOMAIN || 'localhost';
-    const serverWallet: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+    const serverWallet: WalletConfig | undefined = Utils.GetDomainInfo(domain).wallet;
 
     // Aquafy the message
     const dataString: string = JSON.stringify(data);
@@ -97,7 +98,7 @@ export class Epistery {
 
     ipfsData.ipfsHash = hash;
     ipfsData.ipfsUrl = `http://localhost:8080/ipfs/${hash}`;
-    
+
     return ipfsData;
   }
 

@@ -15,9 +15,9 @@ export class Utils {
       let domainConfig = this.config.loadDomain(domain);
       if (!domainConfig || !domainConfig.wallet) {
         console.log(`No wallet found for domain: ${domain}, creating new wallet...`);
-        
+
         const wallet = ethers.Wallet.createRandom();
-        
+
         const walletConfig: WalletConfig = {
           address: wallet.address,
           mnemonic: wallet.mnemonic?.phrase || '',
@@ -33,7 +33,7 @@ export class Utils {
 
         this.config.saveDomain(domain, newDomainConfig);
         domainConfig = newDomainConfig;
-        
+
         console.log(`Created new wallet for domain: ${domain}`);
         console.log(`Wallet address: ${wallet.address}`);
       }
@@ -41,11 +41,11 @@ export class Utils {
       if (domainConfig.wallet) {
         const provider = new ethers.providers.JsonRpcProvider(domainConfig.provider?.rpc || this.config.data.provider.rpc);
         this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(provider);
-        
+
         console.log(`Server wallet initialized for domain: ${domain}`);
         console.log(`Wallet address: ${domainConfig.wallet.address}`);
         console.log(`Provider: ${domainConfig.provider?.name || this.config.data.provider.name}`);
-        
+
         return this.serverWallet;
       }
 
@@ -67,14 +67,14 @@ export class Utils {
     return this.config;
   }
 
-  public static GetDomainInfo(domain: string = 'localhost'): DomainConfig | null {
+  public static GetDomainInfo(domain: string = 'localhost'): DomainConfig {
     if (!this.config) {
       this.config = new Config();
     }
-    
+
     const domainConfig = this.config.loadDomain(domain);
     if (!domainConfig)
-      return null;
+      return {domain:domain};
 
     return domainConfig;
   }

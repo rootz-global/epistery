@@ -13,13 +13,25 @@ export interface WalletConfig {
   privateKey: string;
 }
 
+export interface SSLCert {
+  cert: string;
+  key: Buffer;
+  modified: Date;
+}
+
 export interface DomainConfig {
   domain: string;
   provider?: ProviderConfig;
   wallet?: WalletConfig;
+  ssl?: SSLCert;
+}
+
+export interface ProfileConfig {
+    email?: string;
 }
 
 export interface RootConfig {
+  profile?: ProfileConfig;
   provider: ProviderConfig;
 }
 

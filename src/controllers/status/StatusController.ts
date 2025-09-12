@@ -15,13 +15,13 @@ export class StatusController extends Controller {
       publicKey: clientCookie?.wallet?.publicKey,
       privateKey: clientCookie?.wallet?.privateKey,
     }
-    const serverWallet:DomainConfig | null = Utils.GetDomainInfo(domain);
-    if (!serverWallet) {
+    const serverDomain:DomainConfig = Utils.GetDomainInfo(domain);
+    if (!serverDomain.wallet) {
       this.sendError(res, "Unable to load server wallet.", 400);
       return;
     }
 
-    const status = Epistery.getStatus(clientWallet, serverWallet);
+    const status = Epistery.getStatus(clientWallet, serverDomain);
     this.sendResponse(res, status);
   }
 }

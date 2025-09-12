@@ -12,7 +12,7 @@ This directory contains controller files for organizing route handlers.
 ## Example Controller
 ```typescript
 import { Request, Response } from 'express';
-import { Controller } from './baseController';
+import { Controller } from '../baseController';
 
 export class ExampleController extends Controller {
   public index(req: Request, res: Response) {

@@ -7,6 +7,7 @@ import { Utils } from './utils/index.js';
 import { CreateController } from './controllers/create/CreateController.js';
 import { StatusController } from './controllers/status/StatusController.js';
 import { WriteController } from './controllers/write/WriteController.js';
+import { SSLController } from './controllers/ssl/SSLController.js';
 import { Epistery } from 'epistery';
 
 dotenv.config();
@@ -31,11 +32,12 @@ app.use(async (req, res, next) => {
 const createController = new CreateController();
 const statusController = new StatusController();
 const writeController = new WriteController();
+const sslController = new SSLController();
 
 // Client library routes
 const library = {
   "client.js": "client/client.js",
-  "witness.js": "client/witness.js", 
+  "witness.js": "client/witness.js",
   "ethers.js": "client/ethers.js",
   "ethers.min.js": "client/ethers.min.js"
 };
@@ -44,23 +46,23 @@ const library = {
 app.get('/.epistery/lib/:module', (req, res) => {
   const modulePath = library[req.params.module as keyof typeof library];
   if (!modulePath) return res.status(404).send('Library not found');
-  
+
   const fullPath = path.resolve(modulePath);
   if (!fs.existsSync(fullPath)) return res.status(404).send('File not found');
-  
+
   const ext = fullPath.slice(fullPath.lastIndexOf('.') + 1);
   const contentTypes: { [key: string]: string } = {
     'js': 'text/javascript',
-    'mjs': 'text/javascript', 
+    'mjs': 'text/javascript',
     'css': 'text/css',
     'html': 'text/html',
     'json': 'application/json'
   };
-  
+
   if (contentTypes[ext]) {
     res.set('Content-Type', contentTypes[ext]);
   }
-  
+
   res.sendFile(fullPath);
 });
 
@@ -68,28 +70,28 @@ app.get('/.epistery/lib/:module', (req, res) => {
 app.get('/.epistery/status.html', (req, res) => {
   const config = Utils.GetConfig();
   const domain = config.activeDomain.domain;
-  const serverWallet = Utils.GetDomainInfo(domain);
-  
-  if (!serverWallet) {
+  const serverDomain = Utils.GetDomainInfo(domain);
+
+  if (!serverDomain.wallet) {
     return res.status(500).send('Server wallet not found');
   }
-  
-  const status = Epistery.getStatus({} as any, serverWallet);
+
+  const status = Epistery.getStatus({} as any, serverDomain);
   const templatePath = path.resolve('client/status.html');
-  
+
   if (!fs.existsSync(templatePath)) {
     return res.status(404).send('Status template not found');
   }
-  
+
   let template = fs.readFileSync(templatePath, 'utf8');
-  
+
   // Simple template replacement
   template = template.replace(/\{\{server\.domain\}\}/g, domain);
   template = template.replace(/\{\{server\.walletAddress\}\}/g, status.server.walletAddress || '');
   template = template.replace(/\{\{server\.provider\}\}/g, status.server.provider || '');
   template = template.replace(/\{\{server\.chainId\}\}/g, status.server.chainId?.toString() || '');
   template = template.replace(/\{\{timestamp\}\}/g, status.timestamp);
-  
+
   res.send(template);
 });
 
@@ -97,6 +99,7 @@ app.get('/.epistery/status.html', (req, res) => {
 app.get('/.epistery/status', statusController.index.bind(statusController));
 app.get('/.epistery/create', createController.index.bind(createController));
 app.post('/.epistery/data/write', writeController.index.bind(writeController));
+app.get('/.well-known/acme-challenge/:token', sslController.index.bind(sslController));
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
