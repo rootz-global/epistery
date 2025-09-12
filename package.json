@@ -1,8 +1,8 @@
 {
-  "name": "epistery-server",
+  "name": "epistery",
   "version": "1.0.0",
   "description": "ExpressJS server with TypeScript",
-  "main": "dist/index.js",
+  "main": "index.mjs",
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node test/server.mjs",
