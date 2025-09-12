@@ -77,8 +77,6 @@ const createGenesisRevisions = async (aquafier: Aquafier, file:FileObject) => {
   if (handleError(genResult, "Failed to create test file genesis"))
     return null;
 
-  console.log("Genesis Result:", JSON.stringify(genResult.data, null, 2));
-
   return genResult;
 };
 

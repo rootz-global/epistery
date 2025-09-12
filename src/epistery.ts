@@ -119,6 +119,7 @@ export class Epistery {
 
     const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
     
+    // Check if both server & client have enough funds
     const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
     const serverHasEnough:boolean = await Epistery.hasEnoughFunds(serverWallet, amount);
     if (!serverHasEnough) {
@@ -176,7 +177,8 @@ export class Epistery {
 
     ipfsData.ipfsHash = hash;
     ipfsData.ipfsUrl = `http://localhost:8080/ipfs/${hash}`;
-
+    
+    console.log("IPFS DATA:", JSON.stringify(ipfsData));
     return ipfsData;
   }
 

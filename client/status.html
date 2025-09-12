@@ -20,12 +20,99 @@
         
         // Update UI with client wallet info
         if (status.client) {
-            document.getElementById('local-wallet-address').textContent = status.client.address;
-            document.getElementById('local-wallet-public-key').textContent = status.client.publicKey;
-        } else {
-            document.getElementById('local-wallet-address').textContent = 'No wallet found';
-            document.getElementById('local-wallet-public-key').textContent = 'No wallet found';
+          document.getElementById('local-wallet-address').textContent = status.client.address;
+          document.getElementById('local-wallet-public-key').textContent = status.client.publicKey;
         }
+        else {
+          document.getElementById('local-wallet-address').textContent = 'No wallet found';
+          document.getElementById('local-wallet-public-key').textContent = 'No wallet found';
+        }
+
+        // Set up write event button
+        let uploadBuf;
+        const uploadButton = document.getElementById('upload-button');
+        const uploadInput = document.getElementById('upload-input');
+        const uploadOutput = document.getElementById('upload-output');
+        
+        uploadInput.addEventListener('change', (event) => {
+          const file = event.target.files[0];
+          if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const arrayBuffer = e.target.result;
+                const uint8Array = new Uint8Array(arrayBuffer);
+                uploadBuf = uint8Array;
+            };
+            reader.readAsArrayBuffer(file);
+          }
+        });
+
+        uploadButton.onclick = async () => {
+          try {
+            if (!uploadBuf) {
+              console.log("No upload buffer");
+              return;
+            }
+
+            uploadButton.disabled = true;
+            uploadButton.textContent = 'Writing...';
+            uploadOutput.innerHTML = '<div class="loading">Submitting to Epistery...</div>';
+
+            const decoder = new TextDecoder();
+            const decodedBuf = decoder.decode(uploadBuf);
+            
+            const result = await witness.writeEvent({
+              message: decodedBuf,
+              timestamp: new Date().toISOString(),
+              page: 'status',
+              url: location.href
+            });
+
+            uploadOutput.innerHTML = `
+              <div class="success">
+                <h4>Upload Successful!</h4>
+                <div class="result-section">
+                  <h5>IPFS Storage:</h5>
+                  <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
+                  <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
+                </div>
+                <div class="result-section">
+                  <h5>Cryptographic Proof:</h5>
+                  <p><strong>Message Hash:</strong> <code>${result.messageHash}</code></p>
+                  <p><strong>Signature:</strong> <code>${result.signature}</code></p>
+                  <p><strong>Signed By:</strong> <code>${result.signedBy}</code></p>
+                </div>
+                <div class="result-section">
+                  <h5>Metadata:</h5>
+                  <p><strong>Timestamp:</strong> ${result.timestamp}</p>
+                  <p><strong>Client Address:</strong> <code>${result.client.address}</code></p>
+                  <p><strong>Server Domain:</strong> ${result.server.domain}</p>
+                </div>
+                <div class="result-section">
+                  <h5>Message Data (Truncated):</h5>
+                  <pre><code>${JSON.stringify(result.data.message, null, 2).slice(0,100)}..."</code></pre>
+                </div>
+                ${result.aquaTree ? `
+                <div class="result-section">
+                  <h5>Aqua Tree:</h5>
+                  <pre><code>${JSON.stringify(result.aquaTree, null, 2)}</code></pre>
+                </div>
+                ` : ''}
+              </div>
+            `;
+          }
+          catch(e) {
+            console.error('Failed to initialize Epistery:', error);
+            document.getElementById('connection-status').textContent = 'Error';
+            document.getElementById('connection-status').className = 'error';
+            document.getElementById('local-wallet-address').textContent = 'Error loading wallet';
+            document.getElementById('local-wallet-public-key').textContent = 'Error loading wallet';
+          }
+          finally {
+            uploadButton.disabled = false;
+            uploadButton.textContent = 'Write to Epistery';
+          }
+        };
         
         // Set up write event button
         const writeButton = document.getElementById('write-button');
@@ -119,6 +206,10 @@
       .write-button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
       .write-button:hover { background-color: #0056b3; }
       .write-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .upload-input { width: 100%; padding: 10px; margin: 10px 0; font-size: 14px; box-sizing: border-box; }
+      .upload-button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+      .upload-button:hover { background-color: #0056b3; }
+      .upload-button:disabled { background-color: #6c757d; cursor: not-allowed; }
       .success { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .error { background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .loading { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 5px; margin: 10px 0; }
@@ -151,6 +242,14 @@
         <input type="text" id="write-input" class="write-input" placeholder="Enter your message here..." />
         <button id="write-button" class="write-button">Sign Message (w/AQUA)</button>
         <div id="write-output"></div>
+    </div>
+
+    <h2>Upload Event Test</h2>
+    <div class="upload-section">
+        <p>Test the Epistery upload functionality by uploading a file below:</p>
+        <input type="file" id="upload-input" class="upload-input" placeholder="Upload File" />
+        <button id="upload-button" class="upload-button">Upload File</button>
+        <div id="upload-output"></div>
     </div>
     
     <h2>Timestamp</h2>

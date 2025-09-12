@@ -37,6 +37,7 @@ export default class EpisteryAttach {
   async attach(app) {
     app.locals.epistery = this;
     
+    app.use(express.json({limit: '50mb'}));
     app.use(async (req, res, next) => {
       if (req.app.locals.epistery.domain?.name !== req.hostname) {
         await req.app.locals.epistery.setDomain(req.hostname);
