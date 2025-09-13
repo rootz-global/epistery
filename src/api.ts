@@ -7,7 +7,6 @@ import { Utils } from './utils/index.js';
 import { CreateController } from './controllers/create/CreateController.js';
 import { StatusController } from './controllers/status/StatusController.js';
 import { WriteController } from './controllers/write/WriteController.js';
-import { SSLController } from './controllers/ssl/SSLController.js';
 import { Epistery } from 'epistery';
 
 dotenv.config();
@@ -32,7 +31,6 @@ app.use(async (req, res, next) => {
 const createController = new CreateController();
 const statusController = new StatusController();
 const writeController = new WriteController();
-const sslController = new SSLController();
 
 // Client library routes
 const library = {
@@ -99,7 +97,6 @@ app.get('/.epistery/status.html', (req, res) => {
 app.get('/.epistery/status', statusController.index.bind(statusController));
 app.get('/.epistery/create', createController.index.bind(createController));
 app.post('/.epistery/data/write', writeController.index.bind(writeController));
-app.get('/.well-known/acme-challenge/:token', sslController.index.bind(sslController));
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);

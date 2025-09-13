@@ -43,7 +43,7 @@ export class SSLController extends Controller {
             });
         }
     }
-    get SNI(): { SNICallback: (hostname: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) => void } {
+    static get SNI(): { SNICallback: (hostname: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) => void } {
         return {
             SNICallback: async (hostname: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) => {
                 const domain = Utils.GetDomainInfo(hostname);

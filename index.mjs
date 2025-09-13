@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Epistery } from './dist/epistery.js';
 import { Utils } from './dist/utils/Utils.js';
+import { SSLController } from './dist/controllers/ssl/SSLController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +19,7 @@ function getDomainConfig(domain) {
   return domainConfig;
 }
 
-export default class EpisteryAttach {
+class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
     this.domain = null;
@@ -36,6 +37,7 @@ export default class EpisteryAttach {
 
   async attach(app) {
     app.locals.epistery = this;
+    const sslController = new SSLController();
 
     app.use(async (req, res, next) => {
       if (req.app.locals.epistery.domain?.name !== req.hostname) {
@@ -46,6 +48,7 @@ export default class EpisteryAttach {
 
     // Mount routes
     app.use('/.epistery', this.routes());
+    app.use('/', sslController.index.bind(sslController));
   }
 
   routes() {
@@ -144,6 +147,13 @@ export default class EpisteryAttach {
       }
     });
 
+    // Status and service projection
+    router.get('/', (req, res) => {
+
+    })
+
     return router;
   }
 }
+
+export { EpisteryAttach as Epistery, SSLController };
