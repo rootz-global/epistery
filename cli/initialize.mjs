@@ -11,6 +11,7 @@ export async function initialize(context, domain) {
         domainConfig.wallet = Utils.InitServerWallet(domain);
         const config = Utils.GetConfig();
         config.saveDomain(domain,domainConfig);
+        context.log(`configuration file written to ${config.configFile}`)
     } else {
         context.log(`Registration requires a domain name`);
     }
