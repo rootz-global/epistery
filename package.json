@@ -9,6 +9,7 @@
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
     "certify": "node cli/index.mjs certify",
+    "initialize": "node cli/index.mjs initialize",
     "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify"
   },
   "dependencies": {
