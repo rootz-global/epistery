@@ -39,13 +39,19 @@ This is a typescript project
 The core purpose of the epistery plugin is manage the creation and manipulation of data wallets. This manifests as api's
 invoked by the browser and partner sites
 
-...
+All of the Data Wallet functionality is found in the in /src/controllers/DataWalletController, operating behind .epistery/data. Utils
+is used for common cryto functionaility and other tools
 
 ## SSL
 A host needn't use the SSL tools offered by epistery. Certification is made available for convenience and the opportunity to more
 closely bind the infrastructure that connects legal identities to digital identities. SSL certs are a respected means to
 distinguish the legal posture of services provided through the web, but SSL just provides transport encryption. Data wallets
 and the blockchain keying infrastructure it provides extends that model with significant new agency.
+
+All of the functionaility for SSL is found in /src/controllsers/SSLController, though it provides a script to the CLI app in /src/cls/
+
+SSLController needs to add a root level route, /.well-known. It is invoked through CLI and employed by a host app through
+`https.createServer(SSLController.SNI,app)`
 
 ## Config File
 System configuration is managed with ini files in $HOME/.epistery. THe root defines config.ini which has system wide
