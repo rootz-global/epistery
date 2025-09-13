@@ -13,7 +13,8 @@ export class Epistery {
     if (Epistery.isInitialized)
       return;
 
-    Epistery.ipfsApiUrl = process.env.IPFS_URL as string ?? 'http://127.0.0.1:5001/api/v0';
+    const config = Utils.GetConfig()
+    Epistery.ipfsApiUrl = config.data.ipfs?.url || process.env.IPFS_URL as string || 'http://127.0.0.1:5001/api/v0';
     await Epistery.initIPFS();
 
     Epistery.isInitialized = true;

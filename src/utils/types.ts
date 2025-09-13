@@ -30,8 +30,13 @@ export interface ProfileConfig {
     email?: string;
 }
 
+export interface IPFSConfig {
+  url: string;
+}
+
 export interface RootConfig {
   profile?: ProfileConfig;
+  ipfs?: IPFSConfig;
   provider: ProviderConfig;
 }
 
