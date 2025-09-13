@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {resolve} from "path";
-import Epistery from '../index.mjs';
+import { Epistery } from '../index.mjs';
 import moment from 'moment';
 
 function log(message) {

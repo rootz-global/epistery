@@ -4,7 +4,7 @@ import ini from 'ini';
 import { RootConfig, DomainConfig } from './types';
 
 export class Config {
-  public readonly rootName: string;
+  public rootName: string;
   public readonly homeDir: string;
   public readonly configDir: string;
   public readonly configFile: string;
@@ -13,7 +13,7 @@ export class Config {
   private _activeDomain: string = "";
 
   constructor() {
-    this.rootName = 'data-wallet';
+    this.rootName = 'epistery'
     this.homeDir = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || '';
     this.configDir = join(this.homeDir, '.' + this.rootName);
     this.configFile = join(this.configDir, 'config.ini');
