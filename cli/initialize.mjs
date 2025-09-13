@@ -7,7 +7,10 @@ export async function initialize(context, domain) {
     if (domain) {
         context.log(`Initializing domain ${domain} ...`);
         Epistery.initialize(context, domain);
-        Utils.InitServerWallet(domain);
+        const domainConfig = Utils.GetDomainInfo(domain)
+        domainConfig.wallet = Utils.InitServerWallet(domain);
+        const config = Utils.GetConfig();
+        config.saveDomain(domain,domainConfig);
     } else {
         context.log(`Registration requires a domain name`);
     }
