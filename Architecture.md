@@ -39,8 +39,51 @@ This is a typescript project
 The core purpose of the epistery plugin is manage the creation and manipulation of data wallets. This manifests as api's
 invoked by the browser and partner sites
 
+...
+
 ## SSL
 A host needn't use the SSL tools offered by epistery. Certification is made available for convenience and the opportunity to more
 closely bind the infrastructure that connects legal identities to digital identities. SSL certs are a respected means to
 distinguish the legal posture of services provided through the web, but SSL just provides transport encryption. Data wallets
 and the blockchain keying infrastructure it provides extends that model with significant new agency.
+
+## Config File
+System configuration is managed with ini files in $HOME/.epistery. THe root defines config.ini which has system wide
+settings. The default settings are captured in default.ini. Each domain that has been initialized will have a folder
+with it's own config.ini file, as well as key files and other persistent settings.
+
+The root config file is structured into the following sections
+
+```ini
+[profile]
+// Email is required for SSL certificates. Nothing else is used, but probably will be needed
+  name=
+  email=
+[ipfs]
+ url=https://rootz.digital/api/v0
+[defaultDomainConfig.provider]
+// When a domain is initialized, it defaults to this provide info which is subsequencly saved with the domain config.ini
+ chainId=
+ name=
+ rpc=
+```
+
+A domain config file, like `$HOME/.epistery/mydomain.com/config.ini`, includes:
+
+```ini
+[provider]
+chainId=
+name=
+rpc=
+
+[wallet]
+address=
+mnemonic=
+publicKey=
+privateKey=
+
+[ssl]
+key=
+cert=
+modified=
+```
