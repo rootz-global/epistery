@@ -65,6 +65,7 @@ export class SSLController extends Controller {
                 throw new Error(`Gave up waiting on certificate for ${servername}`);
             }
             await new Promise((resolve) => {
+                console.log('Waiting for certificate...');
                 setTimeout(resolve, 1000);
             });
             await this.getCert(servername, (attempt + 1));
