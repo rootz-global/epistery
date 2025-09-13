@@ -15,7 +15,7 @@ This is a typescript project
 | /client/client.js      | client-side counterpart to /epistery.ts.                                                                         |
 | /client/ethers.js      | Core blockchain tools                                                                                            |
 | /client/status.html    | The template page rendered by /.epistery/status. This is the only human readable content presented by /.epistery |
-| witness.js             |                                                                                                                  |
+| /client/witness.js     |                                                                                                                  |
 | /src                   | implementation                                                                                                   |
 | /src/controllers/      | Controllers provide discreet services usually behind a named route /.epistery/[controller]                       |
 | /src/utils             | Shared tools that assist the controllers                                                                         |
