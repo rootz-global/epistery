@@ -56,6 +56,7 @@ export class SSLController extends Controller {
         }
     }
     async getCert(servername: string, attempt: number = 0): Promise<void> {
+        console.log('Preparing certificate request ...')
         const domain = Utils.GetDomainInfo(servername);
         if (domain.ssl) {
             return;
