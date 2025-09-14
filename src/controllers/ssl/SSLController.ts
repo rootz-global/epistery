@@ -4,7 +4,7 @@ import tls from 'tls';
 import * as acme from 'acme-client';
 import { Epistery } from "../../epistery";
 import { Utils } from '../../utils/index.js';
-
+import express from 'express';
 
 interface PendingCerts {
     [hostname: string]: boolean;
@@ -25,15 +25,19 @@ export class SSLController extends Controller {
         this.pending = {};
         this.challenges = {};
     }
-    public index(req: Request, res: Response): void {
-        const token = req.params.token;
-        if (token in this.challenges) {
-            res.writeHead(200);
-            res.end(this.challenges[token]);
-            return;
-        }
-        res.writeHead(302, {Location: `https://${req.headers.host}${req.url}`});
-        res.end();
+    public routes() {
+        const router = express.Router();
+        router.get('/.well-known/acme-challenge/:token', (req: Request, res: Response) => {
+            const token = req.params.token;
+            if (token in this.challenges) {
+                res.writeHead(200);
+                res.end(this.challenges[token]);
+                return;
+            }
+            res.writeHead(302, {Location: `https://${req.headers.host}${req.url}`});
+            res.end();
+        })
+        return router;
     }
     async initialize(): Promise<void> {
         if (!this.acme) {

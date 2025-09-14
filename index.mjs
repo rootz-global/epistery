@@ -48,7 +48,7 @@ class EpisteryAttach {
 
     // Mount routes
     app.use('/.epistery', this.routes());
-    app.use('/', sslController.index.bind(sslController));
+    app.use('/', sslController.routes());
   }
 
   routes() {
