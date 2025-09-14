@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Controller } from '../baseController';
 import tls from 'tls';
-import * as acme from 'acme-client';
+import acme from 'acme-client';
 import { Epistery } from "../../epistery";
 import { Utils } from '../../utils/index.js';
 import express from 'express';
