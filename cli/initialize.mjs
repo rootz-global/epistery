@@ -8,7 +8,14 @@ export async function initialize(context, domain) {
         context.log(`Initializing domain ${domain} ...`);
         Epistery.initialize(context, domain);
         const domainConfig = Utils.GetDomainInfo(domain)
-        domainConfig.wallet = Utils.InitServerWallet(domain);
+        const wallet = Utils.InitServerWallet(domain);
+        domainConfig.wallet = {
+            address: wallet.address,
+            mnemonic: wallet.mnemonic.phrase,
+            publicKey: wallet.publicKey,
+            privateKey: wallet.privateKey,
+            signingKey: wallet.signingKey
+        };
         const config = Utils.GetConfig();
         config.saveDomain(domain,domainConfig);
         context.log(`configuration file written to ${config.configFile}`)
