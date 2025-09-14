@@ -47,8 +47,8 @@ class EpisteryAttach {
     });
 
     // Mount routes
-    app.use('/.epistery', this.routes());
     app.use('/', sslController.routes());
+    app.use('/.epistery', this.routes());
   }
 
   routes() {
@@ -147,10 +147,10 @@ class EpisteryAttach {
       }
     });
 
-    // Status and service projection
-    router.get('/', (req, res) => {
-
-    })
+    // // Status and service projection
+    // router.get('/', (req, res) => {
+    //
+    // })
 
     return router;
   }

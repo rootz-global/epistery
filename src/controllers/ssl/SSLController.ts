@@ -27,8 +27,8 @@ export class SSLController extends Controller {
     }
     public routes() {
         const router = express.Router();
-        router.get('/.well-known/acme-challenge/:token', (req: Request, res: Response) => {
-            const token = req.params.token;
+        router.get(/^\/\.well-known\/acme-challenge\/([^\/]+)$/, (req: Request, res: Response) => {
+            const token = req.params[0];
             if (token in this.challenges) {
                 res.writeHead(200);
                 res.end(this.challenges[token]);
@@ -36,6 +36,9 @@ export class SSLController extends Controller {
             }
             res.writeHead(302, {Location: `https://${req.headers.host}${req.url}`});
             res.end();
+        })
+        router.get(/\.well-known\/health/, (req: Request, res: Response) => {
+            res.status(200).send();
         })
         return router;
     }
@@ -60,6 +63,7 @@ export class SSLController extends Controller {
         }
     }
     async getCert(servername: string, attempt: number = 0): Promise<void> {
+        const testListener = await fetch(`http://${servername}/.well-known/health`);
         console.log('Preparing certificate request ...')
         const domain = Utils.GetDomainInfo(servername);
         if (domain.ssl) {
