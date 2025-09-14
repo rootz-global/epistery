@@ -108,6 +108,7 @@ export class SSLController extends Controller {
         // save certificate
         domain.ssl = {cert: cert, key: key, modified: new Date()};
         config.saveDomain(servername, domain);
+        console.log('Certificate request successful');
         delete this.pending[servername];
     }
 }
