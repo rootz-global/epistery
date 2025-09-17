@@ -1,12 +1,15 @@
 # Plug in architecture
 
-This module is a plugin. It provides a host with native services and features exposed through
-host.tld/.epistery. The .epistery routes should be mostly web api's, not presentation. The
-root. The root provides a manifest of identity attributes and capabilities. The sub routes
-represent controllers providing the core services, primarily data wallets.
+This module is a plugin. It provides a host with data-wallet services exposed through
+host.tld/.well-known/epistery. Epistery will create wallets for both the client (browser)
+and the server if not otherwise provided. It provides the foundation methods for creating,
+validating and manipulating data-wallets.
+
+Server code is available through web calls. The
+client is implemented with a browser script available from client.js.
 
 ## Structure
-This is a typescript project
+This is a typescript project build on express.
 
 | path                   | description                                                                                                      |
 |------------------------|------------------------------------------------------------------------------------------------------------------|
@@ -25,15 +28,11 @@ This is a typescript project
 | /src/utils/Utils.ts    | (Not sure. Seems like these methods should be attached to something with a named purpose                         |
 | /src/utils/index.ts    | Import root for reach all utilities                                                                              |
 | /src/epistery.ts       | Root class that is connected by the host                                                                         |
-| /src/cli               | Command line services for configuration, registration and status                                                 |
-| /src/cli/index.ts      | App harness to execute commands                                                                                  |
-| /src/cli/certify.ts    | Provides domain name SSL certs via acme.                                                                         |
-| /src/cie/initialize.ts | Query for profile data. Mint the server's wallet and populate config.ini                                         |                                                                                
 | /test                  | A barebones host application to provide sample code and exercise the features                                    |
 | /default.ini           | template configuration for initialising a new installation                                                       |
 
 >NOTE: api.ts is left out. I propose that if we want a standalone generic implementation of the epistery plugin,
-> it should implemented in a separate repo.
+> it should be implemented in a separate repo.
 
 ## Data Wallets
 The core purpose of the epistery plugin is manage the creation and manipulation of data wallets. This manifests as api's
@@ -42,16 +41,7 @@ invoked by the browser and partner sites
 All of the Data Wallet functionality is found in the in /src/controllers/DataWalletController, operating behind .epistery/data. Utils
 is used for common cryto functionaility and other tools
 
-## SSL
-A host needn't use the SSL tools offered by epistery. Certification is made available for convenience and the opportunity to more
-closely bind the infrastructure that connects legal identities to digital identities. SSL certs are a respected means to
-distinguish the legal posture of services provided through the web, but SSL just provides transport encryption. Data wallets
-and the blockchain keying infrastructure it provides extends that model with significant new agency.
-
-All of the functionaility for SSL is found in /src/controllsers/SSLController, though it provides a script to the CLI app in /src/cls/
-
-SSLController needs to add a root level route, /.well-known. It is invoked through CLI and employed by a host app through
-`https.createServer(SSLController.SNI,app)`
+## Signing Wallets
 
 ## Config File
 System configuration is managed with ini files in $HOME/.epistery. THe root defines config.ini which has system wide
@@ -62,7 +52,6 @@ The root config file is structured into the following sections
 
 ```ini
 [profile]
-// Email is required for SSL certificates. Nothing else is used, but probably will be needed
   name=
   email=
 [ipfs]
