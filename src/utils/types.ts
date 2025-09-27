@@ -77,3 +77,22 @@ export interface EpisteryWrite {
   ipfsHash: string | undefined;
   ipfsUrl: string | undefined;
 }
+
+export interface KeyExchangeRequest {
+  clientAddress: string;
+  clientPublicKey: string;
+  challenge: string;
+  message: string;
+  signature: string;
+}
+
+export interface KeyExchangeResponse {
+  serverAddress: string;
+  serverPublicKey: string;
+  services: string[];
+  challenge: string;
+  signature: string;
+  identified: boolean;
+  authenticated: boolean;
+  profile: object | undefined;
+}

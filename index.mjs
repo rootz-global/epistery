@@ -115,6 +115,41 @@ class EpisteryAttach {
       res.json(status);
     });
 
+    // Key exchange endpoint - handles POST requests for FIDO-like key exchange
+    router.post('/connect', express.json(), async (req, res) => {
+      try {
+        console.log("++ start connect")
+        const serverWallet = this.domain;
+
+        if (!serverWallet?.wallet) {
+          return res.status(500).json({ error: 'Server wallet not found' });
+        }
+
+        // Handle key exchange request
+        const keyExchangeResponse = await Epistery.handleKeyExchange(req.body, serverWallet.wallet);
+
+        if (!keyExchangeResponse) {
+          return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
+        }
+        const clientInfo = {
+          address:req.body.clientAddress,
+          publicKey:req.body.clientPublicKey
+        }
+        console.log(`++ ${JSON.stringify(clientInfo)}`)
+        req.app.locals.episteryClient = clientInfo;
+        if (this.options.authentication) {
+          keyExchangeResponse.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
+          keyExchangeResponse.authenticated = !!keyExchangeResponse.profile;
+        }
+
+        res.json(keyExchangeResponse);
+
+      } catch (error) {
+        console.error('Key exchange error:', error);
+        res.status(500).json({ error: 'Internal server error during key exchange' });
+      }
+    });
+
     router.get('/create', (req, res) => {
       const wallet = Epistery.createWallet();
       res.json({ wallet });

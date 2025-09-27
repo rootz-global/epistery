@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, HashResult, Utils, WalletConfig } from './utils/index.js';
+import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, HashResult, Utils, WalletConfig, KeyExchangeRequest, KeyExchangeResponse } from './utils/index.js';
 import { AquaTree } from 'aqua-js-sdk';
 import { Aquafy } from './utils/Aqua.js';
 
@@ -138,5 +138,58 @@ export class Epistery {
       return undefined;
 
     return result.Hash;
+  }
+
+  public static async handleKeyExchange(request: KeyExchangeRequest, serverWallet: WalletConfig): Promise<KeyExchangeResponse | null> {
+    try {
+      // Verify client's identity by checking signature
+      const expectedMessage = `Epistery Key Exchange - ${request.clientAddress} - ${request.challenge}`;
+
+      if (request.message !== expectedMessage) {
+        console.error('Key exchange message mismatch');
+        return null;
+      }
+
+      // Verify the signature matches the client's address
+      const recoveredAddress = ethers.utils.verifyMessage(request.message, request.signature);
+      if (recoveredAddress !== request.clientAddress) {
+        console.error('Client identity verification failed');
+        return null;
+      }
+
+      // Generate server challenge and create response message
+      const serverChallenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
+      const responseMessage = `Epistery Server Response - ${serverWallet.address} - ${serverChallenge}`;
+
+      // Sign the response with server's private key
+      const serverEthersWallet = ethers.Wallet.fromMnemonic(serverWallet.mnemonic);
+      const serverSignature = await serverEthersWallet.signMessage(responseMessage);
+
+      // Define available services (can be extended)
+      const services = [
+        'data-write',
+        'data-read',
+        'identity-verification',
+        'blockchain-interaction'
+      ];
+
+      const response: KeyExchangeResponse = {
+        serverAddress: serverWallet.address,
+        serverPublicKey: serverWallet.publicKey,
+        services: services,
+        challenge: serverChallenge,
+        signature: serverSignature,
+        identified: true,
+        authenticated: false,
+        profile:undefined
+      };
+
+      console.log(`Key exchange successful with client: ${request.clientAddress}`);
+      return response;
+
+    } catch (error) {
+      console.error('Key exchange error:', error);
+      return null;
+    }
   }
 }
