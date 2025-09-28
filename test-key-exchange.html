@@ -55,6 +55,7 @@
                     updateStatus('Key exchange successful!', 'success');
                     displayOutput({
                         'Client Address': status.client.address,
+                        'Wallet Source': status.client.source || 'unknown',
                         'Server Address': status.server.address,
                         'Available Services': status.server.services,
                         'Identification Status': status.server.identified ? 'Identified' : 'Not Identified',

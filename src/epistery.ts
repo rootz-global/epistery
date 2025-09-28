@@ -142,17 +142,21 @@ export class Epistery {
 
   public static async handleKeyExchange(request: KeyExchangeRequest, serverWallet: WalletConfig): Promise<KeyExchangeResponse | null> {
     try {
+
       // Verify client's identity by checking signature
       const expectedMessage = `Epistery Key Exchange - ${request.clientAddress} - ${request.challenge}`;
 
       if (request.message !== expectedMessage) {
         console.error('Key exchange message mismatch');
+        console.error('Expected:', expectedMessage);
+        console.error('Received:', request.message);
         return null;
       }
 
       // Verify the signature matches the client's address
       const recoveredAddress = ethers.utils.verifyMessage(request.message, request.signature);
-      if (recoveredAddress !== request.clientAddress) {
+      
+      if (recoveredAddress.toLowerCase() !== request.clientAddress.toLowerCase()) {
         console.error('Client identity verification failed');
         return null;
       }
@@ -184,7 +188,6 @@ export class Epistery {
         profile:undefined
       };
 
-      console.log(`Key exchange successful with client: ${request.clientAddress}`);
       return response;
 
     } catch (error) {

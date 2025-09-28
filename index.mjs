@@ -55,6 +55,7 @@ class EpisteryAttach {
     const library = {
       "client.js": path.resolve(__dirname, "client/client.js"),
       "witness.js": path.resolve(__dirname, "client/witness.js"),
+      "wallet.js": path.resolve(__dirname, "client/wallet.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
     };
@@ -103,7 +104,19 @@ class EpisteryAttach {
       res.send(template);
     });
 
-    // API routes using the 'src/epistery.ts' defined functions
+    // Main status endpoint (simplified path)
+    router.get('/', (req, res) => {
+      const serverWallet = this.domain;
+
+      if (!serverWallet) {
+        return res.status(500).json({ error: 'Server wallet not found' });
+      }
+
+      const status = Epistery.getStatus({}, serverWallet);
+      res.json(status);
+    });
+
+    // API routes using the 'src/epistery.ts' defined functions  
     router.get('/api/status', (req, res) => {
       const serverWallet = this.domain;
 
@@ -118,7 +131,6 @@ class EpisteryAttach {
     // Key exchange endpoint - handles POST requests for FIDO-like key exchange
     router.post('/connect', express.json(), async (req, res) => {
       try {
-        console.log("++ start connect")
         const serverWallet = this.domain;
 
         if (!serverWallet?.wallet) {
@@ -135,7 +147,6 @@ class EpisteryAttach {
           address:req.body.clientAddress,
           publicKey:req.body.clientPublicKey
         }
-        console.log(`++ ${JSON.stringify(clientInfo)}`)
         req.app.locals.episteryClient = clientInfo;
         if (this.options.authentication) {
           keyExchangeResponse.profile = await this.options.authentication.call(this.options.authentication,clientInfo);

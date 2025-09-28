@@ -84,6 +84,7 @@ export interface KeyExchangeRequest {
   challenge: string;
   message: string;
   signature: string;
+  walletSource?: string;
 }
 
 export interface KeyExchangeResponse {
