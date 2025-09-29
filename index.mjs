@@ -116,7 +116,7 @@ class EpisteryAttach {
       res.json(status);
     });
 
-    // API routes using the 'src/epistery.ts' defined functions  
+    // API routes using the 'src/epistery.ts' defined functions
     router.get('/api/status', (req, res) => {
       const serverWallet = this.domain;
 
@@ -128,7 +128,7 @@ class EpisteryAttach {
       res.json(status);
     });
 
-    // Key exchange endpoint - handles POST requests for FIDO-like key exchange
+    // Key exchange endpoint - handles POST requests for key exchange
     router.post('/connect', express.json(), async (req, res) => {
       try {
         const serverWallet = this.domain;
@@ -147,14 +147,13 @@ class EpisteryAttach {
           address:req.body.clientAddress,
           publicKey:req.body.clientPublicKey
         }
-        req.app.locals.episteryClient = clientInfo;
         if (this.options.authentication) {
-          keyExchangeResponse.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
-          keyExchangeResponse.authenticated = !!keyExchangeResponse.profile;
+          clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
+          clientInfo.authenticated = !!clientInfo.profile;
         }
+        req.app.locals.episteryClient = clientInfo;
 
-        res.json(keyExchangeResponse);
-
+        res.json(Object.assign(keyExchangeResponse,{profile:clientInfo.profile,authenticated:clientInfo.authenticated}));
       } catch (error) {
         console.error('Key exchange error:', error);
         res.status(500).json({ error: 'Internal server error during key exchange' });
