@@ -5,6 +5,7 @@ import { Aquafy } from './utils/Aqua.js';
 
 export class Epistery {
   private static ipfsApiUrl: string | undefined;
+  private static ipfsGatewayUrl: string | undefined;
   private static isInitialized: boolean = false;
 
   constructor() {}
@@ -15,6 +16,7 @@ export class Epistery {
 
     const config = Utils.GetConfig()
     Epistery.ipfsApiUrl = config.data.ipfs?.url || process.env.IPFS_URL as string || 'http://127.0.0.1:5001/api/v0';
+    Epistery.ipfsGatewayUrl = config.data.ipfs?.gateway || 'http://localhost:8080';
     await Epistery.initIPFS();
 
     Epistery.isInitialized = true;
@@ -98,7 +100,7 @@ export class Epistery {
     const hash:string | undefined = await Epistery.addToIPFS(jsonString);
 
     ipfsData.ipfsHash = hash;
-    ipfsData.ipfsUrl = `http://localhost:8080/ipfs/${hash}`;
+    ipfsData.ipfsUrl = `${Epistery.ipfsGatewayUrl}/ipfs/${hash}`;
 
     return ipfsData;
   }

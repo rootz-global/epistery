@@ -25,6 +25,7 @@ export interface ProfileConfig {
 
 export interface IPFSConfig {
   url: string;
+  gateway?: string;
 }
 
 export interface RootConfig {
