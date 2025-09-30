@@ -189,6 +189,45 @@ class EpisteryAttach {
       }
     });
 
+    // Domain initialization endpoint - allows Rhonda to initialize domain with custom provider
+    router.post('/domain/initialize', express.json(), async (req, res) => {
+      try {
+        const domain = req.hostname;
+        const { provider } = req.body;
+        
+        if (!provider || !provider.name || !provider.chainId || !provider.rpcUrl) {
+          return res.status(400).json({ error: 'Invalid provider configuration' });
+        }
+
+        // Check if domain already exists
+        const existingConfig = Utils.GetDomainInfo(domain);
+        if (existingConfig && existingConfig.wallet && !existingConfig.pending) {
+          return res.status(400).json({ error: 'Domain already initialized' });
+        }
+
+        // Create domain config with custom provider (marked as pending)
+        const config = Utils.GetConfig();
+        const domainConfig = {
+          domain: domain,
+          provider: {
+            chainId: provider.chainId,
+            name: provider.name,
+            rpc: provider.rpcUrl
+          },
+          pending: true  // Mark as pending until claim is complete
+        };
+
+        config.saveDomain(domain, domainConfig);
+        console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
+        
+        res.json({ status: 'success', message: 'Domain initialized with custom provider' });
+        
+      } catch (error) {
+        console.error('Domain initialization error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // // Status and service projection
     // router.get('/', (req, res) => {
     //
