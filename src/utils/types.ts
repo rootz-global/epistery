@@ -28,10 +28,14 @@ export interface IPFSConfig {
   gateway?: string;
 }
 
+export interface RootDefaults {
+  provider: ProviderConfig;
+}
+
 export interface RootConfig {
   profile?: ProfileConfig;
   ipfs?: IPFSConfig;
-  provider: ProviderConfig;
+  default?: RootDefaults;
 }
 
 export interface ClientWalletInfo {

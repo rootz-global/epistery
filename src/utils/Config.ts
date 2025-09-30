@@ -26,20 +26,8 @@ export class Config {
   }
 
   private initialize(): void {
-    //TODO: These defaults should be returned to the default.ini used to mint .epistery/config.ini, then customized in config.ini
-    const chainId: number | undefined = process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID, 10) : undefined;
-    const chainName:string = (process.env.CHAIN_NAME) as string;
-    const chainRpcUrl:string = (process.env.CHAIN_RPC_URL) as string;
-    const defaultConfig: RootConfig = {
-      provider: {
-        chainId: chainId,
-        name: chainName,
-        rpc: chainRpcUrl,
-      }
-    };
-
-    this.data = defaultConfig;
-
+    const fileData = fs.readFileSync(resolve('./default.ini'));
+    this.data = ini.decode(fileData.toString()) as RootConfig;
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir, { recursive: true });
     }

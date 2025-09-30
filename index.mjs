@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Epistery } from './dist/epistery.js';
 import { Utils } from './dist/utils/Utils.js';
+import { Config } from './dist/utils/Config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +23,7 @@ class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
     this.domain = null;
+    this.config = new Config()
   }
 
   static async connect(options) {
@@ -194,8 +196,13 @@ class EpisteryAttach {
       try {
         const domain = req.hostname;
         const { provider } = req.body;
-        
+
+        console.log(`[debug] Domain initialization request for: ${domain}`);
+        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
+        console.log(`[debug] Full request body:`, JSON.stringify(req.body, null, 2));
+
         if (!provider || !provider.name || !provider.chainId || !provider.rpcUrl) {
+          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpcUrl=${!!provider?.rpcUrl}`);
           return res.status(400).json({ error: 'Invalid provider configuration' });
         }
 
@@ -219,9 +226,9 @@ class EpisteryAttach {
 
         config.saveDomain(domain, domainConfig);
         console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
-        
+
         res.json({ status: 'success', message: 'Domain initialized with custom provider' });
-        
+
       } catch (error) {
         console.error('Domain initialization error:', error);
         res.status(500).json({ error: error.message });

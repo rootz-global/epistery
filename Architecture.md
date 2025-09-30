@@ -56,7 +56,7 @@ The root config file is structured into the following sections
   email=
 [ipfs]
  url=https://rootz.digital/api/v0
-[defaultDomainConfig.provider]
+[default.provider]
 // When a domain is initialized, it defaults to this provide info which is subsequencly saved with the domain config.ini
  chainId=
  name=
