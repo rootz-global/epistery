@@ -191,7 +191,7 @@ class EpisteryAttach {
       }
     });
 
-    // Domain initialization endpoint - allows Rhonda to initialize domain with custom provider
+    // Domain initialization endpoint - use to set up domain with custom provider
     router.post('/domain/initialize', express.json(), async (req, res) => {
       try {
         const domain = req.hostname;
@@ -207,22 +207,16 @@ class EpisteryAttach {
         }
 
         // Check if domain already exists
-        const existingConfig = Utils.GetDomainInfo(domain);
-        if (existingConfig && existingConfig.wallet && !existingConfig.pending) {
-          return res.status(400).json({ error: 'Domain already initialized' });
+        let domainConfig = Utils.GetDomainInfo(domain);
+        if (!domainConfig) domainConfig = {domain: domain,pending:true};
+        if (!domainConfig.provider) domainConfig.provider = {
+          chainId: provider.chainId,
+          name: provider.name,
+          rpc: provider.rpcUrl
         }
 
         // Create domain config with custom provider (marked as pending)
         const config = Utils.GetConfig();
-        const domainConfig = {
-          domain: domain,
-          provider: {
-            chainId: provider.chainId,
-            name: provider.name,
-            rpc: provider.rpcUrl
-          },
-          pending: true  // Mark as pending until claim is complete
-        };
 
         config.saveDomain(domain, domainConfig);
         console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
