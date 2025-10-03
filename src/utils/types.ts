@@ -19,8 +19,23 @@ export interface DomainConfig {
   wallet?: WalletConfig;
 }
 
-export interface RootConfig {
+export interface ProfileConfig {
+    email?: string;
+}
+
+export interface IPFSConfig {
+  url: string;
+  gateway?: string;
+}
+
+export interface RootDefaults {
   provider: ProviderConfig;
+}
+
+export interface RootConfig {
+  profile?: ProfileConfig;
+  ipfs?: IPFSConfig;
+  default?: RootDefaults;
 }
 
 export interface ClientWalletInfo {
@@ -66,4 +81,24 @@ export interface EpisteryWrite {
   signedBy: string;
   ipfsHash: string | undefined;
   ipfsUrl: string | undefined;
+}
+
+export interface KeyExchangeRequest {
+  clientAddress: string;
+  clientPublicKey: string;
+  challenge: string;
+  message: string;
+  signature: string;
+  walletSource?: string;
+}
+
+export interface KeyExchangeResponse {
+  serverAddress: string;
+  serverPublicKey: string;
+  services: string[];
+  challenge: string;
+  signature: string;
+  identified: boolean;
+  authenticated: boolean;
+  profile: object | undefined;
 }

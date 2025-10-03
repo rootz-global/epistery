@@ -4,7 +4,7 @@ import ini from 'ini';
 import { RootConfig, DomainConfig } from './types';
 
 export class Config {
-  public readonly rootName: string;
+  public rootName: string;
   public readonly homeDir: string;
   public readonly configDir: string;
   public readonly configFile: string;
@@ -13,7 +13,7 @@ export class Config {
   private _activeDomain: string = "";
 
   constructor() {
-    this.rootName = 'data-wallet';
+    this.rootName = 'epistery';
     this.homeDir = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || '';
     this.configDir = join(this.homeDir, '.' + this.rootName);
     this.configFile = join(this.configDir, 'config.ini');
@@ -26,19 +26,8 @@ export class Config {
   }
 
   private initialize(): void {
-    const chainId: number | undefined = process.env.CHAIN_ID ? parseInt(process.env.CHAIN_ID, 10) : undefined;
-    const chainName:string = (process.env.CHAIN_NAME) as string;
-    const chainRpcUrl:string = (process.env.CHAIN_RPC_URL) as string;
-    const defaultConfig: RootConfig = {
-      provider: {
-        chainId: chainId,
-        name: chainName,
-        rpc: chainRpcUrl,
-      }
-    };
-
-    this.data = defaultConfig;
-
+    const fileData = fs.readFileSync(resolve('./default.ini'));
+    this.data = ini.decode(fileData.toString()) as RootConfig;
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir, { recursive: true });
     }

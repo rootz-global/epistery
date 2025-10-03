@@ -7,7 +7,10 @@
     "build": "tsc",
     "start": "npm run build && node test/server.mjs",
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
-    "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts"
+    "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
+    "certify": "node cli/index.mjs certify",
+    "initialize": "node cli/index.mjs initialize",
+    "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify"
   },
   "dependencies": {
     "@types/cookie-parser": "^1.4.9",
