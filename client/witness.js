@@ -299,6 +299,42 @@ export default class Witness {
     }
   }
 
+  async readEvent() {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
+        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+      });
+
+      let result = await fetch('/.epistery/data/read', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Read failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute read event:', e);
+      throw e;
+    }
+  }
+
   async writeEvent(data) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');

@@ -196,9 +196,28 @@ class EpisteryAttach {
         }
 
         res.json(result);
-
       } catch (error) {
         console.error('Write error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/data/read', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo } = req.body;
+
+        if (!clientWalletInfo) {
+          return res.status(400).json({ error: 'Missing clientWalletInfo' });
+        }
+
+        const result = await Epistery.read(clientWalletInfo);
+        if (!result) {
+          return res.status(500).json({ error: 'Read operation failed' });
+        }
+
+        res.json(result);
+      } catch (error) {
+        console.error('Read error:', error);
         res.status(500).json({ error: error.message });
       }
     });

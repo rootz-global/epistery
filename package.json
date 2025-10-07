@@ -10,7 +10,9 @@
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
     "certify": "node cli/index.mjs certify",
     "initialize": "node cli/index.mjs initialize",
-    "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify"
+    "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify",
+    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network sepolia",
+    "verify:agent": "node scripts/verify-agent.js"
   },
   "dependencies": {
     "@types/cookie-parser": "^1.4.9",

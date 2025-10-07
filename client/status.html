@@ -31,22 +31,22 @@
         const writeButton = document.getElementById('write-button');
         const writeInput = document.getElementById('write-input');
         const writeOutput = document.getElementById('write-output');
-        
+
         writeButton.onclick = async () => {
           try {
             writeButton.disabled = true;
             writeButton.textContent = 'Writing...';
             writeOutput.innerHTML = '<div class="loading">Submitting to Epistery...</div>';
-            
+
             const inputData = writeInput.value || 'Default test message';
-            
+
             const result = await witness.writeEvent({
               message: inputData,
               timestamp: new Date().toISOString(),
               page: 'status',
               url: location.href
             });
-            
+
             writeOutput.innerHTML = `
               <div class="success">
                 <h4>Write Successful!</h4>
@@ -79,7 +79,7 @@
                 ` : ''}
               </div>
             `;
-            
+
             writeInput.value = '';
           }
           catch (error) {
@@ -94,6 +94,80 @@
           finally {
             writeButton.disabled = false;
             writeButton.textContent = 'Write to Epistery';
+          }
+        };
+
+        // Set up read event button
+        const readButton = document.getElementById('read-button');
+        const readOutput = document.getElementById('read-output');
+
+        readButton.onclick = async () => {
+          try {
+            readButton.disabled = true;
+            readButton.textContent = 'Reading...';
+            readOutput.innerHTML = '<div class="loading">Reading from Agent contract...</div>';
+
+            const result = await witness.readEvent();
+
+            if (!result) {
+              readOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Data Found</h4>
+                  <p>No data has been written to the contract for this wallet yet.</p>
+                </div>
+              `;
+              return;
+            }
+
+            readOutput.innerHTML = `
+              <div class="success">
+                <h4>Read Successful!</h4>
+                <div class="result-section">
+                  <h5>IPFS Storage:</h5>
+                  <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
+                  <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
+                </div>
+                <div class="result-section">
+                  <h5>Cryptographic Proof:</h5>
+                  <p><strong>Message Hash:</strong> <code>${result.data.messageHash || 'N/A'}</code></p>
+                  <p><strong>Signature:</strong> <code>${result.data.signature || 'N/A'}</code></p>
+                  <p><strong>Signed By:</strong> <code>${result.data.signedBy || 'N/A'}</code></p>
+                </div>
+                <div class="result-section">
+                  <h5>Metadata:</h5>
+                  <p><strong>Timestamp:</strong> ${result.data.timestamp || 'N/A'}</p>
+                  <p><strong>Client Address:</strong> <code>${result.data.client?.address || 'N/A'}</code></p>
+                  <p><strong>Server Domain:</strong> ${result.data.server?.domain || 'N/A'}</p>
+                </div>
+                <div class="result-section">
+                  <h5>Raw Data:</h5>
+                  <pre><code>${JSON.stringify(result.data.data, null, 2)}</code></pre>
+                </div>
+                ${result.data.aquaTree ? `
+                <div class="result-section">
+                  <h5>Aqua Tree:</h5>
+                  <pre><code>${JSON.stringify(result.data.aquaTree, null, 2)}</code></pre>
+                </div>
+                ` : ''}
+                <div class="result-section">
+                  <h5>Full IPFS Data:</h5>
+                  <pre><code>${JSON.stringify(result.data, null, 2)}</code></pre>
+                </div>
+              </div>
+            `;
+          }
+          catch (error) {
+            readOutput.innerHTML = `
+              <div class="error">
+                  <h4>Read Failed</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          }
+          finally {
+            readButton.disabled = false;
+            readButton.textContent = 'Read from Contract';
           }
         };
       }
@@ -119,6 +193,10 @@
       .write-button { background-color: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
       .write-button:hover { background-color: #0056b3; }
       .write-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .read-section { background-color: #e7f3ff; padding: 20px; border-radius: 5px; margin: 20px 0; }
+      .read-button { background-color: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+      .read-button:hover { background-color: #218838; }
+      .read-button:disabled { background-color: #6c757d; cursor: not-allowed; }
       .success { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .error { background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .loading { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 5px; margin: 10px 0; }
@@ -152,7 +230,14 @@
         <button id="write-button" class="write-button">Sign Message (w/AQUA)</button>
         <div id="write-output"></div>
     </div>
-    
+
+    <h2>Read Event Test</h2>
+    <div class="read-section">
+        <p>Read your data from the Agent smart contract and IPFS:</p>
+        <button id="read-button" class="read-button">Read from Contract</button>
+        <div id="read-output"></div>
+    </div>
+
     <h2>Timestamp</h2>
     <p><strong>Generated:</strong> {{timestamp}}</p>
 </body>
