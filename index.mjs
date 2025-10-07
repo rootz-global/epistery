@@ -152,8 +152,20 @@ class EpisteryAttach {
         if (this.options.authentication) {
           clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
           clientInfo.authenticated = !!clientInfo.profile;
+          console.log('[epistery] Authentication result:', {
+            address: clientInfo.address,
+            hasProfile: !!clientInfo.profile,
+            authenticated: clientInfo.authenticated,
+            hasCallback: !!this.options.onAuthenticated
+          });
         }
-        req.app.locals.episteryClient = clientInfo;
+        req.episteryClient = clientInfo;
+
+        // Call onAuthenticated hook if provided
+        if (this.options.onAuthenticated && clientInfo.authenticated) {
+          console.log('[epistery] Calling onAuthenticated callback');
+          await this.options.onAuthenticated(clientInfo, req, res);
+        }
 
         res.json(Object.assign(keyExchangeResponse,{profile:clientInfo.profile,authenticated:clientInfo.authenticated}));
       } catch (error) {
