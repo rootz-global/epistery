@@ -17,10 +17,10 @@ This is a typescript project build on express.
 | /client                | Assets and scripts intended to be embedded in the browser page                                                   |
 | /client/client.js      | client-side counterpart to /epistery.ts.                                                                         |
 | /client/ethers.js      | Core blockchain tools                                                                                            |
-| /client/status.html    | The template page rendered by /.epistery/status. This is the only human readable content presented by /.epistery |
+| /client/status.html    | The template page rendered by /.well-known/epistery/status. This is the only human readable content presented by /.epistery |
 | /client/witness.js     |                                                                                                                  |
 | /src                   | implementation                                                                                                   |
-| /src/controllers/      | Controllers provide discreet services usually behind a named route /.epistery/[controller]                       |
+| /src/controllers/      | Controllers provide discreet services usually behind a named route /.well-known/epistery/[controller]                       |
 | /src/utils             | Shared tools that assist the controllers                                                                         |
 | /src/utils/Aqua.ts     | Aqua protocol implementation that underlies the data wallet implementation                                       |
 | /src/utils/Config.ts   | Interface to the $HOME/.epistory/config.ini and dependent configuration data                                     |
@@ -38,13 +38,13 @@ This is a typescript project build on express.
 The core purpose of the epistery plugin is manage the creation and manipulation of data wallets. This manifests as api's
 invoked by the browser and partner sites
 
-All of the Data Wallet functionality is found in the in /src/controllers/DataWalletController, operating behind .epistery/data. Utils
+All of the Data Wallet functionality is found in the in /src/controllers/DataWalletController, operating behind .well-known/epistery/data. Utils
 is used for common cryto functionaility and other tools
 
 ## Signing Wallets
 
 ## Config File
-System configuration is managed with ini files in $HOME/.epistery. THe root defines config.ini which has system wide
+System configuration is managed with ini files in $HOME/.epistery. The root defines config.ini which has system wide
 settings. The default settings are captured in default.ini. Each domain that has been initialized will have a folder
 with it's own config.ini file, as well as key files and other persistent settings.
 

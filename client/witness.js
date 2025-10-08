@@ -21,7 +21,7 @@ async function ensureEthers() {
 
   // Dynamically import ethers from the epistery lib endpoint
   try {
-    const ethersModule = await import('/.epistery/lib/ethers.js');
+    const ethersModule = await import('/.well-known/epistery/lib/ethers.js');
     ethers = ethersModule.ethers || ethersModule.default || ethersModule;
     // Make it available globally for future use
     if (typeof window !== 'undefined') {
@@ -134,7 +134,7 @@ export default class Witness {
 
   async fetchServerInfo() {
     try {
-      const response = await fetch('/.epistery');
+      const response = await fetch('/.well-known/epistery');
       if (response.ok) {
         const serverInfo = await response.json();
         this.serverInfo = serverInfo.server;
@@ -247,7 +247,7 @@ export default class Witness {
         walletSource: this.wallet.source
       };
 
-      const response = await fetch('/.epistery/connect', {
+      const response = await fetch('/.well-known/epistery/connect', {
         method: 'POST',
         credentials: 'include',
         headers: {'Content-Type': 'application/json'},
@@ -322,7 +322,7 @@ export default class Witness {
         futureOwnerWalletAddress: futureOwnerWalletAddress
       });
 
-      let result = await fetch('/.epistery/data/ownership', options);
+      let result = await fetch('/.well-known/epistery/data/ownership', options);
 
       if (result.ok) {
         return await result.json();
@@ -358,7 +358,7 @@ export default class Witness {
         clientWalletInfo: clientWalletInfo,
       });
 
-      let result = await fetch('/.epistery/data/read', options);
+      let result = await fetch('/.well-known/epistery/data/read', options);
       if (result.status === 204) {
         return null;
       }
@@ -399,7 +399,7 @@ export default class Witness {
         data: data
       });
 
-      let result = await fetch('/.epistery/data/write', options);
+      let result = await fetch('/.well-known/epistery/data/write', options);
 
       if (result.ok) {
         return await result.json();

@@ -8,21 +8,21 @@ business of clicking, tipping, stamping and cloaking, currently run by commercia
 
 Epistery provides the primitive tools for creating and rendering data-wallets.
 
-* /.epistery - json data presenting the signing identity/wallet of the site
-* /.epistery/status - human version of the above, plus overview of the site's activity and interactive features like comments, ratings.
-* /.epistery/data/* - data-wallet module api for mint, manipulate, render and delete
-* /.well-known - Ephemeral ACME url for authorizing ssl cert assignment.
+* /.well-known/epistery - json data presenting the signing identity/wallet of the site
+* /.well-known/epistery/status - human version of the above, plus overview of the site's activity and interactive features like comments, ratings.
+* /.well-known/epistery/data/* - data-wallet module api for mint, manipulate, render and delete
+* /.well-known/acme - Ephemeral ACME url for authorizing ssl cert assignment.
 
 ## Usage
 ```bash
 npm install epistery
 npm run initialize mydomain.com
 ```
-Initialize creates a wallet for the domain. The default chain provider is established in `~/.epistery/config.ini`.
-The wallet keys are written to `~/.epistery/{domain}/config.ini`.
+Initialize creates a wallet for the domain. The default chain provider is established in `~/.well-known/epistery/config.ini`.
+The wallet keys are written to `~/.well-known/epistery/{domain}/config.ini`.
 
 To acquire an SSL cert for the domain use certify. This call uses ACME like letsencrypt. The keys are stored in
-`~/.epistery/{domain}/`. Set profile information such as email and business in the root config.ini. Email is required.
+`~/.well-known/epistery/{domain}/`. Set profile information such as email and business in the root config.ini. Email is required.
 The domain name must resolve to the host server and the epistery module needs to be running to confirm the handshake.
 ```bash
 npm run certify mydomain.com
