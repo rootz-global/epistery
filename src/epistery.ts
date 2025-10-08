@@ -1,7 +1,8 @@
-import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, HashResult, Utils, WalletConfig, KeyExchangeRequest, KeyExchangeResponse } from './utils/index.js';
-import { BigNumber, BigNumberish, ethers, Wallet } from 'ethers';
+import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, Utils, WalletConfig, KeyExchangeRequest, KeyExchangeResponse } from './utils/index.js';
+import { ethers, Wallet } from 'ethers';
 import { AquaTree } from 'aqua-js-sdk';
 import { Aquafy } from './utils/Aqua.js';
+import * as AgentArtifact from '../artifacts/contracts/agent.sol/Agent.json';
 
 export class Epistery {
   private static ipfsApiUrl: string | undefined;
@@ -20,62 +21,6 @@ export class Epistery {
     await Epistery.initIPFS();
 
     Epistery.isInitialized = true;
-  }
-
-  public static async fundWallet(from: Wallet, to: Wallet, amount: BigNumberish): Promise<string | null> {
-    try {
-      if (!from || !to)
-        return null;
-
-      const gasPrice: ethers.BigNumber = await from.getGasPrice();
-      const gasLimit: ethers.BigNumberish = 25000;
-      const fundingTxn: ethers.providers.TransactionResponse = await from.sendTransaction({
-        to: to.address,
-        value: amount,
-        gasLimit: gasLimit,
-        gasPrice: gasPrice
-      });
-      console.log(`Funding txn sent \nfrom:${from.address}\nto:${to.address}`);
-      const result = await fundingTxn.wait();
-      if (!result)
-        return null;
-
-      console.log(`Funding Txn Result: ${result.transactionHash}`)
-      return result.transactionHash;
-    }
-    catch (error) {
-      throw new Error(`Error while funding wallet: ${error}`);
-    }
-  }
-
-  public static async completeGenesis(wallet: Wallet): Promise<string | null> {
-    try {
-      const genesisData = {
-        owner: wallet.address,
-        createdAt: Date.now(),
-        type: 'genesis'
-      };
-
-      const gasPrice: ethers.BigNumber = await wallet.getGasPrice();
-      const gasLimit: ethers.BigNumberish = 25000;
-      const genesisTxn = await wallet.sendTransaction({
-        to: wallet.address,
-        value: ethers.utils.parseEther('0.000'),
-        data: ethers.utils.toUtf8Bytes(JSON.stringify(genesisData)),
-        gasLimit: gasLimit,
-        gasPrice: gasPrice
-      });
-
-      const result = await genesisTxn.wait();
-      if (!result)
-        return null;
-
-      console.log(`Genesis Txn Result: ${result.transactionHash}`)
-      return result.transactionHash;
-    }
-    catch (error) {
-      throw new Error(`Failed to complete genesis: ${error}`);
-    }
   }
 
   public static createWallet(): ClientWalletInfo {
@@ -109,6 +54,19 @@ export class Epistery {
     return status;
   }
 
+  public static async read(clientWalletInfo: ClientWalletInfo): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const result = await Utils.ReadFromContract(clientWallet);
+      return result;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
   public static async write(clientWalletInfo: ClientWalletInfo, data: any): Promise<EpisteryWrite | null> {
     // Create real wallet from client info
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
@@ -124,22 +82,22 @@ export class Epistery {
     const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
     
     const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
-    const serverHasEnough:boolean = await Epistery.hasEnoughFunds(serverWallet, amount);
+    const serverHasEnough:boolean = await Utils.HasEnoughFunds(serverWallet, amount);
     if (!serverHasEnough) {
       console.log("Server wallet does not have enough funds.");
       return null;
     }
 
-    const clientHasEnough:boolean = await Epistery.hasEnoughFunds(clientWallet, amount);
+    const clientHasEnough:boolean = await Utils.HasEnoughFunds(clientWallet, amount);
     if (!clientHasEnough) {
-      const fundTxnHash: string | null = await Epistery.fundWallet(serverWallet, clientWallet, amount);
+      const fundTxnHash: string | null = await Utils.FundWallet(serverWallet, clientWallet, amount);
       if (!fundTxnHash) return null;
     }
 
     // Create Genesis block (self-transfer)
-    const genesisTxnHash: string | null = await Epistery.completeGenesis(clientWallet);
+    /* const genesisTxnHash: string | null = await Epistery.completeGenesis(clientWallet);
     if (!genesisTxnHash)
-      return null;
+      return null; */
 
     // Aquafy the message
     const dataString: string = JSON.stringify(data);
@@ -181,7 +139,34 @@ export class Epistery {
     ipfsData.ipfsHash = hash;
     ipfsData.ipfsUrl = `${Epistery.ipfsGatewayUrl}/ipfs/${hash}`;
 
-    return ipfsData;
+    // Write to Agent smart contract
+    try {
+      const receipt = await Utils.WriteToContract(clientWallet, hash);
+      if (!receipt)
+        throw new Error("Error while writing to contract. Receipt was null.");
+      return ipfsData;
+    }
+    catch(error) {
+      throw error;
+    }
+
+  }
+  
+  /**
+    * Returns true if successfully transferred ownership, else false
+  */
+  public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+    
+    try {
+      const receipt = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress);
+      if (!receipt) return false;
+      return true;
+    }
+    catch(error) {
+      throw error;
+    }
   }
 
   private static async initIPFS(): Promise<void> {
@@ -275,26 +260,5 @@ export class Epistery {
       console.error('Key exchange error:', error);
       return null;
     }
-  }
-
-  private static async hasEnoughFunds(wallet:Wallet, minimumAmountToSend:ethers.BigNumber): Promise<boolean> {
-    if (!wallet)
-      return false;
-
-    const balance: ethers.BigNumber = await wallet.getBalance();
-    const gasPrice: ethers.BigNumber = await wallet.getGasPrice();
-    const gasLimit: ethers.BigNumber = ethers.BigNumber.from(21000);
-    const totalGasCost: ethers.BigNumber = gasPrice.mul(gasLimit);
-
-    console.log(`Balance from ${wallet.address}: ${ethers.utils.formatEther(balance)} ETH`);
-    console.log(`Gas Price: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
-    console.log(`Total Gas Cost: ${ethers.utils.formatEther(totalGasCost)} ETH`);
-
-    const totalNeeded: ethers.BigNumber = totalGasCost.add(minimumAmountToSend);
-    if (balance.lt(totalNeeded)) {
-      return false; 
-    }
-
-    return true;
   }
 }

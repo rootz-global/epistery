@@ -1,6 +1,7 @@
-import { ethers } from 'ethers';
+import { BigNumberish, ethers, Wallet } from 'ethers';
 import { Config } from './Config';
-import { DomainConfig, WalletConfig } from './types';
+import { DomainConfig } from './types';
+import * as AgentArtifact from '../../artifacts/contracts/agent.sol/Agent.json';
 
 export class Utils {
   private static config: Config;
@@ -73,5 +74,334 @@ export class Utils {
       return {domain:domain};
 
     return domainConfig;
+  }
+
+  public static async ReadFromContract(clientWallet: Wallet): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        clientWallet
+      );
+
+      const ipfsHashes = await agentContract.read();
+
+      if (!ipfsHashes || ipfsHashes.length === 0) {
+        console.log('No data found for this address');
+        return null;
+      }
+
+      console.log(`Data read from Agent contract. Found ${ipfsHashes.length} message(s)`);
+
+      // Fetch the data from IPFS for all hashes
+      const config = Utils.GetConfig();
+      const ipfsGatewayUrl = config.data.ipfs?.gateway || 'http://localhost:8080';
+
+      const allMessages = [];
+      for (let i = 0; i < ipfsHashes.length; i++) {
+        const ipfsHash = ipfsHashes[i];
+        const ipfsUrl = `${ipfsGatewayUrl}/ipfs/${ipfsHash}`;
+
+        try {
+          const response = await fetch(ipfsUrl);
+          if (!response.ok) {
+            console.warn(`Failed to fetch data from IPFS for hash ${ipfsHash}: ${response.status}`);
+            allMessages.push({
+              index: i,
+              ipfsHash: ipfsHash,
+              ipfsUrl: ipfsUrl,
+              data: null,
+              error: `Failed to fetch: ${response.status}`
+            });
+            continue;
+          }
+
+          const ipfsData = await response.json();
+          allMessages.push({
+            index: i,
+            ipfsHash: ipfsHash,
+            ipfsUrl: ipfsUrl,
+            data: ipfsData,
+            error: null
+          });
+        }
+        catch (error) {
+          console.warn(`Error fetching IPFS data for hash ${ipfsHash}:`, error);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          allMessages.push({
+            index: i,
+            ipfsHash: ipfsHash,
+            ipfsUrl: ipfsUrl,
+            data: null,
+            error: errorMessage
+          });
+        }
+      }
+
+      return {
+        count: ipfsHashes.length,
+        messages: allMessages
+      };
+    }
+    catch (error) {
+      console.error('Error reading from Agent contract:', error);
+      throw new Error(`Failed to read from Agent contract: ${error}`);
+    }
+  }
+
+  public static async WriteToContract(clientWallet: Wallet, hash: string | undefined): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        clientWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.write(clientWallet.publicKey, hash);
+        
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract write - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract write failed, using default limit');
+        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await clientWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Call the write function with publicKey and data
+      const tx = await agentContract.write(clientWallet.publicKey, hash, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Data written to Agent contract. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error writing to Agent contract:', error);
+      throw new Error(`Failed to write to Agent contract: ${error}`);
+    }
+  }
+
+  public static async TransferOwnership(clientWallet: Wallet, futureOwnerWalletAddress: string) {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        clientWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerWalletAddress);
+        
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract transferOwnership failed, using default limit');
+        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await clientWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Call the transferOwnership function with pubKey of future owner
+      const tx = await agentContract.transferOwnership(futureOwnerWalletAddress, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Data written to Agent contract. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error transferring ownership:', error);
+      throw new Error(`Failed to transfer ownership: ${error}`);
+    }
+  }
+
+  public static async FundWallet(from: Wallet, to: Wallet, amount: BigNumberish): Promise<string | null> {
+    try {
+      if (!from || !to)
+        return null;
+
+      // Get current gas price and add 20% buffer for price fluctuations
+      const baseGasPrice: ethers.BigNumber = await from.getGasPrice();
+      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Estimate gas for the transaction
+      const estimatedGas: ethers.BigNumber = await from.estimateGas({
+        to: to.address,
+        value: amount
+      });
+
+      // Add 30% buffer to gas limit to avoid UNPREDICTABLE_GAS_LIMIT errors
+      const gasLimit: ethers.BigNumber = estimatedGas.mul(130).div(100); // +30% buffer
+
+      console.log(`Funding wallet with:`);
+      console.log(`  Amount: ${ethers.utils.formatEther(amount)} ETH`);
+      console.log(`  Estimated Gas: ${estimatedGas.toString()}`);
+      console.log(`  Gas Limit (with buffer): ${gasLimit.toString()}`);
+      console.log(`  Gas Price: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
+
+      const fundingTxn: ethers.providers.TransactionResponse = await from.sendTransaction({
+        to: to.address,
+        value: amount,
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Funding txn sent \nfrom:${from.address}\nto:${to.address}`);
+      const result = await fundingTxn.wait();
+      if (!result)
+        return null;
+
+      console.log(`Funding Txn Result: ${result.transactionHash}`)
+      return result.transactionHash;
+    }
+    catch (error) {
+      throw new Error(`Error while funding wallet: ${error}`);
+    }
+  }
+
+  public static async CompleteGenesis(wallet: Wallet): Promise<string | null> {
+    try {
+      const genesisData = {
+        owner: wallet.address,
+        createdAt: Date.now(),
+        type: 'genesis'
+      };
+
+      const data = ethers.utils.toUtf8Bytes(JSON.stringify(genesisData));
+
+      // Get gas price with buffer
+      const baseGasPrice: ethers.BigNumber = await wallet.getGasPrice();
+      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Estimate gas for the transaction
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await wallet.estimateGas({
+          to: wallet.address,
+          value: ethers.utils.parseEther('0.000'),
+          data: data
+        });
+        // Add 30% buffer
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Genesis - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      } catch (error) {
+        console.warn('Gas estimation for genesis failed, using default');
+        gasLimit = ethers.BigNumber.from(30000); // Fallback
+      }
+
+      const genesisTxn = await wallet.sendTransaction({
+        to: wallet.address,
+        value: ethers.utils.parseEther('0.000'),
+        data: data,
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      const result = await genesisTxn.wait();
+      if (!result)
+        return null;
+
+      console.log(`Genesis Txn Result: ${result.transactionHash}`)
+      return result.transactionHash;
+    }
+    catch (error) {
+      throw new Error(`Failed to complete genesis: ${error}`);
+    }
+  }
+
+  public static async HasEnoughFunds(wallet: Wallet, minimumAmountToSend: ethers.BigNumber): Promise<boolean> {
+    if (!wallet)
+      return false;
+
+    try {
+      const balance: ethers.BigNumber = await wallet.getBalance();
+
+      // Get gas price with 20% buffer for fluctuations
+      const baseGasPrice: ethers.BigNumber = await wallet.getGasPrice();
+      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100);
+
+      // Estimate gas for a typical transaction (self-transfer)
+      let estimatedGas: ethers.BigNumber;
+      try {
+        estimatedGas = await wallet.estimateGas({
+          to: wallet.address,
+          value: minimumAmountToSend
+        });
+      } catch (error) {
+        // Fallback to standard 21000 gas for simple transfers if estimation fails
+        console.warn('Gas estimation failed, using default 21000');
+        estimatedGas = ethers.BigNumber.from(21000);
+      }
+
+      // Add 30% buffer to gas estimate
+      const gasLimit: ethers.BigNumber = estimatedGas.mul(130).div(100);
+      const totalGasCost: ethers.BigNumber = gasPrice.mul(gasLimit);
+
+      console.log(`Checking funds for ${wallet.address}:`);
+      console.log(`  Balance: ${ethers.utils.formatEther(balance)} ETH`);
+      console.log(`  Amount to send: ${ethers.utils.formatEther(minimumAmountToSend)} ETH`);
+      console.log(`  Estimated Gas: ${estimatedGas.toString()}`);
+      console.log(`  Gas Limit (with buffer): ${gasLimit.toString()}`);
+      console.log(`  Gas Price (with buffer): ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
+      console.log(`  Total Gas Cost: ${ethers.utils.formatEther(totalGasCost)} ETH`);
+
+      const totalNeeded: ethers.BigNumber = totalGasCost.add(minimumAmountToSend);
+      console.log(`  Total Needed: ${ethers.utils.formatEther(totalNeeded)} ETH`);
+
+      if (balance.lt(totalNeeded)) {
+        console.log(`  Insufficient funds (short by ${ethers.utils.formatEther(totalNeeded.sub(balance))} ETH)`);
+        return false;
+      }
+
+      console.log(`  Sufficient funds`);
+      return true;
+    }
+    catch (error) {
+      console.error('Error checking funds:', error);
+      return false;
+    }
   }
 }

@@ -299,6 +299,82 @@ export default class Witness {
     }
   }
 
+  async transferOwnershipEvent(futureOwnerWalletAddress) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
+        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+      };
+
+      let options = {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        futureOwnerWalletAddress: futureOwnerWalletAddress
+      });
+
+      let result = await fetch('/.epistery/data/ownership', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Transfer ownership failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute transfer ownership event:', e);
+      throw e;
+    }
+  }
+
+  async readEvent() {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
+        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+      });
+
+      let result = await fetch('/.epistery/data/read', options);
+      if (result.status === 204) {
+        return null;
+      }
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Read failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute read event:', e);
+      throw e;
+    }
+  }
+
   async writeEvent(data) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
