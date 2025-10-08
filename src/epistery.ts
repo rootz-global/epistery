@@ -57,10 +57,10 @@ export class Epistery {
   public static async read(clientWalletInfo: ClientWalletInfo): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
-    
+
     try {
-      const {ipfsHash, ipfsUrl, data} = await Utils.ReadFromContract(clientWallet);
-      return { ipfsHash, ipfsUrl, data };
+      const result = await Utils.ReadFromContract(clientWallet);
+      return result;
     }
     catch(error) {
       throw error;
@@ -141,13 +141,32 @@ export class Epistery {
 
     // Write to Agent smart contract
     try {
-      await Utils.WriteToContract(clientWallet, hash);
+      const receipt = await Utils.WriteToContract(clientWallet, hash);
+      if (!receipt)
+        throw new Error("Error while writing to contract. Receipt was null.");
+      return ipfsData;
     }
     catch(error) {
       throw error;
     }
 
-    return ipfsData;
+  }
+  
+  /**
+    * Returns true if successfully transferred ownership, else false
+  */
+  public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+    
+    try {
+      const receipt = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress);
+      if (!receipt) return false;
+      return true;
+    }
+    catch(error) {
+      throw error;
+    }
   }
 
   private static async initIPFS(): Promise<void> {

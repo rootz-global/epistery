@@ -109,7 +109,7 @@
 
             const result = await witness.readEvent();
 
-            if (!result) {
+            if (!result || !result.messages || result.messages.length === 0) {
               readOutput.innerHTML = `
                 <div class="error">
                   <h4>No Data Found</h4>
@@ -119,39 +119,91 @@
               return;
             }
 
+            // Display messages from newest to oldest (reverse array)
+            const messages = [...result.messages].reverse();
+
+            let messagesHtml = '';
+            messages.forEach((message, idx) => {
+              const messageNumber = result.count - idx;
+
+              if (message.error) {
+                messagesHtml += `
+                  <div class="message-card message-error">
+                    <div class="message-header">
+                      <span class="message-number">Message #${messageNumber}</span>
+                      <span class="message-status error">⚠️ Error Loading</span>
+                    </div>
+                    <div class="message-body">
+                      <p><strong>IPFS Hash:</strong> <code>${message.ipfsHash}</code></p>
+                      <p><strong>Error:</strong> ${message.error}</p>
+                    </div>
+                  </div>
+                `;
+              } else {
+                const data = message.data;
+                messagesHtml += `
+                  <div class="message-card">
+                    <div class="message-header">
+                      <span class="message-number">Message #${messageNumber}</span>
+                      <span class="message-timestamp">${data.timestamp || 'N/A'}</span>
+                    </div>
+                    <div class="message-body">
+                      <div class="message-section">
+                        <p><strong>IPFS Hash:</strong> <code class="hash-code">${message.ipfsHash}</code></p>
+                        <p><strong>IPFS URL:</strong> <a href="${message.ipfsUrl}" target="_blank" class="ipfs-link">View on IPFS</a></p>
+                      </div>
+                      <div class="message-section">
+                        <p><strong>Signature:</strong> <code class="sig-code">${data.signature ? data.signature.substring(0, 20) + '...' : 'N/A'}</code></p>
+                        <p><strong>Signed By:</strong> <code>${data.signedBy || 'N/A'}</code></p>
+                      </div>
+                      <div class="message-section">
+                        <p><strong>Data:</strong></p>
+                        <div class="message-data">
+                          <pre><code>${JSON.stringify(data.data, null, 2)}</code></pre>
+                        </div>
+                      </div>
+                      <details class="message-details">
+                        <summary>View Full Details</summary>
+                        <div class="message-section">
+                          <h6>Cryptographic Proof:</h6>
+                          <p><strong>Message Hash:</strong> <code>${data.messageHash || 'N/A'}</code></p>
+                          <p><strong>Full Signature:</strong> <code>${data.signature || 'N/A'}</code></p>
+                        </div>
+                        <div class="message-section">
+                          <h6>Client Info:</h6>
+                          <p><strong>Address:</strong> <code>${data.client?.address || 'N/A'}</code></p>
+                          <p><strong>Public Key:</strong> <code>${data.client?.publicKey || 'N/A'}</code></p>
+                        </div>
+                        <div class="message-section">
+                          <h6>Server Info:</h6>
+                          <p><strong>Domain:</strong> ${data.server?.domain || 'N/A'}</p>
+                          <p><strong>Address:</strong> <code>${data.server?.address || 'N/A'}</code></p>
+                        </div>
+                        ${data.aquaTree ? `
+                        <div class="message-section">
+                          <h6>Aqua Tree:</h6>
+                          <pre><code>${JSON.stringify(data.aquaTree, null, 2)}</code></pre>
+                        </div>
+                        ` : ''}
+                        <div class="message-section">
+                          <h6>Full IPFS Data:</h6>
+                          <pre><code>${JSON.stringify(data, null, 2)}</code></pre>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                `;
+              }
+            });
+
             readOutput.innerHTML = `
               <div class="success">
-                <h4>Read Successful!</h4>
-                <div class="result-section">
-                  <h5>IPFS Storage:</h5>
-                  <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
-                  <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
+                <div class="messages-summary">
+                  <h4>Read Successful!</h4>
+                  <p>Found <strong>${result.count}</strong> message(s) stored on the blockchain</p>
                 </div>
-                <div class="result-section">
-                  <h5>Cryptographic Proof:</h5>
-                  <p><strong>Message Hash:</strong> <code>${result.data.messageHash || 'N/A'}</code></p>
-                  <p><strong>Signature:</strong> <code>${result.data.signature || 'N/A'}</code></p>
-                  <p><strong>Signed By:</strong> <code>${result.data.signedBy || 'N/A'}</code></p>
-                </div>
-                <div class="result-section">
-                  <h5>Metadata:</h5>
-                  <p><strong>Timestamp:</strong> ${result.data.timestamp || 'N/A'}</p>
-                  <p><strong>Client Address:</strong> <code>${result.data.client?.address || 'N/A'}</code></p>
-                  <p><strong>Server Domain:</strong> ${result.data.server?.domain || 'N/A'}</p>
-                </div>
-                <div class="result-section">
-                  <h5>Raw Data:</h5>
-                  <pre><code>${JSON.stringify(result.data.data, null, 2)}</code></pre>
-                </div>
-                ${result.data.aquaTree ? `
-                <div class="result-section">
-                  <h5>Aqua Tree:</h5>
-                  <pre><code>${JSON.stringify(result.data.aquaTree, null, 2)}</code></pre>
-                </div>
-                ` : ''}
-                <div class="result-section">
-                  <h5>Full IPFS Data:</h5>
-                  <pre><code>${JSON.stringify(result.data, null, 2)}</code></pre>
+                <div class="messages-timeline">
+                  ${messagesHtml}
                 </div>
               </div>
             `;
@@ -168,6 +220,75 @@
           finally {
             readButton.disabled = false;
             readButton.textContent = 'Read from Contract';
+          }
+        };
+
+        // Set up transfer ownership event button
+        const transferButton = document.getElementById('transfer-button');
+        const transferInput = document.getElementById('transfer-input');
+        const transferOutput = document.getElementById('transfer-output');
+
+        transferButton.onclick = async () => {
+          try {
+            transferButton.disabled = true;
+            transferButton.textContent = 'Transferring...';
+            transferOutput.innerHTML = '<div class="loading">Transferring ownership...</div>';
+
+            const newOwnerAddress = transferInput.value.trim();
+
+            if (!newOwnerAddress) {
+              transferOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Input</h4>
+                  <p>Please enter a valid wallet address.</p>
+                </div>
+              `;
+              return;
+            }
+
+            // Validate Ethereum address format
+            if (!/^0x[a-fA-F0-9]{40}$/.test(newOwnerAddress)) {
+              transferOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Address</h4>
+                  <p>Please enter a valid Ethereum address (0x followed by 40 hexadecimal characters).</p>
+                </div>
+              `;
+              return;
+            }
+
+            const result = await witness.transferOwnershipEvent(newOwnerAddress);
+
+            transferOutput.innerHTML = `
+              <div class="success">
+                <h4>Ownership Transfer Successful!</h4>
+                <div class="result-section">
+                  <h5>Transfer Details:</h5>
+                  <p><strong>New Owner:</strong> <code>${newOwnerAddress}</code></p>
+                  <p><strong>Previous Owner:</strong> <code>${status.client.address}</code></p>
+                </div>
+                <div class="result-section">
+                  <h5>Important Notice:</h5>
+                  <p>⚠️ Your data has been transferred to the new owner. You no longer have access to this data from your current wallet.</p>
+                  <p>The new owner can now read and manage this data using their wallet.</p>
+                </div>
+              </div>
+            `;
+
+            transferInput.value = '';
+          }
+          catch (error) {
+            transferOutput.innerHTML = `
+              <div class="error">
+                  <h4>Transfer Failed</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          }
+          finally {
+            transferButton.disabled = false;
+            transferButton.textContent = 'Transfer Ownership';
           }
         };
       }
@@ -197,6 +318,11 @@
       .read-button { background-color: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
       .read-button:hover { background-color: #218838; }
       .read-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .transfer-section { background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #ffc107; }
+      .transfer-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; font-size: 14px; box-sizing: border-box; font-family: monospace; }
+      .transfer-button { background-color: #ffc107; color: #212529; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; }
+      .transfer-button:hover { background-color: #e0a800; }
+      .transfer-button:disabled { background-color: #6c757d; cursor: not-allowed; color: white; }
       .success { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .error { background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 10px 0; }
       .loading { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 5px; margin: 10px 0; }
@@ -204,6 +330,35 @@
       .result-section h5 { margin: 0 0 10px 0; color: #495057; }
       .result-section code { background-color: #e9ecef; padding: 2px 4px; border-radius: 2px; font-size: 0.9em; word-break: break-all; }
       .result-section pre { background-color: #f1f3f4; padding: 10px; border-radius: 3px; overflow-x: auto; white-space: pre-wrap; font-size: 0.8em; }
+
+      /* Message Timeline Styles */
+      .messages-summary { margin-bottom: 20px; padding: 15px; background-color: #e7f3ff; border-radius: 5px; border-left: 4px solid #28a745; }
+      .messages-summary h4 { margin: 0 0 10px 0; color: #155724; }
+      .messages-summary p { margin: 0; color: #155724; }
+      .messages-timeline { display: flex; flex-direction: column; gap: 15px; }
+      .message-card { background-color: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: box-shadow 0.2s; }
+      .message-card:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+      .message-card.message-error { border-left: 4px solid #dc3545; background-color: #fff5f5; }
+      .message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #e9ecef; }
+      .message-number { font-weight: bold; font-size: 1.1em; color: #007bff; }
+      .message-timestamp { font-size: 0.9em; color: #6c757d; font-family: monospace; }
+      .message-status.error { color: #dc3545; font-weight: bold; }
+      .message-body { }
+      .message-section { margin: 10px 0; padding: 10px; background-color: #f8f9fa; border-radius: 4px; }
+      .message-section p { margin: 5px 0; font-size: 0.95em; }
+      .message-section h6 { margin: 0 0 8px 0; color: #495057; font-size: 0.9em; font-weight: bold; text-transform: uppercase; }
+      .message-data { background-color: white; padding: 10px; border-radius: 4px; border: 1px solid #dee2e6; }
+      .message-data pre { margin: 0; font-size: 0.85em; }
+      .hash-code { font-family: monospace; font-size: 0.85em; word-break: break-all; }
+      .sig-code { font-family: monospace; font-size: 0.85em; }
+      .ipfs-link { color: #007bff; text-decoration: none; }
+      .ipfs-link:hover { text-decoration: underline; }
+      .message-details { margin-top: 15px; }
+      .message-details summary { cursor: pointer; padding: 10px; background-color: #e9ecef; border-radius: 4px; font-weight: bold; color: #495057; user-select: none; }
+      .message-details summary:hover { background-color: #dee2e6; }
+      .message-details[open] summary { margin-bottom: 15px; }
+      .message-details code { background-color: #f1f3f4; padding: 2px 4px; border-radius: 2px; font-size: 0.85em; word-break: break-all; }
+      .message-details pre { background-color: white; padding: 10px; border-radius: 4px; border: 1px solid #dee2e6; overflow-x: auto; white-space: pre-wrap; font-size: 0.8em; margin: 5px 0; }
   </style>
 </head>
 <body>
@@ -236,6 +391,15 @@
         <p>Read your data from the Agent smart contract and IPFS:</p>
         <button id="read-button" class="read-button">Read from Contract</button>
         <div id="read-output"></div>
+    </div>
+
+    <h2>Transfer Ownership Test</h2>
+    <div class="transfer-section">
+        <p><strong>⚠️ Warning:</strong> This operation will transfer ownership of your data to another wallet address. This action cannot be undone.</p>
+        <p>Enter the wallet address of the new owner:</p>
+        <input type="text" id="transfer-input" class="transfer-input" placeholder="0x..." />
+        <button id="transfer-button" class="transfer-button">Transfer Ownership</button>
+        <div id="transfer-output"></div>
     </div>
 
     <h2>Timestamp</h2>

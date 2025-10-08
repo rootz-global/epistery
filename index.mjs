@@ -184,7 +184,7 @@ class EpisteryAttach {
         const { clientWalletInfo, data } = req.body;
 
         if (!clientWalletInfo || !data) {
-          return res.status(400).json({ error: 'Missing clientWalletInfo or data' });
+          return res.status(400).json({ error: 'Missing client wallet or data' });
         }
 
         // Set the domain for the write operation
@@ -196,7 +196,8 @@ class EpisteryAttach {
         }
 
         res.json(result);
-      } catch (error) {
+      }
+      catch (error) {
         console.error('Write error:', error);
         res.status(500).json({ error: error.message });
       }
@@ -207,17 +208,39 @@ class EpisteryAttach {
         const { clientWalletInfo } = req.body;
 
         if (!clientWalletInfo) {
-          return res.status(400).json({ error: 'Missing clientWalletInfo' });
+          return res.status(400).json({ error: 'Missing client wallet' });
         }
 
         const result = await Epistery.read(clientWalletInfo);
         if (!result) {
-          return res.status(500).json({ error: 'Read operation failed' });
+          return res.status(204);
         }
 
         res.json(result);
-      } catch (error) {
+      }
+      catch (error) {
         console.error('Read error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.put('/data/ownership', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, futureOwnerWalletAddress } = req.body;
+
+        if (!clientWalletInfo || !futureOwnerWalletAddress) {
+          return res.status(400).json({ error: 'Missing either client wallet or future owner address.' });
+        }
+
+        const result = await Epistery.transferOwnership(clientWalletInfo, futureOwnerWalletAddress);
+        if (!result) {
+          return res.status(500).json({ error: 'Transfer ownership failed' });
+        }
+
+        res.json(result);
+      }
+      catch (error) {
+        console.error('Transfer ownership error:', error);
         res.status(500).json({ error: error.message });
       }
     });

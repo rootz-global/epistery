@@ -89,30 +89,63 @@ export class Utils {
         clientWallet
       );
 
-      const ipfsHash = await agentContract.read();
+      const ipfsHashes = await agentContract.read();
 
-      if (!ipfsHash || ipfsHash === '') {
+      if (!ipfsHashes || ipfsHashes.length === 0) {
         console.log('No data found for this address');
         return null;
       }
 
-      console.log(`Data read from Agent contract. IPFS Hash: ${ipfsHash}`);
+      console.log(`Data read from Agent contract. Found ${ipfsHashes.length} message(s)`);
 
-      // Fetch the data from IPFS
+      // Fetch the data from IPFS for all hashes
       const config = Utils.GetConfig();
       const ipfsGatewayUrl = config.data.ipfs?.gateway || 'http://localhost:8080';
-      const ipfsUrl = `${ipfsGatewayUrl}/ipfs/${ipfsHash}`;
 
-      const response = await fetch(ipfsUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch data from IPFS: ${response.status}`);
+      const allMessages = [];
+      for (let i = 0; i < ipfsHashes.length; i++) {
+        const ipfsHash = ipfsHashes[i];
+        const ipfsUrl = `${ipfsGatewayUrl}/ipfs/${ipfsHash}`;
+
+        try {
+          const response = await fetch(ipfsUrl);
+          if (!response.ok) {
+            console.warn(`Failed to fetch data from IPFS for hash ${ipfsHash}: ${response.status}`);
+            allMessages.push({
+              index: i,
+              ipfsHash: ipfsHash,
+              ipfsUrl: ipfsUrl,
+              data: null,
+              error: `Failed to fetch: ${response.status}`
+            });
+            continue;
+          }
+
+          const ipfsData = await response.json();
+          allMessages.push({
+            index: i,
+            ipfsHash: ipfsHash,
+            ipfsUrl: ipfsUrl,
+            data: ipfsData,
+            error: null
+          });
+        }
+        catch (error) {
+          console.warn(`Error fetching IPFS data for hash ${ipfsHash}:`, error);
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          allMessages.push({
+            index: i,
+            ipfsHash: ipfsHash,
+            ipfsUrl: ipfsUrl,
+            data: null,
+            error: errorMessage
+          });
+        }
       }
 
-      const ipfsData = await response.json();
       return {
-        ipfsHash: ipfsHash,
-        ipfsUrl: ipfsUrl,
-        data: ipfsData
+        count: ipfsHashes.length,
+        messages: allMessages
       };
     }
     catch (error) {
@@ -170,6 +203,58 @@ export class Utils {
     catch (error) {
       console.error('Error writing to Agent contract:', error);
       throw new Error(`Failed to write to Agent contract: ${error}`);
+    }
+  }
+
+  public static async TransferOwnership(clientWallet: Wallet, futureOwnerWalletAddress: string) {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        clientWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerWalletAddress);
+        
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract transferOwnership failed, using default limit');
+        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await clientWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Call the transferOwnership function with pubKey of future owner
+      const tx = await agentContract.transferOwnership(futureOwnerWalletAddress, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Data written to Agent contract. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error transferring ownership:', error);
+      throw new Error(`Failed to transfer ownership: ${error}`);
     }
   }
 
