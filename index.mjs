@@ -46,8 +46,8 @@ class EpisteryAttach {
       next();
     });
 
-    // Mount routes
-    app.use('/.epistery', this.routes());
+    // Mount routes - RFC 8615 compliant well-known URI
+    app.use('/.well-known/epistery', this.routes());
   }
 
   routes() {

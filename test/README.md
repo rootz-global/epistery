@@ -6,7 +6,7 @@ This directory contains a demonstration of how external websites can integrate E
 
 1. This test server runs on port 3001 and demonstrates a self-contained Epistery integration
 2. The Epistery functionality is built directly into this Express.js app using `epistery.attach(app)`
-3. No external server or proxying required - all `/.epistery` routes are served directly
+3. No external server or proxying required - all `/.well-known/epistery` routes are served directly
 4. The HTML pages use ES6 modules to import the Epistery client library from the integrated routes
 
 ## Running the test
@@ -18,7 +18,7 @@ This directory contains a demonstration of how external websites can integrate E
 
 2. Open your browser to:
    - http://localhost:3001 - Main (mock) test page
-   - http://localhost:3001/.epistery/status - Epistery Status page
+   - http://localhost:3001/.well-known/epistery/status - Epistery Status page
 
 ## Real-world Usage
 
@@ -41,7 +41,7 @@ await epistery.attach(app);
 app.get('/', (req, res) => {
   res.send(`
     <script type="module">
-      import Witness from '/.epistery/lib/witness.js';
+      import Witness from '/.well-known/epistery/lib/witness.js';
       const witness = await Witness.connect();
       // Now you can use Epistery functionality
     </script>
