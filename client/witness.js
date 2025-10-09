@@ -81,7 +81,7 @@ export default class Witness {
     }
   }
 
-  static async connect() {
+  static async connect(options = {}) {
     let witness = new Witness();
 
     try {
@@ -102,11 +102,17 @@ export default class Witness {
       // Verify chain compatibility and switch if needed
       await witness.ensureChainCompatibility();
 
-      // Perform key exchange
-      await witness.performKeyExchange();
+      // Perform key exchange (skip if skipKeyExchange option is true)
+      if (!options.skipKeyExchange) {
+        await witness.performKeyExchange();
+      }
 
     } catch (e) {
       console.error('Failed to connect to Epistery server:', e);
+      // For unclaimed domains, wallet discovery might succeed even if key exchange fails
+      if (!options.skipKeyExchange) {
+        throw e;
+      }
     }
 
     return witness;
