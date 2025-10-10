@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "ExpressJS server with TypeScript",
   "main": "index.mjs",
+  "bin": {
+    "epistery": "./cli/epistery.mjs"
+  },
   "scripts": {
     "build": "tsc",
     "start": "npm run build && node test/server.mjs",

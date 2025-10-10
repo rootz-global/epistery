@@ -14,19 +14,12 @@ Epistery provides the primitive tools for creating and rendering data-wallets.
 * /.well-known/acme - Ephemeral ACME url for authorizing ssl cert assignment.
 
 ## Usage
+>This has to be revisited to document how it is actually used.
 ```bash
 npm install epistery
 npm run initialize mydomain.com
 ```
-Initialize creates a wallet for the domain. The default chain provider is established in `~/.well-known/epistery/config.ini`.
-The wallet keys are written to `~/.well-known/epistery/{domain}/config.ini`.
 
-To acquire an SSL cert for the domain use certify. This call uses ACME like letsencrypt. The keys are stored in
-`~/.well-known/epistery/{domain}/`. Set profile information such as email and business in the root config.ini. Email is required.
-The domain name must resolve to the host server and the epistery module needs to be running to confirm the handshake.
-```bash
-npm run certify mydomain.com
-```
 In the code, access the certs through epistery.config.
 ```javascript
 import Certify from './modules/certify/index.mjs';
