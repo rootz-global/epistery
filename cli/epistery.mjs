@@ -254,8 +254,16 @@ async function performCurl(options) {
           console.error('[epistery] No session found, performing key exchange...');
         }
 
+        // Extract base URL (protocol + host + port) for key exchange
+        const url = new URL(options.url);
+        const baseUrl = `${url.protocol}//${url.host}`;
+
+        if (options.verbose) {
+          console.error(`[epistery] Connecting to: ${baseUrl}`);
+        }
+
         // Perform key exchange automatically
-        const response = await wallet.performKeyExchange(options.url);
+        const response = await wallet.performKeyExchange(baseUrl);
 
         if (options.verbose) {
           console.error(`[epistery] Key exchange successful`);
