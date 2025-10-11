@@ -208,13 +208,6 @@ export class Epistery {
 
   public static async handleKeyExchange(request: KeyExchangeRequest, serverWallet: WalletConfig): Promise<KeyExchangeResponse | null> {
     try {
-      console.log('[handleKeyExchange] Request received:', {
-        clientAddress: request.clientAddress,
-        challenge: request.challenge,
-        messageLength: request.message?.length,
-        signatureLength: request.signature?.length
-      });
-
       // Verify client's identity by checking signature
       const expectedMessage = `Epistery Key Exchange - ${request.clientAddress} - ${request.challenge}`;
 
@@ -225,21 +218,11 @@ export class Epistery {
         return null;
       }
 
-      console.log('[handleKeyExchange] Message format verified');
-
       // Verify the signature matches the client's address
       const recoveredAddress = ethers.utils.verifyMessage(request.message, request.signature);
 
-      console.log('[handleKeyExchange] Signature verification:', {
-        recoveredAddress,
-        expectedAddress: request.clientAddress,
-        match: recoveredAddress.toLowerCase() === request.clientAddress.toLowerCase()
-      });
-
       if (recoveredAddress.toLowerCase() !== request.clientAddress.toLowerCase()) {
         console.error('Client identity verification failed');
-        console.error('Recovered address:', recoveredAddress);
-        console.error('Expected address:', request.clientAddress);
         return null;
       }
 
