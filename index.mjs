@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
   let domainConfig = Utils.GetDomainInfo(domain);
-  if (!domainConfig.wallet) {
+  if (!domainConfig?.wallet) {
     Utils.InitServerWallet(domain);
     domainConfig = Utils.GetDomainInfo(domain);
   }
