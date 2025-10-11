@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { Epistery } from './dist/epistery.js';
+import { Epistery } from "./dist/epistery.js";
 import { Utils } from './dist/utils/Utils.js';
 import { Config } from './dist/utils/Config.js';
 

@@ -208,7 +208,6 @@ export class Epistery {
 
   public static async handleKeyExchange(request: KeyExchangeRequest, serverWallet: WalletConfig): Promise<KeyExchangeResponse | null> {
     try {
-
       // Verify client's identity by checking signature
       const expectedMessage = `Epistery Key Exchange - ${request.clientAddress} - ${request.challenge}`;
 
@@ -221,7 +220,7 @@ export class Epistery {
 
       // Verify the signature matches the client's address
       const recoveredAddress = ethers.utils.verifyMessage(request.message, request.signature);
-      
+
       if (recoveredAddress.toLowerCase() !== request.clientAddress.toLowerCase()) {
         console.error('Client identity verification failed');
         return null;
