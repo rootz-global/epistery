@@ -3,6 +3,8 @@ import { resolve, join } from 'path';
 import ini from 'ini';
 import { RootConfig, DomainConfig } from './types';
 
+import { fileURLToPath } from 'url';
+
 export class Config {
   public rootName: string;
   public readonly homeDir: string;
@@ -18,11 +20,6 @@ export class Config {
     this.configDir = join(this.homeDir, '.' + this.rootName);
     this.configFile = join(this.configDir, 'config.ini');
 
-    // Create directory and copy default.ini to config.ini if it doesn't exist
-    if (!fs.existsSync(this.configDir)) {
-      fs.mkdirSync(this.configDir, { recursive: true });
-    }
-
     if (!fs.existsSync(this.configFile)) {
       this.initialize();
     } else {
@@ -31,9 +28,8 @@ export class Config {
   }
 
   private initialize(): void {
-    // Copy default.ini to config.ini on first run
-    const defaultIniPath = resolve('./default.ini');
-    fs.copyFileSync(defaultIniPath, this.configFile);
+    fs.mkdirSync(this.configDir, { recursive: true });
+    fs.writeFileSync(this.configFile, defaultIni);
     this.load();
   }
 
@@ -85,3 +81,17 @@ export class Config {
     fs.writeFileSync(this.configFile, text);
   }
 }
+
+const defaultIni =
+`[profile]
+name=
+email=
+
+[ipfs]
+url=https://rootz.digital/api/v0
+
+[default.provider]
+chainId=1,
+name=Ethereum Mainnet
+rpc=https://eth.llamarpc.com
+`
