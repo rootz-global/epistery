@@ -247,10 +247,10 @@ export class CliWallet {
   }
 
   /**
-   * Get saved session for this domain
+   * Get saved session for a specific server URL
    */
-  getSession(): SessionInfo | null {
-    const sessionFile = join(this.config.configDir, this.domainName, 'session.json');
+  getSession(serverUrl: string): SessionInfo | null {
+    const sessionFile = this.getSessionFilePath(serverUrl);
     if (!fs.existsSync(sessionFile)) {
       return null;
     }
@@ -264,21 +264,39 @@ export class CliWallet {
   }
 
   /**
-   * Save session info to domain directory
+   * Save session info to domain directory, keyed by server URL
    */
   private saveSession(session: SessionInfo): void {
-    const sessionFile = join(this.config.configDir, this.domainName, 'session.json');
+    const sessionFile = this.getSessionFilePath(session.domain);
     fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2), { mode: 0o600 });
   }
 
   /**
-   * Clear saved session
+   * Clear saved session for a server URL
    */
-  clearSession(): void {
-    const sessionFile = join(this.config.configDir, this.domainName, 'session.json');
+  clearSession(serverUrl: string): void {
+    const sessionFile = this.getSessionFilePath(serverUrl);
     if (fs.existsSync(sessionFile)) {
       fs.unlinkSync(sessionFile);
     }
+  }
+
+  /**
+   * Get session file path for a server URL
+   * Hashes the server URL to create a safe filename
+   */
+  private getSessionFilePath(serverUrl: string): string {
+    // Create a safe filename from the server URL
+    const crypto = require('crypto');
+    const hash = crypto.createHash('md5').update(serverUrl).digest('hex');
+    const sessionsDir = join(this.config.configDir, this.domainName, 'sessions');
+
+    // Ensure sessions directory exists
+    if (!fs.existsSync(sessionsDir)) {
+      fs.mkdirSync(sessionsDir, { mode: 0o700, recursive: true });
+    }
+
+    return join(sessionsDir, `${hash}.json`);
   }
 
   /**

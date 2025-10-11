@@ -82,7 +82,6 @@ async function initializeDomain(domain) {
 async function showInfo(domain) {
   try {
     const wallet = CliWallet.load(domain);
-    const session = wallet.getSession();
 
     console.log('Domain:', wallet.getDomain());
     console.log('Address:', wallet.address);
@@ -97,15 +96,7 @@ async function showInfo(domain) {
       console.log('');
     }
 
-    if (session) {
-      console.log('Session: Active');
-      console.log('Connected to:', session.domain);
-      console.log('Authenticated:', session.authenticated);
-      console.log('Last connected:', session.timestamp);
-    } else {
-      console.log('Session: None');
-      console.log('Key exchange will happen automatically on first curl request');
-    }
+    console.log('Sessions: Stored per-server in ~/.epistery/' + wallet.getDomain() + '/sessions/');
 
   } catch (error) {
     console.error('');
@@ -247,18 +238,15 @@ async function performCurl(options) {
 
     } else {
       // Session mode: Check for existing session or perform key exchange
-      let session = wallet.getSession();
+      // Extract base URL (protocol + host + port) for key exchange
+      const url = new URL(options.url);
+      const baseUrl = `${url.protocol}//${url.host}`;
+
+      let session = wallet.getSession(baseUrl);
 
       if (!session) {
         if (options.verbose) {
           console.error('[epistery] No session found, performing key exchange...');
-        }
-
-        // Extract base URL (protocol + host + port) for key exchange
-        const url = new URL(options.url);
-        const baseUrl = `${url.protocol}//${url.host}`;
-
-        if (options.verbose) {
           console.error(`[epistery] Connecting to: ${baseUrl}`);
         }
 
@@ -272,7 +260,7 @@ async function performCurl(options) {
           console.error('');
         }
 
-        session = wallet.getSession();
+        session = wallet.getSession(baseUrl);
       }
 
       if (session && session.cookie) {
