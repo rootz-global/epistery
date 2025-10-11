@@ -18,6 +18,11 @@ export class Config {
     this.configDir = join(this.homeDir, '.' + this.rootName);
     this.configFile = join(this.configDir, 'config.ini');
 
+    // Create directory and copy default.ini to config.ini if it doesn't exist
+    if (!fs.existsSync(this.configDir)) {
+      fs.mkdirSync(this.configDir, { recursive: true });
+    }
+
     if (!fs.existsSync(this.configFile)) {
       this.initialize();
     } else {
@@ -26,12 +31,10 @@ export class Config {
   }
 
   private initialize(): void {
-    const fileData = fs.readFileSync(resolve('./default.ini'));
-    this.data = ini.decode(fileData.toString()) as RootConfig;
-    if (!fs.existsSync(this.configDir)) {
-      fs.mkdirSync(this.configDir, { recursive: true });
-    }
-    this.save();
+    // Copy default.ini to config.ini on first run
+    const defaultIniPath = resolve('./default.ini');
+    fs.copyFileSync(defaultIniPath, this.configFile);
+    this.load();
   }
 
   public get activeDomain() {

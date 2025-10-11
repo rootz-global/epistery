@@ -222,22 +222,9 @@ Auto-created by `epistery curl`:
 - Each domain has its own isolated wallet
 - Session cookies saved securely per domain
 
-## Comparison to Previous Design
+## Design Philosophy
 
-**Old (separate tools):**
-```bash
-epistery-auth create my-bot
-epistery-auth connect https://wiki.rootz.global my-bot
-epistery-curl -w my-bot https://wiki.rootz.global/wiki/Home
-```
-
-**New (unified):**
-```bash
-epistery initialize localhost
-epistery curl https://wiki.rootz.global/wiki/Home  # auto-connects!
-```
-
-**Benefits:**
+The Epistery CLI uses a unified command structure with subcommands:
 - ✅ Uses existing Epistery domain config system
 - ✅ Consistent with server-side architecture
 - ✅ Automatic key exchange (no manual connect step)
