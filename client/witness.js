@@ -44,41 +44,117 @@ export default class Witness {
   }
 
   save() {
-    const data = {
-      wallet: this.wallet ? this.wallet.toJSON() : null,
-      server: this.server,
-      serverInfo: this.serverInfo
-    };
-    localStorage.setItem('epistery', JSON.stringify(data));
+    const storageData = this.loadStorageData();
+
+    // If current wallet exists, update or add it to the wallets array
+    if (this.wallet) {
+      const walletData = {
+        id: this.wallet.id || this.generateWalletId(this.wallet.source),
+        wallet: this.wallet.toJSON(),
+        label: this.wallet.label || (this.wallet.source === 'web3' ? 'Web3 Wallet' : 'Browser Wallet'),
+        createdAt: this.wallet.createdAt || Date.now(),
+        lastUsed: Date.now()
+      };
+
+      // Store the ID back on the wallet object
+      this.wallet.id = walletData.id;
+      this.wallet.label = walletData.label;
+      this.wallet.createdAt = walletData.createdAt;
+
+      // Update or add wallet in the array
+      const existingIndex = storageData.wallets.findIndex(w => w.id === walletData.id);
+      if (existingIndex >= 0) {
+        storageData.wallets[existingIndex] = walletData;
+      } else {
+        storageData.wallets.push(walletData);
+      }
+
+      // Set as default if no default exists
+      if (!storageData.defaultWalletId) {
+        storageData.defaultWalletId = walletData.id;
+      }
+    }
+
+    // Save server data
+    storageData.server = this.server;
+    storageData.serverInfo = this.serverInfo;
+
+    localStorage.setItem('epistery', JSON.stringify(storageData));
+  }
+
+  loadStorageData() {
+    const data = localStorage.getItem('epistery');
+    if (!data) {
+      return { wallets: [], defaultWalletId: null, server: null, serverInfo: null };
+    }
+
+    try {
+      const parsed = JSON.parse(data);
+
+      // Migrate old single-wallet format to new multi-wallet format
+      if (parsed.wallet && !parsed.wallets) {
+        const migratedWalletId = this.generateWalletId(parsed.wallet.source);
+        return {
+          wallets: [{
+            id: migratedWalletId,
+            wallet: parsed.wallet,
+            label: parsed.wallet.source === 'web3' ? 'Web3 Wallet' : 'Browser Wallet',
+            createdAt: Date.now(),
+            lastUsed: Date.now()
+          }],
+          defaultWalletId: migratedWalletId,
+          server: parsed.server,
+          serverInfo: parsed.serverInfo
+        };
+      }
+
+      // Return new format (already migrated or fresh)
+      return {
+        wallets: parsed.wallets || [],
+        defaultWalletId: parsed.defaultWalletId || null,
+        server: parsed.server || null,
+        serverInfo: parsed.serverInfo || null
+      };
+    } catch (error) {
+      console.error('Failed to parse epistery data:', error);
+      return { wallets: [], defaultWalletId: null, server: null, serverInfo: null };
+    }
   }
 
   async load() {
-    const data = localStorage.getItem('epistery');
-    if (data) {
-      try {
-        const parsed = JSON.parse(data);
+    const storageData = this.loadStorageData();
 
-        // Check if this is old format with 'client' property
-        if (parsed.client && !parsed.wallet) {
-          localStorage.removeItem('epistery');
-          return;
-        }
+    // Restore server data
+    this.server = storageData.server;
+    this.serverInfo = storageData.serverInfo;
 
-        // Restore wallet using factory method
-        if (parsed.wallet && ethers) {
-          this.wallet = await Wallet.fromJSON(parsed.wallet, ethers);
-        }
-
-        // Restore server data
-        this.server = parsed.server;
-        this.serverInfo = parsed.serverInfo;
-
-      } catch (error) {
-        console.error('Failed to load witness data:', error);
-        // Clear corrupted data
-        localStorage.removeItem('epistery');
+    // Check if migration happened and persist it immediately to avoid data loss
+    const currentData = localStorage.getItem('epistery');
+    if (currentData) {
+      const parsed = JSON.parse(currentData);
+      // If we migrated from old format (had wallet but no wallets), save the migration
+      if (parsed.wallet && !parsed.wallets && storageData.wallets.length > 0) {
+        console.log('[epistery] Migrating old wallet format to multi-wallet format');
+        localStorage.setItem('epistery', JSON.stringify(storageData));
+        console.log('[epistery] Migration complete - wallet preserved');
       }
     }
+
+    // Load the default wallet if it exists (maintains backward compatibility)
+    if (storageData.defaultWalletId && ethers) {
+      const walletData = storageData.wallets.find(w => w.id === storageData.defaultWalletId);
+      if (walletData) {
+        this.wallet = await Wallet.fromJSON(walletData.wallet, ethers);
+        this.wallet.id = walletData.id;
+        this.wallet.label = walletData.label;
+        this.wallet.createdAt = walletData.createdAt;
+      }
+    }
+  }
+
+  generateWalletId(source) {
+    const prefix = source === 'web3' ? 'web3-wallet' : 'browser-wallet';
+    return prefix + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
   }
 
   static async connect(options = {}) {
@@ -416,6 +492,161 @@ export default class Witness {
       console.error('Failed to write event:', e);
       throw e;
     }
+  }
+
+  // Wallet management methods for multi-wallet support
+
+  getWallets() {
+    const storageData = this.loadStorageData();
+    return {
+      wallets: storageData.wallets.map(w => ({
+        id: w.id,
+        address: w.wallet.address,
+        source: w.wallet.source,
+        label: w.label,
+        createdAt: w.createdAt,
+        lastUsed: w.lastUsed,
+        isDefault: w.id === storageData.defaultWalletId
+      })),
+      defaultWalletId: storageData.defaultWalletId
+    };
+  }
+
+  async addWeb3Wallet(label = null) {
+    await ensureEthers();
+    const newWallet = await Web3Wallet.create(ethers);
+
+    if (!newWallet) {
+      throw new Error('Failed to connect Web3 wallet. User may have cancelled or no Web3 provider available.');
+    }
+
+    newWallet.label = label || 'Web3 Wallet';
+
+    // Temporarily set as active wallet to save it
+    const previousWallet = this.wallet;
+    this.wallet = newWallet;
+    this.save();
+
+    // Restore previous wallet if there was one
+    if (previousWallet) {
+      this.wallet = previousWallet;
+    }
+
+    return {
+      id: newWallet.id,
+      address: newWallet.address,
+      source: newWallet.source,
+      label: newWallet.label
+    };
+  }
+
+  async addBrowserWallet(label = null) {
+    await ensureEthers();
+    const newWallet = await BrowserWallet.create(ethers);
+
+    if (!newWallet) {
+      throw new Error('Failed to create browser wallet');
+    }
+
+    newWallet.label = label || 'Browser Wallet';
+
+    // Temporarily set as active wallet to save it
+    const previousWallet = this.wallet;
+    this.wallet = newWallet;
+    this.save();
+
+    // Restore previous wallet if there was one
+    if (previousWallet) {
+      this.wallet = previousWallet;
+    }
+
+    return {
+      id: newWallet.id,
+      address: newWallet.address,
+      source: newWallet.source,
+      label: newWallet.label
+    };
+  }
+
+  async setDefaultWallet(walletId) {
+    const storageData = this.loadStorageData();
+    const walletData = storageData.wallets.find(w => w.id === walletId);
+
+    if (!walletData) {
+      throw new Error(`Wallet with ID ${walletId} not found`);
+    }
+
+    await ensureEthers();
+
+    // Load the wallet
+    this.wallet = await Wallet.fromJSON(walletData.wallet, ethers);
+    this.wallet.id = walletData.id;
+    this.wallet.label = walletData.label;
+    this.wallet.createdAt = walletData.createdAt;
+
+    // Update default in storage
+    storageData.defaultWalletId = walletId;
+    storageData.wallets = storageData.wallets.map(w => {
+      if (w.id === walletId) {
+        w.lastUsed = Date.now();
+      }
+      return w;
+    });
+
+    localStorage.setItem('epistery', JSON.stringify(storageData));
+
+    console.log(`Switched to wallet: ${this.wallet.source} (${this.wallet.address})`);
+
+    return {
+      id: this.wallet.id,
+      address: this.wallet.address,
+      source: this.wallet.source,
+      label: this.wallet.label
+    };
+  }
+
+  removeWallet(walletId) {
+    const storageData = this.loadStorageData();
+
+    // Don't allow removing the default wallet if it's the only one
+    if (storageData.wallets.length === 1) {
+      throw new Error('Cannot remove the only wallet');
+    }
+
+    // Don't allow removing the default wallet without switching first
+    if (storageData.defaultWalletId === walletId) {
+      throw new Error('Cannot remove default wallet. Switch to another wallet first.');
+    }
+
+    const walletIndex = storageData.wallets.findIndex(w => w.id === walletId);
+    if (walletIndex === -1) {
+      throw new Error(`Wallet with ID ${walletId} not found`);
+    }
+
+    storageData.wallets.splice(walletIndex, 1);
+    localStorage.setItem('epistery', JSON.stringify(storageData));
+
+    return true;
+  }
+
+  updateWalletLabel(walletId, newLabel) {
+    const storageData = this.loadStorageData();
+    const walletData = storageData.wallets.find(w => w.id === walletId);
+
+    if (!walletData) {
+      throw new Error(`Wallet with ID ${walletId} not found`);
+    }
+
+    walletData.label = newLabel;
+
+    // If this is the current wallet, update it too
+    if (this.wallet && this.wallet.id === walletId) {
+      this.wallet.label = newLabel;
+    }
+
+    localStorage.setItem('epistery', JSON.stringify(storageData));
+
+    return true;
   }
 
   getStatus() {

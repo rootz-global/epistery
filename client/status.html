@@ -30,6 +30,9 @@
             document.getElementById('wallet-source').textContent = 'N/A';
         }
 
+        // Setup wallet management UI
+        await setupWalletManagement();
+
         // Set up export wallet functionality
         const exportSection = document.getElementById('export-section');
         const exportButton = document.getElementById('export-button');
@@ -382,11 +385,165 @@
             transferButton.textContent = 'Transfer Ownership';
           }
         };
+        // Wallet Management Functions
+        async function setupWalletManagement() {
+          const walletList = document.getElementById('wallet-list');
+          const addWeb3Button = document.getElementById('add-web3-wallet');
+          const addBrowserButton = document.getElementById('add-browser-wallet');
+          const walletManagementOutput = document.getElementById('wallet-management-output');
+
+          function renderWalletList() {
+            const walletsInfo = witness.getWallets();
+
+            if (walletsInfo.wallets.length === 0) {
+              walletList.innerHTML = '<p>No wallets available</p>';
+              return;
+            }
+
+            let walletsHtml = '<table><tr><th>Label</th><th>Address</th><th>Type</th><th>Actions</th></tr>';
+            walletsInfo.wallets.forEach(wallet => {
+              const isDefault = wallet.isDefault;
+              walletsHtml += `
+                <tr class="${isDefault ? 'default-wallet' : ''}">
+                  <td>${wallet.label}${isDefault ? ' <strong>(Default)</strong>' : ''}</td>
+                  <td class="address">${wallet.address.substring(0, 10)}...${wallet.address.substring(wallet.address.length - 8)}</td>
+                  <td>${wallet.source === 'web3' ? 'Web3' : 'Browser'}</td>
+                  <td>
+                    ${!isDefault ? `<button class="action-button" onclick="switchWallet('${wallet.id}')">Set Default</button>` : ''}
+                    ${!isDefault && walletsInfo.wallets.length > 1 ? `<button class="action-button danger" onclick="removeWallet('${wallet.id}')">Remove</button>` : ''}
+                  </td>
+                </tr>
+              `;
+            });
+            walletsHtml += '</table>';
+
+            walletList.innerHTML = walletsHtml;
+          }
+
+          // Add Web3 wallet button
+          addWeb3Button.onclick = async () => {
+            try {
+              addWeb3Button.disabled = true;
+              addWeb3Button.textContent = 'Connecting...';
+              walletManagementOutput.innerHTML = '<div class="loading">Requesting Web3 wallet connection...</div>';
+
+              const newWallet = await witness.addWeb3Wallet();
+
+              walletManagementOutput.innerHTML = `
+                <div class="success">
+                  <h4>Web3 Wallet Added!</h4>
+                  <p><strong>Address:</strong> <code>${newWallet.address}</code></p>
+                  <p>You can now switch to this wallet as your default.</p>
+                </div>
+              `;
+
+              renderWalletList();
+            } catch (error) {
+              walletManagementOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Add Web3 Wallet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  ${error.message.includes('cancelled') ? '<p>If you cancelled the MetaMask popup by accident, click the button again to retry.</p>' : ''}
+                </div>
+              `;
+            } finally {
+              addWeb3Button.disabled = false;
+              addWeb3Button.textContent = 'Add Web3 Wallet (MetaMask)';
+            }
+          };
+
+          // Add Browser wallet button
+          addBrowserButton.onclick = async () => {
+            try {
+              addBrowserButton.disabled = true;
+              addBrowserButton.textContent = 'Creating...';
+              walletManagementOutput.innerHTML = '<div class="loading">Creating new browser wallet...</div>';
+
+              const newWallet = await witness.addBrowserWallet();
+
+              walletManagementOutput.innerHTML = `
+                <div class="success">
+                  <h4>Browser Wallet Added!</h4>
+                  <p><strong>Address:</strong> <code>${newWallet.address}</code></p>
+                  <p>You can now switch to this wallet as your default.</p>
+                </div>
+              `;
+
+              renderWalletList();
+            } catch (error) {
+              walletManagementOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Add Browser Wallet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            } finally {
+              addBrowserButton.disabled = false;
+              addBrowserButton.textContent = 'Add Browser Wallet';
+            }
+          };
+
+          // Switch wallet function (global so onclick can access it)
+          window.switchWallet = async (walletId) => {
+            try {
+              walletManagementOutput.innerHTML = '<div class="loading">Switching wallet...</div>';
+
+              await witness.setDefaultWallet(walletId);
+
+              walletManagementOutput.innerHTML = `
+                <div class="success">
+                  <h4>Wallet Switched!</h4>
+                  <p>The page will reload to use the new default wallet.</p>
+                </div>
+              `;
+
+              // Reload the page to update all UI elements with the new wallet
+              setTimeout(() => location.reload(), 1500);
+            } catch (error) {
+              walletManagementOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Switch Wallet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            }
+          };
+
+          // Remove wallet function (global so onclick can access it)
+          window.removeWallet = async (walletId) => {
+            if (!confirm('Are you sure you want to remove this wallet? This action cannot be undone.')) {
+              return;
+            }
+
+            try {
+              walletManagementOutput.innerHTML = '<div class="loading">Removing wallet...</div>';
+
+              witness.removeWallet(walletId);
+
+              walletManagementOutput.innerHTML = `
+                <div class="success">
+                  <h4>Wallet Removed!</h4>
+                  <p>The wallet has been removed from your browser storage.</p>
+                </div>
+              `;
+
+              renderWalletList();
+            } catch (error) {
+              walletManagementOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Remove Wallet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            }
+          };
+
+          // Initial render
+          renderWalletList();
+        }
       }
       catch (error) {
         console.error('Failed to initialize Epistery:', error);
-        document.getElementById('connection-status').textContent = 'Error';
-        document.getElementById('connection-status').className = 'error';
         document.getElementById('local-wallet-address').textContent = 'Error loading wallet';
         document.getElementById('local-wallet-public-key').textContent = 'Error loading wallet';
       }
@@ -457,6 +614,19 @@
       .message-details[open] summary { margin-bottom: 15px; }
       .message-details code { background-color: #f1f3f4; padding: 2px 4px; border-radius: 2px; font-size: 0.85em; word-break: break-all; }
       .message-details pre { background-color: white; padding: 10px; border-radius: 4px; border: 1px solid #dee2e6; overflow-x: auto; white-space: pre-wrap; font-size: 0.8em; margin: 5px 0; }
+
+      /* Wallet Management Styles */
+      .wallet-management-section { background-color: #f0f8ff; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #007bff; }
+      #wallet-list table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+      #wallet-list th { background-color: #007bff; color: white; padding: 10px; text-align: left; }
+      #wallet-list td { padding: 10px; border-bottom: 1px solid #dee2e6; }
+      #wallet-list tr.default-wallet { background-color: #d4edda; }
+      .wallet-actions { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+      .action-button { background-color: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; }
+      .action-button:hover { background-color: #0056b3; }
+      .action-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .action-button.danger { background-color: #dc3545; }
+      .action-button.danger:hover { background-color: #c82333; }
   </style>
 </head>
 <body>
@@ -470,11 +640,25 @@
         <p><strong>Chain ID:</strong> {{server.chainId}}</p>
     </div>
     
-    <h2>Local Client Wallet</h2>
+    <h2>Local Client Wallet (Current Default)</h2>
     <div class="wallet-info">
         <p><strong>Address:</strong> <span id="local-wallet-address" class="address">Loading...</span></p>
         <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading...</span></p>
         <p><strong>Source:</strong> <span id="wallet-source">Loading...</span></p>
+    </div>
+
+    <div class="wallet-management-section">
+        <h2>Wallet Management</h2>
+        <p>Manage multiple wallets for this site. You can add Web3 wallets (MetaMask) or browser wallets, and switch between them.</p>
+
+        <div id="wallet-list"></div>
+
+        <div class="wallet-actions">
+            <button id="add-web3-wallet" class="action-button">Add Web3 Wallet (MetaMask)</button>
+            <button id="add-browser-wallet" class="action-button">Add Browser Wallet</button>
+        </div>
+
+        <div id="wallet-management-output"></div>
     </div>
 
     <div id="export-section" class="export-section" style="display: none;">

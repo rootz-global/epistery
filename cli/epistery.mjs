@@ -124,7 +124,7 @@ function parseCurlArgs(args) {
     method: 'GET',
     data: null,
     headers: [],
-    bot: false,
+    bot: true,  // Use bot mode by default
     verbose: false,
     url: null
   };
