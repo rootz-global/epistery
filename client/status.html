@@ -8,7 +8,8 @@
   <title>Epistery Status - {{server.domain}}</title>
   <script type="module">
     import Witness from '/.well-known/epistery/lib/witness.js';
-    
+    import Export from '/.well-known/epistery/lib/export.js';
+
     let witness = null;
     
     window.addEventListener('DOMContentLoaded', async () => {
@@ -22,11 +23,101 @@
         if (status.client) {
             document.getElementById('local-wallet-address').textContent = status.client.address;
             document.getElementById('local-wallet-public-key').textContent = status.client.publicKey;
+            document.getElementById('wallet-source').textContent = status.client.source === 'local' ? 'Browser Wallet (localStorage)' : 'Web3 Wallet (MetaMask/Plugin)';
         } else {
             document.getElementById('local-wallet-address').textContent = 'No wallet found';
             document.getElementById('local-wallet-public-key').textContent = 'No wallet found';
+            document.getElementById('wallet-source').textContent = 'N/A';
         }
-        
+
+        // Set up export wallet functionality
+        const exportSection = document.getElementById('export-section');
+        const exportButton = document.getElementById('export-button');
+        const exportPrivateKeyButton = document.getElementById('export-privatekey-button');
+        const exportMnemonicButton = document.getElementById('export-mnemonic-button');
+        const exportOutput = document.getElementById('export-output');
+
+        const exportData = Export.getWalletExportData(witness);
+
+        if (exportData.canExport) {
+          exportSection.style.display = 'block';
+
+          exportButton.onclick = () => {
+            const dataToExport = Export.formatForMetaMask(exportData);
+            Export.downloadAsJSON(dataToExport, `epistery-wallet-${exportData.address.substring(0, 8)}.json`);
+
+            exportOutput.innerHTML = `
+              <div class="success">
+                <h4>Wallet Exported!</h4>
+                <p>Your wallet has been downloaded as a JSON file.</p>
+                <p><strong>Next Steps:</strong></p>
+                <ol>
+                  <li>Open MetaMask or your preferred Web3 wallet</li>
+                  <li>Look for "Import Account" or "Import Private Key"</li>
+                  <li>Copy your private key from the downloaded file</li>
+                  <li>Paste it into the import field</li>
+                </ol>
+                <p class="warning-text">⚠️ Keep your private key secure and never share it!</p>
+              </div>
+            `;
+          };
+
+          exportPrivateKeyButton.onclick = async () => {
+            try {
+              await Export.copyToClipboard(exportData.privateKey);
+              exportOutput.innerHTML = `
+                <div class="success">
+                  <h4>Private Key Copied!</h4>
+                  <p>Your private key has been copied to the clipboard.</p>
+                  <p><strong>Private Key:</strong> <code class="private-key-display">${exportData.privateKey}</code></p>
+                  <p class="warning-text">⚠️ Anyone with this key can control your wallet. Keep it secure!</p>
+                </div>
+              `;
+            } catch (error) {
+              exportOutput.innerHTML = `
+                <div class="error">
+                  <h4>Copy Failed</h4>
+                  <p>Could not copy to clipboard. Here is your private key:</p>
+                  <p><code class="private-key-display">${exportData.privateKey}</code></p>
+                </div>
+              `;
+            }
+          };
+
+          exportMnemonicButton.onclick = async () => {
+            if (exportData.mnemonic) {
+              try {
+                await Export.copyToClipboard(exportData.mnemonic);
+                exportOutput.innerHTML = `
+                  <div class="success">
+                    <h4>Recovery Phrase Copied!</h4>
+                    <p>Your 12-word recovery phrase has been copied to the clipboard.</p>
+                    <p><strong>Recovery Phrase:</strong> <code class="private-key-display">${exportData.mnemonic}</code></p>
+                    <p class="warning-text">⚠️ Anyone with this phrase can control your wallet. Keep it secure!</p>
+                  </div>
+                `;
+              } catch (error) {
+                exportOutput.innerHTML = `
+                  <div class="error">
+                    <h4>Copy Failed</h4>
+                    <p>Could not copy to clipboard. Here is your recovery phrase:</p>
+                    <p><code class="private-key-display">${exportData.mnemonic}</code></p>
+                  </div>
+                `;
+              }
+            } else {
+              exportOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Recovery Phrase</h4>
+                  <p>This wallet does not have a recovery phrase available.</p>
+                </div>
+              `;
+            }
+          };
+        } else {
+          exportSection.style.display = 'none';
+        }
+
         // Set up write event button
         const writeButton = document.getElementById('write-button');
         const writeInput = document.getElementById('write-input');
@@ -318,6 +409,13 @@
       .read-button { background-color: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
       .read-button:hover { background-color: #218838; }
       .read-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .export-section { background-color: #e8f5e9; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #4caf50; }
+      .export-buttons { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+      .export-button { background-color: #4caf50; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: bold; flex: 1; min-width: 180px; }
+      .export-button:hover { background-color: #45a049; }
+      .export-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+      .private-key-display { background-color: #fff3cd !important; padding: 8px !important; display: block; margin: 10px 0; font-size: 0.85em; word-break: break-all; border: 1px solid #ffc107; }
+      .warning-text { color: #d32f2f; font-weight: bold; margin: 10px 0; }
       .transfer-section { background-color: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #ffc107; }
       .transfer-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; font-size: 14px; box-sizing: border-box; font-family: monospace; }
       .transfer-button { background-color: #ffc107; color: #212529; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; }
@@ -376,8 +474,25 @@
     <div class="wallet-info">
         <p><strong>Address:</strong> <span id="local-wallet-address" class="address">Loading...</span></p>
         <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading...</span></p>
+        <p><strong>Source:</strong> <span id="wallet-source">Loading...</span></p>
     </div>
-    
+
+    <div id="export-section" class="export-section" style="display: none;">
+        <h2>Export Wallet to Web3 Plugin</h2>
+        <p><i>This browser has a wallet unique to you and {{server.domain}}. Transfer this identity
+        to a web3 plugin for security and portability.</i></p>
+        <p>Export your browser wallet keys to import into MetaMask or another Web3 wallet extension.</p>
+        <p class="warning-text">⚠️ Keep your private keys secure. Never share them with anyone!</p>
+
+        <div class="export-buttons">
+            <button id="export-button" class="export-button">Download Keys (JSON)</button>
+            <button id="export-privatekey-button" class="export-button">Copy Private Key</button>
+            <button id="export-mnemonic-button" class="export-button">Copy Recovery Phrase</button>
+        </div>
+
+        <div id="export-output"></div>
+    </div>
+
     <h2>Write Event Test</h2>
     <div class="write-section">
         <p>Test the Epistery write functionality by entering a message below:</p>

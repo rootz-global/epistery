@@ -58,6 +58,7 @@ class EpisteryAttach {
       "client.js": path.resolve(__dirname, "client/client.js"),
       "witness.js": path.resolve(__dirname, "client/witness.js"),
       "wallet.js": path.resolve(__dirname, "client/wallet.js"),
+      "export.js": path.resolve(__dirname, "client/export.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
     };
@@ -146,7 +147,7 @@ class EpisteryAttach {
           return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
         }
         const clientInfo = {
-          address:req.body.clientAddress,
+          address: req.body.clientAddress.toLowerCase(), // Normalize to lowercase for consistent handling
           publicKey:req.body.clientPublicKey
         }
         if (this.options.authentication) {
