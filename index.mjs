@@ -23,6 +23,7 @@ class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
     this.domain = null;
+    this.domainName = null;
     this.config = new Config()
   }
 
@@ -33,6 +34,7 @@ class EpisteryAttach {
   }
 
   async setDomain(domain) {
+    this.domainName = domain;
     this.domain = getDomainConfig(domain);
   }
 
@@ -48,6 +50,60 @@ class EpisteryAttach {
 
     // Mount routes - RFC 8615 compliant well-known URI
     app.use('/.well-known/epistery', this.routes());
+  }
+
+  /**
+   * Get the whitelist for the current server domain
+   * @returns {Promise<string[]>} Array of whitelisted addresses
+   */
+  async getWhitelist() {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    // Initialize server wallet if not already done
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    return await Utils.GetWhitelist(
+      serverWallet,
+      this.domain.wallet.address,
+      this.domainName
+    );
+  }
+
+  /**
+   * Check if an address is whitelisted for the current server domain
+   * @param {string} address - The address to check
+   * @returns {Promise<boolean>} True if address is whitelisted
+   */
+  async isWhitelisted(address) {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    // Initialize server wallet if not already done
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    return await Utils.IsWhitelisted(
+      serverWallet,
+      this.domain.wallet.address,
+      this.domainName,
+      address
+    );
   }
 
   routes() {
@@ -280,6 +336,39 @@ class EpisteryAttach {
 
       } catch (error) {
         console.error('Domain initialization error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Whitelist endpoints
+    router.get('/whitelist', async (req, res) => {
+      try {
+        const whitelist = await this.getWhitelist();
+        res.json({
+          domain: this.domainName,
+          owner: this.domain.wallet.address,
+          whitelist: whitelist,
+          count: whitelist.length
+        });
+      }
+      catch (error) {
+        console.error('Get whitelist error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.get('/whitelist/check/:address', async (req, res) => {
+      try {
+        const { address } = req.params;
+        const isWhitelisted = await this.isWhitelisted(address);
+        res.json({
+          address: address,
+          isWhitelisted: isWhitelisted,
+          domain: this.domainName
+        });
+      }
+      catch (error) {
+        console.error('Check whitelist error:', error);
         res.status(500).json({ error: error.message });
       }
     });
