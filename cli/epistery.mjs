@@ -13,7 +13,18 @@
  */
 
 import { CliWallet } from '../dist/utils/CliWallet.js';
+import { Utils } from '../dist/utils/Utils.js';
+import { ethers } from 'ethers';
 import { spawn } from 'child_process';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load .env file from project root
+dotenv.config({ path: join(__dirname, '../.env') });
 
 function showHelp() {
   console.log('epistery - CLI tool for Epistery authentication and requests');
@@ -23,6 +34,9 @@ function showHelp() {
   console.log('  epistery curl [options] <url>        Make authenticated HTTP request');
   console.log('  epistery info [domain]               Show domain information');
   console.log('  epistery set-default <domain>        Set default domain for CLI');
+  console.log('  epistery whitelist <domain> <addr>   Add address to domain whitelist');
+  console.log('  epistery whitelist -d <domain> <a>   Remove address from whitelist');
+  console.log('  epistery whitelist status <domain>   Show domain whitelist status');
   console.log('');
   console.log('curl options:');
   console.log('  -w, --wallet <domain>    Use specific domain wallet (overrides default)');
@@ -39,6 +53,11 @@ function showHelp() {
   console.log('');
   console.log('  # Set default domain');
   console.log('  epistery set-default localhost');
+  console.log('');
+  console.log('  # Whitelist management');
+  console.log('  epistery whitelist localhost 0x1234567890123456789012345678901234567890');
+  console.log('  epistery whitelist -d localhost 0x1234567890123456789012345678901234567890');
+  console.log('  epistery whitelist status localhost');
   console.log('');
   console.log('  # Make requests (uses default domain)');
   console.log('  epistery curl https://wiki.rootz.global/wiki/Home');
@@ -112,6 +131,159 @@ function setDefault(domain) {
     console.log('');
     console.log('Verify with: epistery info');
   } catch (error) {
+    console.error('');
+    console.error('Error:', error.message);
+    process.exit(1);
+  }
+}
+
+async function addToWhitelist(domain, address) {
+  try {
+    console.log(`Adding ${address} to whitelist for domain: ${domain}`);
+    console.log('');
+
+    const cliWallet = CliWallet.load(domain);
+    const domainConfig = Utils.GetDomainInfo(domain);
+    if (!domainConfig.wallet) {
+      throw new Error(`No wallet found for domain: ${domain}`);
+    }
+
+    const provider = cliWallet.getProvider();
+    if (!provider || !provider.rpc) {
+      throw new Error(`No provider configured for domain: ${domain}`);
+    }
+
+    const ethersProvider = new ethers.providers.JsonRpcProvider(provider.rpc);
+    let wallet;
+    if (domainConfig.wallet.mnemonic) {
+      wallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(ethersProvider);
+    }
+    else if (domainConfig.wallet.privateKey) {
+      wallet = new ethers.Wallet(domainConfig.wallet.privateKey, ethersProvider);
+    }
+    else {
+      throw new Error(`No wallet credentials found for domain: ${domain}`);
+    }
+
+    // Validate the address to add
+    if (!ethers.utils.isAddress(address)) {
+      throw new Error(`Invalid Ethereum address: ${address}`);
+    }
+
+    const receipt = await Utils.AddToWhitelist(wallet, address, domain);
+
+    console.log('');
+    console.log('✓ Address added to whitelist successfully');
+    console.log('');
+    console.log(`Transaction hash: ${receipt.transactionHash}`);
+
+  }
+  catch (error) {
+    console.error('');
+    console.error('Error:', error.message);
+    process.exit(1);
+  }
+}
+
+async function removeFromWhitelist(domain, address) {
+  try {
+    console.log(`Removing ${address} from whitelist for domain: ${domain}`);
+    console.log('');
+
+    const cliWallet = CliWallet.load(domain);
+    const domainConfig = Utils.GetDomainInfo(domain);
+    if (!domainConfig.wallet) {
+      throw new Error(`No wallet found for domain: ${domain}`);
+    }
+
+    // Get the provider and connect the wallet
+    const provider = cliWallet.getProvider();
+    if (!provider || !provider.rpc) {
+      throw new Error(`No provider configured for domain: ${domain}`);
+    }
+
+    const ethersProvider = new ethers.providers.JsonRpcProvider(provider.rpc);
+    let wallet;
+    if (domainConfig.wallet.mnemonic) {
+      wallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(ethersProvider);
+    }
+    else if (domainConfig.wallet.privateKey) {
+      wallet = new ethers.Wallet(domainConfig.wallet.privateKey, ethersProvider);
+    }
+    else {
+      throw new Error(`No wallet credentials found for domain: ${domain}`);
+    }
+
+    // Validate the address to remove
+    if (!ethers.utils.isAddress(address)) {
+      throw new Error(`Invalid Ethereum address: ${address}`);
+    }
+
+    const receipt = await Utils.RemoveFromWhitelist(wallet, address, domain);
+
+    console.log('');
+    console.log('Address removed from whitelist successfully');
+    console.log('');
+    console.log(`Transaction hash: ${receipt.transactionHash}`);
+
+  }
+  catch (error) {
+    console.error('');
+    console.error('Error:', error.message);
+    process.exit(1);
+  }
+}
+
+async function showWhitelistStatus(domain) {
+  try {
+    console.log(`Fetching whitelist status for domain: ${domain}`);
+    console.log('');
+
+    const cliWallet = CliWallet.load(domain);
+    const domainConfig = Utils.GetDomainInfo(domain);
+    if (!domainConfig.wallet) {
+      throw new Error(`No wallet found for domain: ${domain}`);
+    }
+
+    const provider = cliWallet.getProvider();
+    if (!provider || !provider.rpc) {
+      throw new Error(`No provider configured for domain: ${domain}`);
+    }
+
+    const ethersProvider = new ethers.providers.JsonRpcProvider(provider.rpc);
+    let wallet;
+    if (domainConfig.wallet.mnemonic) {
+      wallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(ethersProvider);
+    }
+    else if (domainConfig.wallet.privateKey) {
+      wallet = new ethers.Wallet(domainConfig.wallet.privateKey, ethersProvider);
+    }
+    else {
+      throw new Error(`No wallet credentials found for domain: ${domain}`);
+    }
+
+    const whitelist = await Utils.GetWhitelist(wallet, cliWallet.address, domain);
+
+    console.log('');
+    console.log(`Whitelist for domain: ${domain}`);
+    console.log(`Owner address: ${cliWallet.address}`);
+    console.log(`Total whitelisted addresses: ${whitelist.length}`);
+    console.log('');
+
+    if (whitelist.length > 0) {
+      console.log('Whitelisted addresses:');
+      whitelist.forEach((addr, index) => {
+        console.log(`  ${index + 1}. ${addr}`);
+      });
+    }
+    else {
+      console.log('No addresses whitelisted yet.');
+    }
+
+    console.log('');
+
+  } 
+  catch (error) {
     console.error('');
     console.error('Error:', error.message);
     process.exit(1);
@@ -341,6 +513,43 @@ async function main() {
           process.exit(1);
         }
         setDefault(args[0]);
+        break;
+
+      case 'whitelist':
+        if (args.length === 0) {
+          console.error('Error: Arguments required');
+          console.error('Usage: epistery whitelist <domain> <address>');
+          console.error('       epistery whitelist -d <domain> <address>');
+          console.error('       epistery whitelist status <domain>');
+          process.exit(1);
+        }
+
+        if (args[0] === 'status') {
+          if (!args[1]) {
+            console.error('Error: Domain name required');
+            console.error('Usage: epistery whitelist status <domain>');
+            process.exit(1);
+          }
+
+          await showWhitelistStatus(args[1]);
+        }
+        else if (args[0] === '-d' || args[0] === '--delete') {
+          if (!args[1] || !args[2]) {
+            console.error('Error: Domain and address required');
+            console.error('Usage: epistery whitelist -d <domain> <address>');
+            process.exit(1);
+          }
+
+          await removeFromWhitelist(args[1], args[2]);
+        }
+        else {
+          if (!args[0] || !args[1]) {
+            console.error('Error: Domain and address required');
+            console.error('Usage: epistery whitelist <domain> <address>');
+            process.exit(1);
+          }
+          await addToWhitelist(args[0], args[1]);
+        }
         break;
 
       case 'help':
