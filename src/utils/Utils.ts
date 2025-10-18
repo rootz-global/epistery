@@ -12,39 +12,35 @@ export class Utils {
         this.config = new Config();
       }
 
-      let domainConfig = this.config.loadDomain(domain);
-      if (!domainConfig || !domainConfig.wallet) {
+      const domainConfig = this.config.loadDomain(domain) || {domain:domain};
+      if (!domainConfig.provider) {
+          domainConfig.provider = this.config.data.default?.provider;
+      }
+      if (!domainConfig.wallet) {
         console.log(`No wallet found for domain: ${domain}, creating new wallet...`);
 
         const wallet = ethers.Wallet.createRandom();
 
-        const walletConfig: WalletConfig = {
+        domainConfig.wallet = {
           address: wallet.address,
           mnemonic: wallet.mnemonic?.phrase || '',
           publicKey: wallet.publicKey,
           privateKey: wallet.privateKey,
         };
 
-        const newDomainConfig: DomainConfig = {
-          domain: domain,
-          provider: this.config.data.provider,
-          wallet: walletConfig
-        };
+        this.config.saveDomain(domain, domainConfig);
 
-        this.config.saveDomain(domain, newDomainConfig);
-        domainConfig = newDomainConfig;
-
-        console.log(`Created new wallet for domain: ${domain}`);
-        console.log(`Wallet address: ${wallet.address}`);
+        console.log(`[debug] Created new wallet for domain: ${domain}`);
+        console.log(`[debug] Wallet address: ${wallet.address}`);
       }
 
       if (domainConfig.wallet) {
-        const provider = new ethers.providers.JsonRpcProvider(domainConfig.provider?.rpc || this.config.data.provider.rpc);
+        const provider = new ethers.providers.JsonRpcProvider(domainConfig.provider?.rpc);
         this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(provider);
 
         console.log(`Server wallet initialized for domain: ${domain}`);
         console.log(`Wallet address: ${domainConfig.wallet.address}`);
-        console.log(`Provider: ${domainConfig.provider?.name || this.config.data.provider.name}`);
+        console.log(`Provider: ${domainConfig.provider?.name}`);
 
         return this.serverWallet;
       }

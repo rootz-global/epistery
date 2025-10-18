@@ -4,6 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Epistery } from './dist/epistery.js';
 import { Utils } from './dist/utils/Utils.js';
+import { Config } from './dist/utils/Config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +23,7 @@ class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
     this.domain = null;
+    this.config = new Config()
   }
 
   static async connect(options) {
@@ -55,6 +57,7 @@ class EpisteryAttach {
     const library = {
       "client.js": path.resolve(__dirname, "client/client.js"),
       "witness.js": path.resolve(__dirname, "client/witness.js"),
+      "wallet.js": path.resolve(__dirname, "client/wallet.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
     };
@@ -103,6 +106,18 @@ class EpisteryAttach {
       res.send(template);
     });
 
+    // Main status endpoint (simplified path)
+    router.get('/', (req, res) => {
+      const serverWallet = this.domain;
+
+      if (!serverWallet) {
+        return res.status(500).json({ error: 'Server wallet not found' });
+      }
+
+      const status = Epistery.getStatus({}, serverWallet);
+      res.json(status);
+    });
+
     // API routes using the 'src/epistery.ts' defined functions
     router.get('/api/status', (req, res) => {
       const serverWallet = this.domain;
@@ -113,6 +128,38 @@ class EpisteryAttach {
 
       const status = Epistery.getStatus({}, serverWallet);
       res.json(status);
+    });
+
+    // Key exchange endpoint - handles POST requests for key exchange
+    router.post('/connect', express.json(), async (req, res) => {
+      try {
+        const serverWallet = this.domain;
+
+        if (!serverWallet?.wallet) {
+          return res.status(500).json({ error: 'Server wallet not found' });
+        }
+
+        // Handle key exchange request
+        const keyExchangeResponse = await Epistery.handleKeyExchange(req.body, serverWallet.wallet);
+
+        if (!keyExchangeResponse) {
+          return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
+        }
+        const clientInfo = {
+          address:req.body.clientAddress,
+          publicKey:req.body.clientPublicKey
+        }
+        if (this.options.authentication) {
+          clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
+          clientInfo.authenticated = !!clientInfo.profile;
+        }
+        req.app.locals.episteryClient = clientInfo;
+
+        res.json(Object.assign(keyExchangeResponse,{profile:clientInfo.profile,authenticated:clientInfo.authenticated}));
+      } catch (error) {
+        console.error('Key exchange error:', error);
+        res.status(500).json({ error: 'Internal server error during key exchange' });
+      }
     });
 
     router.get('/create', (req, res) => {
@@ -140,6 +187,44 @@ class EpisteryAttach {
 
       } catch (error) {
         console.error('Write error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Domain initialization endpoint - use to set up domain with custom provider
+    router.post('/domain/initialize', express.json(), async (req, res) => {
+      try {
+        const domain = req.hostname;
+        const { provider } = req.body;
+
+        console.log(`[debug] Domain initialization request for: ${domain}`);
+        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
+        console.log(`[debug] Full request body:`, JSON.stringify(req.body, null, 2));
+
+        if (!provider || !provider.name || !provider.chainId || !provider.rpcUrl) {
+          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpcUrl=${!!provider?.rpcUrl}`);
+          return res.status(400).json({ error: 'Invalid provider configuration' });
+        }
+
+        // Check if domain already exists
+        let domainConfig = Utils.GetDomainInfo(domain);
+        if (!domainConfig) domainConfig = {domain: domain,pending:true};
+        if (!domainConfig.provider) domainConfig.provider = {
+          chainId: provider.chainId,
+          name: provider.name,
+          rpc: provider.rpcUrl
+        }
+
+        // Create domain config with custom provider (marked as pending)
+        const config = Utils.GetConfig();
+
+        config.saveDomain(domain, domainConfig);
+        console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
+
+        res.json({ status: 'success', message: 'Domain initialized with custom provider' });
+
+      } catch (error) {
+        console.error('Domain initialization error:', error);
         res.status(500).json({ error: error.message });
       }
     });

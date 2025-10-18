@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import Epistery from '../index.mjs';
+import { Epistery } from '../index.mjs';
 
 // Get directory paths for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -20,6 +20,10 @@ async function main() {
   
   app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
+  });
+
+  app.get('/test-key-exchange', (req, res) => {
+    res.sendFile(path.join(__dirname, '../test-key-exchange.html'));
   });
   
   const PORT = process.env.TEST_PORT || 3001;
