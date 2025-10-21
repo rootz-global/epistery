@@ -62,7 +62,37 @@ db.user.updateOne(
 2. Test bot authentication with CLI
 3. Write and post developer documentation to wiki
 
-### Notes
-- This setup worked before - a document was successfully posted by Claude from this machine using the localhost (9aF) address
-- The wiki server claims to be configured to accept read/write from this address
-- Key exchange works but authentication fails - suggests configuration mismatch
+### Resolution
+
+**Fixed in `/home/msprague/workspace/rootz/rhonda/modules/account-server/index.mjs:866`**
+
+Changed from:
+```javascript
+const userAccount = await this.userCollection.findOne({
+  address: address.toLowerCase()
+});
+```
+
+To:
+```javascript
+const userAccount = await this.userCollection.findOne({
+  address: new RegExp(`^${address}$`, 'i')
+});
+```
+
+This makes address lookup case-insensitive, handling addresses stored with mixed case in the database.
+
+### Success
+
+✅ Bot authentication working
+✅ Test page created at `/wiki/ClaudeTest`
+✅ Documentation updated on wiki Home page
+✅ Other developers can now follow the instructions to set up their own agents
+
+### Key Learnings
+
+1. **Case sensitivity**: Ethereum addresses are case-insensitive but often stored with mixed case (checksummed). Always use case-insensitive comparison in MongoDB queries.
+
+2. **Bot authentication flow**: The Epistery CLI signs each request with the wallet's private key. The server verifies the signature, looks up the user by address, checks ACL permissions, and allows/denies the request.
+
+3. **Session persistence**: Creating SESSION.md files for important development sessions helps recover from machine crashes and provides documentation of debugging processes.
