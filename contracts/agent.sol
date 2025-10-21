@@ -8,6 +8,10 @@ contract Agent {
   // Mapping from wallet address to array of public keys
   mapping(address => string[]) private addressPublicKeys;
 
+  // Mapping from wallet address to map of domain to array of white-listed addresses
+  // Ex: ["0x1000"] --> ["localhost"]["0x2000", "0x3000", "0x4000", ...]
+  mapping(address => mapping(string => address[])) private domainWhitelist;
+
   // Event emitted when data is written
   event DataWritten(address indexed owner, string publicKey, string data, uint256 timestamp);
 
@@ -71,5 +75,34 @@ contract Agent {
     delete addressPublicKeys[msg.sender];
 
     emit OwnershipTransferred(msg.sender, newOwner, block.timestamp);
+  }
+
+  function addToWhitelist(address addressToAdd, string memory domain) external {
+    domainWhitelist[msg.sender][domain].push(addressToAdd);
+  }
+
+  function removeFromWhitelist(address addressToRemove, string memory domain) external {
+    address[] storage whitelist = domainWhitelist[msg.sender][domain];
+    for (uint256 i = 0; i < whitelist.length; i++) {
+      if (whitelist[i] == addressToRemove) {
+          whitelist[i] = whitelist[whitelist.length - 1];
+          whitelist.pop();
+          break;
+      }
+    }
+  }
+
+  function getWhitelist(address wallet, string memory domain) external view returns (address[] memory) {
+    return domainWhitelist[wallet][domain];
+  }
+
+  function isWhitelisted(address wallet, string memory domain, address addressToCheck) external view returns (bool) {
+    address[] memory whitelist = domainWhitelist[wallet][domain];
+    for (uint256 i = 0; i < whitelist.length; i++) {
+      if (whitelist[i] == addressToCheck) {
+          return true;
+      }
+    }
+    return false;
   }
 }

@@ -404,4 +404,155 @@ export class Utils {
       return false;
     }
   }
+
+  public static async AddToWhitelist(ownerWallet: Wallet, addressToAdd: string, domain: string): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        ownerWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.addToWhitelist(addressToAdd, domain);
+
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract addToWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract addToWhitelist failed, using default limit');
+        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await ownerWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      const tx = await agentContract.addToWhitelist(addressToAdd, domain, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Added ${addressToAdd} to whitelist for domain ${domain}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error adding to whitelist:', error);
+      throw new Error(`Failed to add to whitelist: ${error}`);
+    }
+  }
+
+  public static async RemoveFromWhitelist(ownerWallet: Wallet, addressToRemove: string, domain: string): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        ownerWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.removeFromWhitelist(addressToRemove, domain);
+
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract removeFromWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract removeFromWhitelist failed, using default limit');
+        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await ownerWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      // Call the removeFromWhitelist function
+      const tx = await agentContract.removeFromWhitelist(addressToRemove, domain, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Removed ${addressToRemove} from whitelist for domain ${domain}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error removing from whitelist:', error);
+      throw new Error(`Failed to remove from whitelist: ${error}`);
+    }
+  }
+
+  public static async GetWhitelist(wallet: Wallet, ownerAddress: string, domain: string): Promise<string[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const whitelist = await agentContract.getWhitelist(ownerAddress, domain);
+
+      console.log(`Whitelist for ${ownerAddress} on domain ${domain}: ${whitelist.length} address(es)`);
+
+      return whitelist;
+    }
+    catch (error) {
+      console.error('Error getting whitelist:', error);
+      throw new Error(`Failed to get whitelist: ${error}`);
+    }
+  }
+
+  public static async IsWhitelisted(wallet: Wallet, ownerAddress: string, domain: string, addressToCheck: string): Promise<boolean> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const isWhitelisted = await agentContract.isWhitelisted(ownerAddress, domain, addressToCheck);
+
+      return isWhitelisted;
+    }
+    catch (error) {
+      console.error('Error checking whitelist status:', error);
+      throw new Error(`Failed to check whitelist status: ${error}`);
+    }
+  }
 }
