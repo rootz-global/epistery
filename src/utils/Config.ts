@@ -94,4 +94,7 @@ url=https://rootz.digital/api/v0
 chainId=1,
 name=Ethereum Mainnet
 rpc=https://eth.llamarpc.com
+nativeCurrencyName=Ether
+nativeCurrencySymbol=ETH
+nativeCurrencyDecimals=18
 `

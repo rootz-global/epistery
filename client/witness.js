@@ -75,9 +75,7 @@ export default class Witness {
       }
     }
 
-    // Save server data
     storageData.server = this.server;
-    storageData.serverInfo = this.serverInfo;
 
     localStorage.setItem('epistery', JSON.stringify(storageData));
   }
@@ -85,7 +83,7 @@ export default class Witness {
   loadStorageData() {
     const data = localStorage.getItem('epistery');
     if (!data) {
-      return { wallets: [], defaultWalletId: null, server: null, serverInfo: null };
+      return { wallets: [], defaultWalletId: null, server: null };
     }
 
     try {
@@ -103,30 +101,25 @@ export default class Witness {
             lastUsed: Date.now()
           }],
           defaultWalletId: migratedWalletId,
-          server: parsed.server,
-          serverInfo: parsed.serverInfo
+          server: parsed.server
         };
       }
 
-      // Return new format (already migrated or fresh)
       return {
         wallets: parsed.wallets || [],
         defaultWalletId: parsed.defaultWalletId || null,
-        server: parsed.server || null,
-        serverInfo: parsed.serverInfo || null
+        server: parsed.server || null
       };
     } catch (error) {
       console.error('Failed to parse epistery data:', error);
-      return { wallets: [], defaultWalletId: null, server: null, serverInfo: null };
+      return { wallets: [], defaultWalletId: null, server: null };
     }
   }
 
   async load() {
     const storageData = this.loadStorageData();
 
-    // Restore server data
     this.server = storageData.server;
-    this.serverInfo = storageData.serverInfo;
 
     // Check if migration happened and persist it immediately to avoid data loss
     const currentData = localStorage.getItem('epistery');
@@ -267,17 +260,20 @@ export default class Witness {
       // If the chain hasn't been added to MetaMask, add it
       if (switchError.code === 4902) {
         try {
+          // Build nativeCurrency from serverInfo with sensible defaults
+          const nativeCurrency = this.serverInfo?.nativeCurrency || {
+            name: 'ETH',
+            symbol: 'ETH',
+            decimals: 18
+          };
+
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
             params: [{
               chainId: `0x${chainId.toString(16)}`,
               chainName: networkName || `Chain ${chainId}`,
               rpcUrls: [rpcUrl],
-              nativeCurrency: {
-                name: 'DOT',
-                symbol: 'DOT',
-                decimals: 18,
-              },
+              nativeCurrency: nativeCurrency,
             }],
           });
 
@@ -347,7 +343,11 @@ export default class Witness {
             services: serverResponse.services,
             challenge: serverResponse.challenge,
             signature: serverResponse.signature,
-            identified: true
+            identified: true,
+            provider: this.serverInfo?.provider,
+            chainId: this.serverInfo?.chainId,
+            rpc: this.serverInfo?.rpc,
+            nativeCurrency: this.serverInfo?.nativeCurrency
           };
 
           this.save();

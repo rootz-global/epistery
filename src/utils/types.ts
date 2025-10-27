@@ -1,9 +1,18 @@
 import { AquaTree } from "aqua-js-sdk";
 
+export interface NativeCurrency {
+  name: string;
+  symbol: string;
+  decimals: number;
+}
+
 export interface ProviderConfig {
   chainId: number | undefined;
   name: string;
   rpc: string;
+  nativeCurrencySymbol?: string;
+  nativeCurrencyName?: string;
+  nativeCurrencyDecimals?: number;
 }
 
 export interface WalletConfig {
@@ -52,6 +61,7 @@ export interface EpisteryStatus {
     provider: string | undefined;
     chainId: number | undefined;
     rpc: string | undefined;
+    nativeCurrency?: NativeCurrency;
   };
   client: {
     walletAddress: string;

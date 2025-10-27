@@ -36,13 +36,24 @@ export class Epistery {
   }
 
   public static getStatus(client: ClientWalletInfo, server: DomainConfig): EpisteryStatus {
+    // Build nativeCurrency object from flat fields with sensible defaults
+    let nativeCurrency = undefined;
+    if (server?.provider?.nativeCurrencySymbol) {
+      nativeCurrency = {
+        symbol: server.provider.nativeCurrencySymbol,
+        name: server.provider.nativeCurrencyName || server.provider.nativeCurrencySymbol,
+        decimals: server.provider.nativeCurrencyDecimals || 18
+      };
+    }
+
     const status: EpisteryStatus = {
       server: {
         walletAddress: server?.wallet?.address,
         publicKey: server?.wallet?.publicKey,
         provider: server?.provider?.name,
         chainId: server?.provider?.chainId,
-        rpc: server?.provider?.rpc
+        rpc: server?.provider?.rpc,
+        nativeCurrency: nativeCurrency
       },
       client: {
         walletAddress: client?.address,
