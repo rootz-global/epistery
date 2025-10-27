@@ -54,7 +54,7 @@ export class CliWallet {
 
   private constructor(config: Config, domainName: string, domainConfig: DomainConfig, wallet: Wallet) {
     this.config = config;
-    this.domainName = domainName;
+    this.domainName = domainName.toLowerCase();
     this.domainConfig = domainConfig;
     this.wallet = wallet;
     this.address = wallet.address;

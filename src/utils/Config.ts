@@ -39,6 +39,7 @@ export class Config {
 
   public loadDomain(domain: string): DomainConfig | null {
     try {
+      domain = domain.toLowerCase();
       this._activeDomain = domain;
       if (this.domains[domain]) return this.domains[domain];
 
@@ -59,6 +60,7 @@ export class Config {
   }
 
   public saveDomain(domain: string, domainConfig: DomainConfig): void {
+    domain = domain.toLowerCase();
     const domainConfigDir = join(this.configDir, domain);
     const domainConfigFile = join(domainConfigDir, 'config.ini');
 
