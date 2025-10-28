@@ -15,9 +15,10 @@ export class Epistery {
     if (Epistery.isInitialized)
       return;
 
-    const config = Utils.GetConfig()
-    Epistery.ipfsApiUrl = config.data.ipfs?.url || process.env.IPFS_URL as string || 'http://127.0.0.1:5001/api/v0';
-    Epistery.ipfsGatewayUrl = config.data.ipfs?.gateway || 'http://localhost:8080';
+    const config = Utils.GetConfig();
+    const rootConfig = config.read('/');
+    Epistery.ipfsApiUrl = rootConfig.ipfs?.url || process.env.IPFS_URL as string || 'http://127.0.0.1:5001/api/v0';
+    Epistery.ipfsGatewayUrl = rootConfig.ipfs?.gateway || 'http://localhost:8080';
     await Epistery.initIPFS();
 
     Epistery.isInitialized = true;
@@ -91,7 +92,7 @@ export class Epistery {
       return null;
 
     const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
-    
+
     const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
     const serverHasEnough:boolean = await Utils.HasEnoughFunds(serverWallet, amount);
     if (!serverHasEnough) {
@@ -162,14 +163,14 @@ export class Epistery {
     }
 
   }
-  
+
   /**
     * Returns true if successfully transferred ownership, else false
   */
   public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
-    
+
     try {
       const receipt = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress);
       if (!receipt) return false;
