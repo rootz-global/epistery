@@ -1,8 +1,13 @@
 {
   "name": "epistery",
   "version": "1.0.0",
-  "description": "ExpressJS server with TypeScript",
+  "description": "Epistery brings blockchain capabilities to mundane web tasks like engagement metrics, authentication and commerce of all sorts.",
+  "author": "Rootz Corp.",
+  "license": "MIT",
+  "homepage": "https://epistery.com",
+  "repository": "https://github.com/rootz-global/epistery",
   "main": "index.mjs",
+  "types": "dist/epistery.d.ts",
   "bin": {
     "epistery": "./cli/epistery.mjs"
   },

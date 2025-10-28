@@ -1,0 +1,44 @@
+# Development and configuration
+.claude/
+.vscode/
+.idea/
+secrets.mjs
+.env
+.npmrc
+
+# Test files
+test-key-exchange.html
+
+# Build artifacts
+artifacts/
+cache/
+dist/
+
+# Certificates and security
+.certs/*
+server.cert
+server.key
+
+# Nginx configuration
+.nginx/
+
+# ACME challenge
+.http01-challenge/*
+
+# Logs
+.logs/*
+
+# Package manager
+node_modules/
+jspm_packages/
+test_modules/
+.npm/
+package-lock.json
+
+# Snapshots
+*.snap
+*.heapsnapshot
+
+# Data files
+data.json
+scratch.html

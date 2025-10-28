@@ -14,21 +14,31 @@ Epistery provides the primitive tools for creating and rendering data-wallets.
 * /.well-known/acme - Ephemeral ACME url for authorizing ssl cert assignment.
 
 ## Usage
->This has to be revisited to document how it is actually used.
+
 ```bash
 npm install epistery
-npm run initialize mydomain.com
 ```
 
-In the code, access the certs through epistery.config.
-```javascript
-import Certify from './modules/certify/index.mjs';
+Initialize your domain:
+```bash
+npx epistery initialize mydomain.com
+```
 
-const epistery = await Epistery.connect()
-await epistery.attach(app);
+In your Express application:
+```javascript
+import express from 'express';
+import https from 'https';
+import { Epistery } from 'epistery';
+
 const app = express();
-epistery.setDomain('mydomain.com');
-const https_server = https.createServer(certify.SNI,app);
+
+// Connect and attach epistery
+const epistery = await Epistery.connect();
+await epistery.setDomain('mydomain.com');
+await epistery.attach(app);
+
+// Start your server
+const https_server = https.createServer(epistery.config.SNI, app);
 https_server.listen(443);
 ```
 
