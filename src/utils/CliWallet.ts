@@ -89,23 +89,27 @@ export class CliWallet {
     const config = new Config();
 
     // Check if domain already exists
-    let domainConfig = config.loadDomain(domain);
-    if (domainConfig && domainConfig.wallet) {
+    config.setPath(`/${domain}`);
+    config.load();
+    if (config.data.wallet) {
       throw new Error(`Domain '${domain}' already initialized. Use load() to access it.`);
     }
 
     // Create new wallet
     const ethersWallet = ethers.Wallet.createRandom();
 
-    // Get provider from argument, default config, or use default
-    const providerConfig = provider || (config.data as any).default?.provider || {
+    // Get provider from root default, argument, or fallback default
+    config.setPath('/');
+    config.load();
+    const providerConfig = provider || config.data.default?.provider || {
       chainId: 420420422,
       name: 'polkadot-hub-testnet',
       rpc: 'https://testnet-passet-hub-eth-rpc.polkadot.io'
     };
 
     // Create domain config
-    domainConfig = {
+    config.setPath(`/${domain}`);
+    config.data = {
       domain: domain,
       wallet: {
         address: ethersWallet.address,
@@ -115,15 +119,13 @@ export class CliWallet {
       },
       provider: providerConfig
     };
-
-    // Save domain config
-    config.saveDomain(domain, domainConfig);
+    config.save();
 
     console.log(`Initialized domain: ${domain}`);
     console.log(`Address: ${ethersWallet.address}`);
     console.log(`Provider: ${providerConfig.name}`);
 
-    return new CliWallet(config, domain, domainConfig, ethersWallet);
+    return new CliWallet(config, domain, config.data, ethersWallet);
   }
 
   /**
@@ -134,8 +136,10 @@ export class CliWallet {
     const config = new Config();
     const domainName = domain || CliWallet.getDefaultDomain();
 
-    const domainConfig = config.loadDomain(domainName);
-    if (!domainConfig || !domainConfig.wallet) {
+    config.setPath(`/${domainName}`);
+    config.load();
+
+    if (!config.data.wallet) {
       throw new Error(
         `Domain '${domainName}' not found or has no wallet. ` +
         `Initialize with: epistery initialize ${domainName}`
@@ -144,15 +148,15 @@ export class CliWallet {
 
     // Reconstruct wallet from config
     let ethersWallet: Wallet;
-    if (domainConfig.wallet.mnemonic) {
-      ethersWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic);
-    } else if (domainConfig.wallet.privateKey) {
-      ethersWallet = new ethers.Wallet(domainConfig.wallet.privateKey);
+    if (config.data.wallet.mnemonic) {
+      ethersWallet = ethers.Wallet.fromMnemonic(config.data.wallet.mnemonic);
+    } else if (config.data.wallet.privateKey) {
+      ethersWallet = new ethers.Wallet(config.data.wallet.privateKey);
     } else {
       throw new Error(`Domain '${domainName}' wallet has no mnemonic or privateKey`);
     }
 
-    return new CliWallet(config, domainName, domainConfig, ethersWallet);
+    return new CliWallet(config, domainName, config.data, ethersWallet);
   }
 
   /**

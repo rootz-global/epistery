@@ -13,10 +13,20 @@ export class Utils {
         this.config = new Config();
       }
 
-      const domainConfig = this.config.loadDomain(domain) || {domain:domain};
+      // Load domain config
+      this.config.setPath(`/${domain}`);
+      this.config.load();
+
+      const domainConfig = this.config.data.domain ? this.config.data : {domain: domain};
+
+      // Get default provider if not set
       if (!domainConfig.provider) {
-          domainConfig.provider = this.config.data.default?.provider;
+        this.config.setPath('/');
+        this.config.load();
+        domainConfig.provider = this.config.data.default?.provider;
+        this.config.setPath(`/${domain}`); // Switch back to domain
       }
+
       if (!domainConfig.wallet) {
         console.log(`No wallet found for domain: ${domain}, creating new wallet...`);
 
@@ -29,7 +39,8 @@ export class Utils {
           privateKey: wallet.privateKey,
         };
 
-        this.config.saveDomain(domain, domainConfig);
+        this.config.data = domainConfig;
+        this.config.save();
 
         console.log(`[debug] Created new wallet for domain: ${domain}`);
         console.log(`[debug] Wallet address: ${wallet.address}`);
@@ -69,11 +80,13 @@ export class Utils {
       this.config = new Config();
     }
 
-    const domainConfig = this.config.loadDomain(domain);
-    if (!domainConfig)
+    this.config.setPath(`/${domain}`);
+    this.config.load();
+
+    if (!this.config.data.domain)
       return {domain:domain};
 
-    return domainConfig;
+    return this.config.data;
   }
 
   public static async ReadFromContract(clientWallet: Wallet): Promise<any> {

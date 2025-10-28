@@ -382,4 +382,4 @@ class EpisteryAttach {
   }
 }
 
-export { EpisteryAttach as Epistery };
+export { EpisteryAttach as Epistery, Config };

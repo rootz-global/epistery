@@ -1,86 +1,180 @@
 import fs from 'fs';
-import { resolve, join } from 'path';
+import { join } from 'path';
 import ini from 'ini';
-import { RootConfig, DomainConfig } from './types';
 
-import { fileURLToPath } from 'url';
-
+/**
+ * Epistery Config - Path-based configuration system
+ *
+ * Provides unified, filesystem-like config management:
+ * - setPath('/') → ~/.epistery/config.ini
+ * - setPath('/domain') → ~/.epistery/domain/config.ini
+ * - setPath('/.ssl/domain') → ~/.epistery/.ssl/domain/config.ini
+ *
+ * Usage:
+ *   const config = new Config('epistery');
+ *   config.setPath('/wiki.rootz.global');
+ *   config.load();
+ *   config.data.verified = true;
+ *   config.save();
+ */
 export class Config {
-  public rootName: string;
+  public readonly rootName: string;
   public readonly homeDir: string;
   public readonly configDir: string;
-  public readonly configFile: string;
-  public data!: RootConfig;
-  public domains: Record<string, DomainConfig> = {};
-  private _activeDomain: string = "";
 
-  constructor() {
-    this.rootName = 'epistery';
+  private currentPath: string = '/';
+  private currentDir: string;
+  private currentFile: string;
+
+  public data: any = {};
+
+  constructor(rootName: string = 'epistery') {
+    this.rootName = rootName;
     this.homeDir = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || '';
     this.configDir = join(this.homeDir, '.' + this.rootName);
-    this.configFile = join(this.configDir, 'config.ini');
 
-    if (!fs.existsSync(this.configFile)) {
+    this.currentDir = this.configDir;
+    this.currentFile = join(this.configDir, 'config.ini');
+
+    // Initialize root config if it doesn't exist
+    if (!fs.existsSync(this.currentFile)) {
       this.initialize();
+    }
+  }
+
+  /**
+   * Set current working path (like cd)
+   * Examples: '/', '/domain', '/.ssl/domain'
+   */
+  public setPath(path: string): void {
+    // Normalize path: ensure leading slash, remove trailing slash, lowercase
+    path = path.trim();
+    if (!path.startsWith('/')) path = '/' + path;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    path = path.toLowerCase();
+
+    this.currentPath = path;
+
+    // Calculate directory and file paths
+    if (path === '/') {
+      this.currentDir = this.configDir;
+      this.currentFile = join(this.configDir, 'config.ini');
     } else {
-      this.load();
+      this.currentDir = join(this.configDir, path.slice(1)); // Remove leading /
+      this.currentFile = join(this.currentDir, 'config.ini');
     }
   }
 
+  /**
+   * Get current path
+   */
+  public getPath(): string {
+    return this.currentPath;
+  }
+
+  /**
+   * Initialize config at current path
+   */
   private initialize(): void {
-    fs.mkdirSync(this.configDir, { recursive: true });
-    fs.writeFileSync(this.configFile, defaultIni);
-    this.load();
-  }
-
-  public get activeDomain() {
-    return this.domains[this._activeDomain];
-  }
-
-  public loadDomain(domain: string): DomainConfig | null {
-    try {
-      domain = domain.toLowerCase();
-      this._activeDomain = domain;
-      if (this.domains[domain]) return this.domains[domain];
-
-      const domainConfigDir = join(this.configDir, domain);
-      const domainConfigFile = join(domainConfigDir, 'config.ini');
-
-      if (!fs.existsSync(domainConfigFile)) {
-        return null;
-      }
-
-      const fileData = fs.readFileSync(domainConfigFile);
-      this.domains[domain] = ini.decode(fileData.toString()) as DomainConfig;
-      return this.domains[domain];
-    } catch (e) {
-      console.error(e);
-      return null;
-    }
-  }
-
-  public saveDomain(domain: string, domainConfig: DomainConfig): void {
-    domain = domain.toLowerCase();
-    const domainConfigDir = join(this.configDir, domain);
-    const domainConfigFile = join(domainConfigDir, 'config.ini');
-
-    if (!fs.existsSync(domainConfigDir)) {
-      fs.mkdirSync(domainConfigDir, { recursive: true });
+    if (!fs.existsSync(this.currentDir)) {
+      fs.mkdirSync(this.currentDir, { recursive: true });
     }
 
-    this.domains[domain] = domainConfig;
-    const text = ini.stringify(domainConfig as any);
-    fs.writeFileSync(domainConfigFile, text);
+    // Write default config for root, empty for paths
+    const defaultContent = this.currentPath === '/' ? defaultIni : '';
+    fs.writeFileSync(this.currentFile, defaultContent);
+    this.data = ini.decode(defaultContent);
   }
 
-  private load(): void {
-    const fileData = fs.readFileSync(this.configFile);
-    this.data = ini.decode(fileData.toString()) as RootConfig;
+  /**
+   * Load config from current path
+   */
+  public load(): void {
+    if (!fs.existsSync(this.currentFile)) {
+      this.data = {};
+      return;
+    }
+
+    const fileData = fs.readFileSync(this.currentFile, 'utf8');
+    this.data = ini.decode(fileData);
   }
 
+  /**
+   * Read config from arbitrary path without changing current path
+   * @param path Path to read from (e.g., '/', '/domain')
+   * @returns Parsed config data from that path
+   */
+  public read(path: string): any {
+    // Normalize path
+    path = path.trim();
+    if (!path.startsWith('/')) path = '/' + path;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    path = path.toLowerCase();
+
+    // Calculate file location
+    let configFile: string;
+    if (path === '/') {
+      configFile = join(this.configDir, 'config.ini');
+    } else {
+      configFile = join(this.configDir, path.slice(1), 'config.ini');
+    }
+
+    // Read and parse
+    if (!fs.existsSync(configFile)) {
+      return {};
+    }
+
+    const fileData = fs.readFileSync(configFile, 'utf8');
+    return ini.decode(fileData);
+  }
+
+  /**
+   * Save config to current path
+   */
   public save(): void {
-    const text = ini.stringify(this.data as any, {});
-    fs.writeFileSync(this.configFile, text);
+    if (!fs.existsSync(this.currentDir)) {
+      fs.mkdirSync(this.currentDir, { recursive: true });
+    }
+
+    const text = ini.stringify(this.data);
+    fs.writeFileSync(this.currentFile, text);
+  }
+
+  /**
+   * Read file from current path directory
+   */
+  public readFile(filename: string): Buffer {
+    return fs.readFileSync(join(this.currentDir, filename));
+  }
+
+  /**
+   * Write file to current path directory
+   */
+  public writeFile(filename: string, data: string | Buffer): void {
+    if (!fs.existsSync(this.currentDir)) {
+      fs.mkdirSync(this.currentDir, { recursive: true });
+    }
+    fs.writeFileSync(join(this.currentDir, filename), data);
+  }
+
+  /**
+   * Check if config exists at current path
+   */
+  public exists(): boolean {
+    return fs.existsSync(this.currentFile);
+  }
+
+  /**
+   * List all subdirectories at current path
+   */
+  public listPaths(): string[] {
+    if (!fs.existsSync(this.currentDir)) {
+      return [];
+    }
+
+    return fs.readdirSync(this.currentDir, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
   }
 }
 
