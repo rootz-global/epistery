@@ -318,18 +318,20 @@ class EpisteryAttach {
         }
 
         // Check if domain already exists
-        let domainConfig = Utils.GetDomainInfo(domain);
-        if (!domainConfig) domainConfig = {domain: domain,pending:true};
+        const config = Utils.GetConfig();
+        config.setPath(domain);
+
+        let domainConfig = config.data;
+        if (!domainConfig.domain) domainConfig.domain = domain;
+        domainConfig.pending = true;
         if (!domainConfig.provider) domainConfig.provider = {
           chainId: provider.chainId,
           name: provider.name,
           rpc: provider.rpcUrl
         }
 
-        // Create domain config with custom provider (marked as pending)
-        const config = Utils.GetConfig();
-
-        config.saveDomain(domain, domainConfig);
+        // Save domain config with custom provider (marked as pending)
+        config.save();
         console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
 
         res.json({ status: 'success', message: 'Domain initialized with custom provider' });

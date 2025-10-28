@@ -43,8 +43,10 @@ export class Config {
   }
 
   /**
-   * Set current working path (like cd)
-   * Examples: '/', '/domain', '/.ssl/domain'
+   * Set current working path and load config (like cd)
+   * Examples: '/', 'domain', '/domain', '/.ssl/domain'
+   * Leading slash is optional and will be added if not present
+   * Automatically loads the config at the specified path
    */
   public setPath(path: string): void {
     // Normalize path: ensure leading slash, remove trailing slash, lowercase
@@ -63,6 +65,9 @@ export class Config {
       this.currentDir = join(this.configDir, path.slice(1)); // Remove leading /
       this.currentFile = join(this.currentDir, 'config.ini');
     }
+
+    // Automatically load the config at this path
+    this.load();
   }
 
   /**

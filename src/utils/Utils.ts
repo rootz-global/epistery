@@ -14,17 +14,15 @@ export class Utils {
       }
 
       // Load domain config
-      this.config.setPath(`/${domain}`);
-      this.config.load();
+      this.config.setPath(domain);
 
       const domainConfig = this.config.data.domain ? this.config.data : {domain: domain};
 
       // Get default provider if not set
       if (!domainConfig.provider) {
         this.config.setPath('/');
-        this.config.load();
         domainConfig.provider = this.config.data.default?.provider;
-        this.config.setPath(`/${domain}`); // Switch back to domain
+        this.config.setPath(domain); // Switch back to domain
       }
 
       if (!domainConfig.wallet) {

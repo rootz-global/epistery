@@ -89,8 +89,7 @@ export class CliWallet {
     const config = new Config();
 
     // Check if domain already exists
-    config.setPath(`/${domain}`);
-    config.load();
+    config.setPath(domain);
     if (config.data.wallet) {
       throw new Error(`Domain '${domain}' already initialized. Use load() to access it.`);
     }
@@ -100,7 +99,6 @@ export class CliWallet {
 
     // Get provider from root default, argument, or fallback default
     config.setPath('/');
-    config.load();
     const providerConfig = provider || config.data.default?.provider || {
       chainId: 420420422,
       name: 'polkadot-hub-testnet',
