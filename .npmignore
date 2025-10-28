@@ -12,7 +12,7 @@ test-key-exchange.html
 # Build artifacts
 artifacts/
 cache/
-dist/
+# dist/ - DO NOT IGNORE: needed by index.mjs for exports
 
 # Certificates and security
 .certs/*
