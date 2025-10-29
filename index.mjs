@@ -203,7 +203,7 @@ class EpisteryAttach {
           return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
         }
         const clientInfo = {
-          address: req.body.clientAddress.toLowerCase(), // Normalize to lowercase for consistent handling
+          address: req.body.clientAddress,
           publicKey:req.body.clientPublicKey
         }
         if (this.options.authentication) {

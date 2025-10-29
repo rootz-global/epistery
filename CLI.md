@@ -11,7 +11,7 @@ epistery initialize localhost
 # Set as default
 epistery set-default localhost
 
-# Make authenticated requests (automatic key exchange on first use)
+# Make authenticated requests
 epistery curl https://wiki.rootz.global/wiki/Home
 ```
 
@@ -30,14 +30,13 @@ epistery initialize wiki.rootz.global
 
 ### `epistery curl [options] <url>`
 
-Make authenticated HTTP request. Automatically performs key exchange on first use.
+Make authenticated HTTP requests using bot authentication (signs each request with wallet).
 
 **Options:**
-- `-w, --wallet <domain>` - Use specific domain (overrides default)
+- `-w, --wallet <domain>` - Use specific domain wallet (overrides default)
 - `-X, --request <method>` - HTTP method (default: GET)
-- `-d, --data <data>` - Request body data
+- `-d, --data <data>` - Request body data (must be quoted JSON string)
 - `-H, --header <header>` - Additional headers
-- `-b, --bot` - Use bot auth header (default: session cookie)
 - `-v, --verbose` - Show detailed output
 
 **Examples:**
@@ -45,15 +44,23 @@ Make authenticated HTTP request. Automatically performs key exchange on first us
 # GET request (uses default domain)
 epistery curl https://wiki.rootz.global/wiki/Home
 
-# Use specific domain
-epistery curl -w localhost https://localhost:4080/session/context
+# Use specific domain wallet
+epistery curl -w localhost https://localhost:4080/wiki/Home
+
+# PUT request with JSON data (note single quotes around JSON)
+epistery curl -X PUT -d '{"title":"Test","body":"# Test"}' https://wiki.rootz.global/wiki/Test
 
 # POST request
-epistery curl -X POST -d '{"title":"Test","body":"# Test"}' https://wiki.rootz.global/wiki/Test
+epistery curl -X POST -d '{"name":"value"}' https://api.example.com/endpoint
 
-# Bot mode (no session, sign per request)
-epistery curl --bot https://wiki.rootz.global/session/context
+# Verbose output for debugging
+epistery curl -v https://wiki.rootz.global/wiki/Home
 ```
+
+**Important Notes:**
+- Always use **single quotes** around JSON data to prevent shell interpretation
+- The CLI uses bot authentication mode (signs each request individually)
+- No session management - each request is independently authenticated
 
 ### `epistery info [domain]`
 
@@ -84,35 +91,26 @@ Epistery CLI uses the same domain configuration system as the server:
 │   └── [cli]
 │       └── default_domain=localhost
 ├── localhost/
-│   ├── config.ini                # Domain config with wallet & provider
-│   └── session.json              # Session cookie (auto-created)
+│   └── config.ini                # Domain config with wallet & provider
 └── wiki.rootz.global/
-    ├── config.ini
-    └── session.json
+    └── config.ini
 ```
 
-### Authentication Modes
+### Authentication
 
-**Session Cookie (Default):**
-- Performs key exchange once, saves session cookie
-- Subsequent requests use cookie
-- Best for multiple requests to same server
+The CLI uses **bot authentication mode**, which signs each request individually with the domain wallet's private key:
 
-**Bot Auth Header (`--bot`):**
-- Signs each request individually
-- No session management
-- Best for distributed systems or one-off requests
+1. Load domain wallet from `~/.epistery/{domain}/config.ini`
+2. Create authentication message with current timestamp
+3. Sign message with wallet's private key
+4. Send signature in `Authorization: Bot <base64-encoded-json>` header
+5. Server verifies signature and authenticates request
 
-### Automatic Key Exchange
-
-The `curl` command automatically performs key exchange when needed:
-
-1. Check for existing session in `~/.epistery/{domain}/session.json`
-2. If no session, perform key exchange with server
-3. Save session cookie for future requests
-4. Make the actual HTTP request
-
-No manual "connect" step required!
+**Benefits:**
+- Stateless - no session management needed
+- Secure - private keys never leave your machine
+- Simple - works immediately after initialization
+- Reliable - each request is independently authenticated
 
 ## Usage Patterns
 
@@ -202,32 +200,19 @@ name=polkadot-hub-testnet
 rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
 ```
 
-### Session File (`~/.epistery/{domain}/session.json`)
-
-Auto-created by `epistery curl`:
-
-```json
-{
-  "domain": "https://wiki.rootz.global",
-  "cookie": "session_token_here",
-  "authenticated": true,
-  "timestamp": "2025-01-10T12:00:00.000Z"
-}
-```
-
 ## Security
 
 - Domain configs stored with 0600 permissions (user only)
 - Private keys never transmitted (only signatures)
 - Each domain has its own isolated wallet
-- Session cookies saved securely per domain
+- Each request is signed with fresh timestamp to prevent replay attacks
 
 ## Design Philosophy
 
 The Epistery CLI uses a unified command structure with subcommands:
 - ✅ Uses existing Epistery domain config system
 - ✅ Consistent with server-side architecture
-- ✅ Automatic key exchange (no manual connect step)
+- ✅ Bot authentication (stateless, no session management)
 - ✅ Default domain support (less typing)
 - ✅ Simpler mental model (domain = wallet)
 
@@ -259,28 +244,19 @@ epistery curl -w staging.example.com https://staging.example.com/api/status
 epistery curl -w prod.example.com https://prod.example.com/api/status
 ```
 
-### Bot Mode
-
-```bash
-# Bot mode doesn't need session, signs each request
-epistery curl --bot https://wiki.rootz.global/session/context
-epistery curl --bot -X POST -d '{"title":"Log","body":"# Entry"}' https://wiki.rootz.global/wiki/Log
-```
-
 ## Troubleshooting
 
 **"Domain not found or has no wallet"**
 - Run `epistery initialize <domain>` first
 
-**"Key exchange failed"**
-- Check server is running and accessible
-- Verify URL is correct
-- Use `-v` flag for detailed output
+**401 Unauthorized errors**
+- Server may not recognize your wallet address
+- Check that your address is authorized on the server
+- Use `-v` flag for detailed debugging output
 
-**"Failed to obtain session cookie"**
-- Server may not be setting cookies
-- Try `--bot` mode instead
-- Check server configuration
+**JSON parsing errors**
+- Ensure JSON data is wrapped in **single quotes**: `'{"key":"value"}'`
+- Check that JSON is valid (use a JSON validator if needed)
 
 ## Integration
 
