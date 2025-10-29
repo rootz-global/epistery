@@ -8,11 +8,12 @@ _Epistemology is the study of knowledge. An Epistery, it follows, is a place to 
 
 Epistery adds blockchain-backed identity and data wallet capabilities to any Express.js application through a simple plugin architecture. It provides:
 
-- **Decentralized Authentication**: Wallet-based user authentication with automatic key exchange
-- **Data Wallets**: Blockchain-anchored data ownership and provenance tracking
+- **Decentralized Authentication**: Wallet-based user authentication using cryptographic signatures
+- **Data Wallets**: Blockchain smart contracts for data ownership, encryption, sharing, and transfer
 - **Whitelist Management**: On-chain access control for domains and users
-- **CLI Tools**: Command-line interface for authenticated API requests
+- **CLI Tools**: Command-line interface for authenticated API requests using bot mode
 - **Client Libraries**: Browser-based wallet and authentication tools
+- **Configuration Management**: Path-based filesystem-like API for secure configuration storage
 
 ## Quick Start
 
@@ -100,7 +101,7 @@ app.get('/profile', (req, res) => {
 
 ### 2. Data Wallets
 
-Data wallets attach blockchain-based ownership and provenance to any data:
+Data wallets are blockchain smart contracts that provide ownership, encryption, sharing, and transfer capabilities for any data. They combine on-chain ownership records with off-chain storage:
 
 ```javascript
 // Client creates data wallet
@@ -113,11 +114,17 @@ const dataWallet = await client.write({
 // Read data wallet
 const data = await client.read();
 
-// Transfer ownership
+// Transfer ownership to another address
 await client.transferOwnership(newOwnerAddress);
 ```
 
-Data wallets use IPFS for storage by default, with only hashes and ownership records stored on-chain.
+**Data Wallet Features:**
+- **Blockchain Contracts**: Each data wallet is a smart contract on-chain
+- **Encryption**: Data can be encrypted before storage
+- **Sharing**: Grant read/write access to specific addresses
+- **Transferable**: Ownership can be transferred to other wallets
+- **IPFS Storage**: Content stored on IPFS by default, with hashes on-chain
+- **Provenance Tracking**: Full ownership and modification history on-chain
 
 ### 3. Whitelist Management
 
@@ -135,7 +142,7 @@ Whitelist data is stored on the blockchain and managed through your domain's wal
 
 ### 4. CLI Tools
 
-The Epistery CLI enables authenticated API requests from the command line or automation scripts:
+The Epistery CLI enables authenticated API requests from the command line using bot authentication (stateless, signs each request):
 
 ```bash
 # Initialize a CLI wallet
@@ -145,11 +152,14 @@ epistery set-default localhost
 # Make authenticated GET request
 epistery curl https://api.example.com/data
 
-# POST request with data
-epistery curl -X POST -d '{"title":"Test"}' https://api.example.com/wiki/Test
+# PUT request with JSON data (note single quotes)
+epistery curl -X PUT -d '{"title":"Test","body":"Content"}' https://api.example.com/wiki/Test
 
 # Use specific wallet
 epistery curl -w production.example.com https://api.example.com/data
+
+# Verbose output for debugging
+epistery curl -v https://api.example.com/data
 ```
 
 Perfect for:
@@ -158,20 +168,21 @@ Perfect for:
 - Creating bots and agents
 - CI/CD integration
 
+**CLI uses bot authentication** - each request is independently signed with the wallet's private key, no session management required.
+
 See [CLI.md](CLI.md) for complete CLI documentation.
 
 ## Configuration
 
-Epistery uses a filesystem-based configuration system stored in `~/.epistery/`:
+Epistery uses a path-based configuration system stored in `~/.epistery/` with a filesystem-like API:
 
 ```
 ~/.epistery/
-├── config.ini                    # Global settings
+├── config.ini                    # Root config (profile, IPFS, defaults)
 ├── mydomain.com/
-│   ├── config.ini                # Domain wallet & provider
-│   └── sessions/                 # Session data
+│   └── config.ini                # Domain config (wallet, provider)
 └── .ssl/
-    └── mydomain.com/             # SSL certificates
+    └── mydomain.com/             # SSL certificates (optional)
 ```
 
 ### Root Config (`~/.epistery/config.ini`)
@@ -188,6 +199,9 @@ url=https://rootz.digital/api/v0
 chainId=420420422
 name=polkadot-hub-testnet
 rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
+
+[cli]
+default_domain=localhost
 ```
 
 ### Domain Config (`~/.epistery/mydomain.com/config.ini`)
@@ -207,6 +221,8 @@ chainId=420420422
 name=polkadot-hub-testnet
 rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
 ```
+
+The Config class provides a path-based API that works like navigating a filesystem - set a path, load data, modify it, and save. This makes configuration management simple and predictable across all Epistery applications.
 
 ## Advanced Usage
 
@@ -294,11 +310,12 @@ See [Architecture.md](Architecture.md) for detailed architecture documentation.
 
 ## Security
 
-- Domain configs stored with 0600 permissions (user-only access)
-- Private keys never transmitted (only signatures)
-- Each domain has isolated wallet
-- Session cookies saved securely per domain
-- Key exchange uses ECDH for secure shared secrets
+- **Private Key Protection**: Domain configs stored with 0600 permissions (user-only access)
+- **Signature-Only Transmission**: Private keys never transmitted, only cryptographic signatures
+- **Wallet Isolation**: Each domain has its own isolated wallet
+- **Bot Authentication**: Stateless authentication with per-request signing and timestamp-based replay protection
+- **Encrypted Key Exchange**: Browser clients use ECDH for secure shared secret establishment
+- **On-Chain Verification**: Whitelist and ownership data stored immutably on blockchain
 
 ## License
 
