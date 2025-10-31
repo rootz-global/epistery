@@ -43,7 +43,7 @@ export class Epistery {
       nativeCurrency = {
         symbol: server.provider.nativeCurrencySymbol,
         name: server.provider.nativeCurrencyName || server.provider.nativeCurrencySymbol,
-        decimals: server.provider.nativeCurrencyDecimals || 18
+        decimals: Number(server.provider.nativeCurrencyDecimals) || 18
       };
     }
 

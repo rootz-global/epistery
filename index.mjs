@@ -312,8 +312,8 @@ class EpisteryAttach {
         console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
         console.log(`[debug] Full request body:`, JSON.stringify(req.body, null, 2));
 
-        if (!provider || !provider.name || !provider.chainId || !provider.rpcUrl) {
-          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpcUrl=${!!provider?.rpcUrl}`);
+        if (!provider || !provider.name || !provider.chainId || !provider.rpc) {
+          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpc=${!!provider?.rpc}`);
           return res.status(400).json({ error: 'Invalid provider configuration' });
         }
 
@@ -327,7 +327,7 @@ class EpisteryAttach {
         if (!domainConfig.provider) domainConfig.provider = {
           chainId: provider.chainId,
           name: provider.name,
-          rpc: provider.rpcUrl
+          rpc: provider.rpc
         }
 
         // Save domain config with custom provider (marked as pending)

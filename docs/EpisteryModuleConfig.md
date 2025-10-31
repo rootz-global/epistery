@@ -184,7 +184,7 @@ admin_address=0x00bf1d35fa5b3cca18e3900b9e0d46f35d2d5a5d
 [provider]
 name=Ethereum Mainnet
 chainId=1
-rpcUrl=https://eth.llamarpc.com
+rpc=https://eth.llamarpc.com
 
 [wallet]
 address=0x...

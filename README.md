@@ -6,7 +6,7 @@ _Epistemology is the study of knowledge. An Epistery, it follows, is a place to 
 
 ## What Does Epistery Do?
 
-Epistery adds blockchain-backed identity and data wallet capabilities to any Express.js application through a simple plugin architecture. It provides:
+Epistery establishes a transactional wallet for both browser and server along with the session handshake. This provides:
 
 - **Decentralized Authentication**: Wallet-based user authentication using cryptographic signatures
 - **Data Wallets**: Blockchain smart contracts for data ownership, encryption, sharing, and transfer
@@ -14,6 +14,9 @@ Epistery adds blockchain-backed identity and data wallet capabilities to any Exp
 - **CLI Tools**: Command-line interface for authenticated API requests using bot mode
 - **Client Libraries**: Browser-based wallet and authentication tools
 - **Configuration Management**: Path-based filesystem-like API for secure configuration storage
+
+>*NOTE:* The client wallet (signing key) is held in localStorage under strict domain rules unless the user presents
+> a selected wallet from a web3 plugin
 
 ## Quick Start
 
