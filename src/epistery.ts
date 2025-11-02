@@ -3,6 +3,7 @@ import { ethers, Wallet } from 'ethers';
 import { AquaTree } from 'aqua-js-sdk';
 import { Aquafy } from './utils/Aqua.js';
 import * as AgentArtifact from '../artifacts/contracts/agent.sol/Agent.json';
+import * as crypto from 'crypto';
 
 export class Epistery {
   private static ipfsApiUrl: string | undefined;
@@ -270,6 +271,139 @@ export class Epistery {
     } catch (error) {
       console.error('Key exchange error:', error);
       return null;
+    }
+  }
+
+  /**
+   * Verify a rivet key signature and its certificate chain
+   * This validates:
+   * 1. Certificate was signed by the claimed wallet
+   * 2. Certificate hasn't expired
+   * 3. Certificate is for the correct domain
+   * 4. Rivet signature is valid using the certified public key
+   *
+   * @param payload - Object containing message, rivet signature, certificate, and certificate signature
+   * @param domain - Expected domain for certificate validation
+   * @returns Object with verification result and wallet address if valid
+   */
+  public static async verifyRivetSignature(
+    payload: {
+      message: string;
+      rivetSignature: string;
+      certificate: {
+        rivetPublicKey: string;
+        walletAddress: string;
+        domain: string;
+        issuedAt: number;
+        expiresAt: number;
+        permissions: string[];
+        version: number;
+      };
+      certificateSignature: string;
+      walletAddress: string;
+    },
+    domain: string
+  ): Promise<{ valid: boolean; walletAddress?: string; error?: string }> {
+    try {
+      // 1. Verify the certificate was signed by the claimed wallet
+      const certificateMessage = JSON.stringify(payload.certificate, null, 0);
+      const certSigner = ethers.utils.verifyMessage(
+        certificateMessage,
+        payload.certificateSignature
+      );
+
+      if (certSigner.toLowerCase() !== payload.walletAddress.toLowerCase()) {
+        return {
+          valid: false,
+          error: 'Certificate not signed by claimed wallet'
+        };
+      }
+
+      // 2. Check certificate hasn't expired
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.certificate.expiresAt < now) {
+        return {
+          valid: false,
+          error: 'Rivet key certificate expired'
+        };
+      }
+
+      // 3. Verify domain matches
+      if (payload.certificate.domain !== domain) {
+        return {
+          valid: false,
+          error: `Certificate domain mismatch. Expected: ${domain}, Got: ${payload.certificate.domain}`
+        };
+      }
+
+      // 4. Verify the rivet signature using the certified P-256 public key
+      const isValid = await this.verifyP256Signature(
+        payload.message,
+        payload.rivetSignature,
+        payload.certificate.rivetPublicKey
+      );
+
+      if (!isValid) {
+        return {
+          valid: false,
+          error: 'Rivet signature invalid'
+        };
+      }
+
+      // All checks passed!
+      return {
+        valid: true,
+        walletAddress: payload.walletAddress
+      };
+
+    } catch (error) {
+      console.error('Rivet signature verification error:', error);
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Unknown verification error'
+      };
+    }
+  }
+
+  /**
+   * Verify a P-256 ECDSA signature
+   * Used for validating rivet key signatures
+   *
+   * @param message - Original message that was signed
+   * @param signatureHex - Hex-encoded signature
+   * @param publicKeyHex - Hex-encoded SPKI public key
+   * @returns true if signature is valid
+   */
+  private static async verifyP256Signature(
+    message: string,
+    signatureHex: string,
+    publicKeyHex: string
+  ): Promise<boolean> {
+    try {
+      // Remove '0x' prefix if present
+      const signatureBuffer = Buffer.from(signatureHex.replace(/^0x/, ''), 'hex');
+      const publicKeyBuffer = Buffer.from(publicKeyHex.replace(/^0x/, ''), 'hex');
+
+      // Import the public key
+      const publicKey = crypto.createPublicKey({
+        key: publicKeyBuffer,
+        format: 'der',
+        type: 'spki'
+      });
+
+      // Create verifier
+      const verify = crypto.createVerify('SHA256');
+      verify.update(message);
+      verify.end();
+
+      // Verify signature
+      const isValid = verify.verify(publicKey, signatureBuffer);
+
+      return isValid;
+
+    } catch (error) {
+      console.error('P-256 signature verification error:', error);
+      return false;
     }
   }
 }
