@@ -47,6 +47,11 @@ export class Epistery {
       };
     }
 
+    // Read IPFS config from root config
+    const config = Utils.GetConfig();
+    const rootConfig = config.read('/');
+    const ipfsConfig = rootConfig.ipfs;
+
     const status: EpisteryStatus = {
       server: {
         walletAddress: server?.wallet?.address,
@@ -60,6 +65,7 @@ export class Epistery {
         walletAddress: client?.address,
         publicKey: client?.publicKey
       },
+      ipfs: ipfsConfig,
       timestamp: new Date().toISOString()
     }
 

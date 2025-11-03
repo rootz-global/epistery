@@ -67,6 +67,7 @@ export interface EpisteryStatus {
     walletAddress: string;
     publicKey: string;
   };
+  ipfs?: IPFSConfig;
   timestamp: string;
 }
 
