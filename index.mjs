@@ -188,7 +188,7 @@ class EpisteryAttach {
     });
 
     // Key exchange endpoint - handles POST requests for key exchange
-    router.post('/connect', express.json(), async (req, res) => {
+    router.post('/connect', async (req, res) => {
       try {
         const serverWallet = this.domain;
 
@@ -236,7 +236,7 @@ class EpisteryAttach {
       res.json({ wallet });
     });
 
-    router.post('/data/write', express.json(), async (req, res) => {
+    router.post('/data/write', async (req, res) => {
       try {
         const { clientWalletInfo, data } = req.body;
 
@@ -260,7 +260,7 @@ class EpisteryAttach {
       }
     });
 
-    router.post('/data/read', express.json(), async (req, res) => {
+    router.post('/data/read', async (req, res) => {
       try {
         const { clientWalletInfo } = req.body;
 
@@ -281,7 +281,7 @@ class EpisteryAttach {
       }
     });
 
-    router.put('/data/ownership', express.json(), async (req, res) => {
+    router.put('/data/ownership', async (req, res) => {
       try {
         const { clientWalletInfo, futureOwnerWalletAddress } = req.body;
 
@@ -303,7 +303,7 @@ class EpisteryAttach {
     });
 
     // Domain initialization endpoint - use to set up domain with custom provider
-    router.post('/domain/initialize', express.json(), async (req, res) => {
+    router.post('/domain/initialize', async (req, res) => {
       try {
         const domain = req.hostname;
         const { provider } = req.body;
