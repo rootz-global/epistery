@@ -17,6 +17,11 @@ module.exports = {
       url: process.env.CHAIN_RPC_URL || "",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 11155111
+    },
+    amoy: {
+      url: process.env.CHAIN_RPC_URL || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 80002
     }
   },
   etherscan: {

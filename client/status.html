@@ -388,6 +388,276 @@
             transferButton.textContent = 'Transfer Ownership';
           }
         };
+
+        // Approval System Event Handlers
+        const createApprovalButton = document.getElementById('create-approval-button');
+        const approverInput = document.getElementById('approval-approver-input');
+        const fileInput = document.getElementById('approval-file-input');
+        const approvalDomainInput = document.getElementById('approval-domain-input');
+        const createApprovalOutput = document.getElementById('create-approval-output');
+
+        // Helper function to generate SHA-256 hash from file
+        async function generateFileHash(file) {
+          const arrayBuffer = await file.arrayBuffer();
+          const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          return hashHex;
+        }
+
+        createApprovalButton.onclick = async () => {
+          try {
+            createApprovalButton.disabled = true;
+            createApprovalButton.textContent = 'Creating...';
+            createApprovalOutput.innerHTML = '<div class="loading">Creating request...</div>';
+
+            const approverAddress = approverInput.value.trim();
+            const domain = approvalDomainInput.value.trim();
+            const file = fileInput.files[0];
+
+            if (!approverAddress || !file || !domain) {
+              createApprovalOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Input</h4>
+                  <p>Please fill in all fields and select a file.</p>
+                </div>
+              `;
+              return;
+            }
+
+            if (!/^0x[a-fA-F0-9]{40}$/.test(approverAddress)) {
+              createApprovalOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Address</h4>
+                  <p>Please enter a valid Ethereum address for the approver.</p>
+                </div>
+              `;
+              return;
+            }
+
+            // Generate hash from file
+            const fileName = file.name;
+            const fileHash = await generateFileHash(file);
+
+            const result = await witness.createApprovalEvent(approverAddress, fileName, fileHash, domain);
+            console.log("Result:", result)
+
+            createApprovalOutput.innerHTML = `
+              <div class="success">
+                <h4>Request Created!</h4>
+                <div class="result-section">
+                  <h5>Request Details:</h5>
+                  <p><strong>Approver:</strong> <code>${approverAddress}</code></p>
+                  <p><strong>File Name:</strong> ${fileName}</p>
+                  <p><strong>File Hash:</strong> <code>${fileHash}</code></p>
+                  <p><strong>Domain:</strong> ${domain}</p>
+                </div>
+              </div>
+            `;
+
+            approverInput.value = '';
+            fileInput.value = '';
+          } catch (error) {
+            createApprovalOutput.innerHTML = `
+              <div class="error">
+                <h4>Request Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            createApprovalButton.disabled = false;
+            createApprovalButton.textContent = 'Create Request';
+          }
+        };
+
+        // Global handler for approval actions
+        window.handleApprovalAction = async (requestorAddress, fileName, approved, buttonElement) => {
+          const originalText = buttonElement.textContent;
+          try {
+            buttonElement.disabled = true;
+            buttonElement.textContent = 'Processing...';
+
+            const result = await witness.handleApprovalEvent(requestorAddress, fileName, approved);
+
+            // Refresh the "get all approvals" list if it's currently displayed
+            const getAllApprovalsButton = document.getElementById('get-all-approvals-button');
+            const getAllApprovalsOutput = document.getElementById('get-all-approvals-output');
+            if (getAllApprovalsOutput && getAllApprovalsOutput.innerHTML && getAllApprovalsOutput.innerHTML.includes('success')) {
+              getAllApprovalsButton.click();
+            }
+
+            alert(`Request ${approved ? 'approved' : 'denied'} successfully!`);
+          } catch (error) {
+            alert(`Failed to ${approved ? 'approve' : 'deny'}: ${error.message}`);
+            buttonElement.disabled = false;
+            buttonElement.textContent = originalText;
+          }
+        };
+
+        // Get All Approvals for Current User (As Requestor)
+        const getAllRequestorButton = document.getElementById('get-all-requestor-button');
+        const getAllRequestorOutput = document.getElementById('get-all-requestor-output');
+
+        getAllRequestorButton.onclick = async () => {
+          try {
+            getAllRequestorButton.disabled = true;
+            getAllRequestorButton.textContent = 'Fetching...';
+            getAllRequestorOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
+
+            // Use the current wallet address as the requestor
+            const requestorAddress = witness.wallet.address;
+
+            const result = await witness.getAllApprovalsForRequestorEvent(requestorAddress);
+
+            if (!result.approvals || result.approvals.length === 0) {
+              getAllRequestorOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Requests Found</h4>
+                  <p>No requests found for your address as requestor.</p>
+                </div>
+              `;
+              return;
+            }
+
+            let approvalsHtml = '';
+            result.approvals.forEach((approval, idx) => {
+              const status = approval.processedAt > 0
+                ? (approval.approved ? '✅ Approved' : '❌ Denied')
+                : '⏳ Pending';
+              const processedDate = approval.processedAt > 0
+                ? new Date(approval.processedAt * 1000).toLocaleString()
+                : 'Not processed yet';
+
+              approvalsHtml += `
+                <div class="message-card">
+                  <div class="message-header">
+                    <span class="message-number">Request #${idx}</span>
+                    <span class="message-status">${status}</span>
+                  </div>
+                  <div class="message-body">
+                    <div class="message-section">
+                      <p><strong>Approver:</strong> <code>${approval.approver}</code></p>
+                      <p><strong>File Name:</strong> ${approval.fileName}</p>
+                      <p><strong>File Hash:</strong> <code>${approval.fileHash}</code></p>
+                      <p><strong>Processed At:</strong> ${processedDate}</p>
+                    </div>
+                  </div>
+                </div>
+              `;
+            });
+
+            getAllRequestorOutput.innerHTML = `
+              <div class="success">
+                <h4>Found ${result.count} Request(s)</h4>
+                <p><strong>Your Address (Requestor):</strong> <code>${requestorAddress}</code></p>
+                <div class="messages-timeline" style="margin-top: 15px;">
+                  ${approvalsHtml}
+                </div>
+              </div>
+            `;
+          } catch (error) {
+            getAllRequestorOutput.innerHTML = `
+              <div class="error">
+                <h4>Fetch Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            getAllRequestorButton.disabled = false;
+            getAllRequestorButton.textContent = 'Get All My Requests';
+          }
+        };
+
+        // Get All Approvals for Current User (As Approver)
+        const getAllApprovalsButton = document.getElementById('get-all-approvals-button');
+        const getAllApprovalsOutput = document.getElementById('get-all-approvals-output');
+
+        getAllApprovalsButton.onclick = async () => {
+          try {
+            getAllApprovalsButton.disabled = true;
+            getAllApprovalsButton.textContent = 'Fetching...';
+            getAllApprovalsOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
+
+            // Use the current wallet address as the approver
+            const approverAddress = witness.wallet.address;
+
+            const result = await witness.getAllApprovalsForApproverEvent(approverAddress);
+
+            if (!result.approvals || result.approvals.length === 0) {
+              getAllApprovalsOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Requests Found</h4>
+                  <p>No requests found for your address as approver.</p>
+                </div>
+              `;
+              return;
+            }
+
+            let approvalsHtml = '';
+            result.approvals.forEach((approval, idx) => {
+              const status = approval.processedAt > 0
+                ? (approval.approved ? '✅ Approved' : '❌ Denied')
+                : '⏳ Pending';
+              const processedDate = approval.processedAt > 0
+                ? new Date(approval.processedAt * 1000).toLocaleString()
+                : 'Not processed yet';
+
+              // Show action buttons only if pending (user is always the approver here)
+              const showActions = approval.processedAt === 0;
+
+              approvalsHtml += `
+                <div class="message-card">
+                  <div class="message-header">
+                    <span class="message-number">Request #${idx}</span>
+                    <span class="message-status">${status}</span>
+                  </div>
+                  <div class="message-body">
+                    <div class="message-section">
+                      <p><strong>Requestor:</strong> <code>${approval.requestor}</code></p>
+                      <p><strong>File Name:</strong> ${approval.fileName}</p>
+                      <p><strong>File Hash:</strong> <code>${approval.fileHash}</code></p>
+                      <p><strong>Processed At:</strong> ${processedDate}</p>
+                    </div>
+                    ${showActions ? `
+                    <div class="message-section" style="display: flex; gap: 10px; margin-top: 10px;">
+                      <button class="action-button" onclick="handleApprovalAction('${approval.requestor}', '${approval.fileName}', true, this)">
+                        ✅ Approve
+                      </button>
+                      <button class="action-button danger" onclick="handleApprovalAction('${approval.requestor}', '${approval.fileName}', false, this)">
+                        ✖️ Deny
+                      </button>
+                    </div>
+                    ` : ''}
+                  </div>
+                </div>
+              `;
+            });
+
+            getAllApprovalsOutput.innerHTML = `
+              <div class="success">
+                <h4>Found ${result.count} Request(s)</h4>
+                <p><strong>Your Address (Approver):</strong> <code>${approverAddress}</code></p>
+                <div class="messages-timeline" style="margin-top: 15px;">
+                  ${approvalsHtml}
+                </div>
+              </div>
+            `;
+          } catch (error) {
+            getAllApprovalsOutput.innerHTML = `
+              <div class="error">
+                <h4>Fetch Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            getAllApprovalsButton.disabled = false;
+            getAllApprovalsButton.textContent = 'Get All My Requests';
+          }
+        };
+
         // Wallet Management Functions
         async function setupWalletManagement() {
           const walletList = document.getElementById('wallet-list');
@@ -1101,6 +1371,13 @@
       .identity-status code { background-color: #f1f3f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
       .identity-actions { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
       #join-token-input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+      
+      /* Approval System Styles */
+      .approval-section { background-color: #f3e5f5; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #9c27b0; }
+      .approval-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; font-size: 14px; box-sizing: border-box; }
+      .approval-button { background-color: #9c27b0; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 10px; }
+      .approval-button:hover { background-color: #7b1fa2; }
+      .approval-button:disabled { background-color: #6c757d; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -1202,6 +1479,31 @@
         <input type="text" id="transfer-input" class="transfer-input" placeholder="0x..." />
         <button id="transfer-button" class="transfer-button">Transfer Ownership</button>
         <div id="transfer-output"></div>
+    </div>
+
+    <h2>Approval System Test</h2>
+    <div class="approval-section">
+        <h3>Create Request</h3>
+        <p>Request approval from another wallet address for a file:</p>
+        <input type="text" id="approval-approver-input" class="approval-input" placeholder="Approver Address (0x...)" />
+        <input type="file" id="approval-file-input" class="approval-input" />
+        <input type="text" id="approval-domain-input" class="approval-input" placeholder="Domain (e.g., localhost)" value="localhost" />
+        <button id="create-approval-button" class="approval-button">Create Request</button>
+        <div id="create-approval-output"></div>
+    </div>
+
+    <div class="approval-section" style="margin-top: 20px; background-color: #fff3e0; border: 2px solid #ff9800;">
+        <h3>Get All My Requests (As Requestor)</h3>
+        <p>Retrieve all requests you have made to approvers:</p>
+        <button id="get-all-requestor-button" class="approval-button" style="background-color: #ff9800;">Get All My Requests</button>
+        <div id="get-all-requestor-output"></div>
+    </div>
+
+    <div class="approval-section" style="margin-top: 20px; background-color: #e8f5e9; border: 2px solid #4caf50;">
+        <h3>Get All My Requests (As Approver)</h3>
+        <p>Retrieve all requests where you are the approver:</p>
+        <button id="get-all-approvals-button" class="approval-button" style="background-color: #4caf50;">Get All My Requests</button>
+        <div id="get-all-approvals-output"></div>
     </div>
 
     <h2>Timestamp</h2>

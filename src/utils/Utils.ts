@@ -7,6 +7,48 @@ export class Utils {
   private static config: Config;
   private static serverWallet: ethers.Wallet| null = null;
 
+  // Gas estimation constants
+  private static readonly FALLBACK_GAS_LIMIT = 200000;
+  private static readonly FALLBACK_GENESIS_GAS_LIMIT = 30000;
+  private static readonly FALLBACK_SIMPLE_TRANSFER_GAS = 21000;
+  private static readonly GAS_PRICE_BUFFER_PERCENT = 20;
+  private static readonly GAS_LIMIT_BUFFER_PERCENT = 30;
+  private static readonly FUNDING_SAFETY_BUFFER_PERCENT = 5;
+
+  // Chain IDs
+  private static readonly POLYGON_MAINNET_CHAIN_ID = 137;
+  private static readonly POLYGON_AMOY_CHAIN_ID = 80002;
+
+  /**
+   * Helper: Get gas price with buffer (works for any EVM chain: Ethereum, Polygon, etc.)
+   * @param wallet - Wallet to get gas price from
+   * @param bufferPercent - Buffer percentage (default 20%)
+   * @returns Gas price with buffer
+   */
+  private static async getGasPriceWithBuffer(wallet: Wallet, bufferPercent: number = Utils.GAS_PRICE_BUFFER_PERCENT): Promise<ethers.BigNumber> {
+    const baseGasPrice = await wallet.getGasPrice();
+    return baseGasPrice.mul(100 + bufferPercent).div(100);
+  }
+
+  /**
+   * Helper: Add buffer to gas limit
+   * @param gasLimit - Estimated gas limit
+   * @param bufferPercent - Buffer percentage (default 30%)
+   * @returns Gas limit with buffer
+   */
+  private static addGasBuffer(gasLimit: ethers.BigNumber, bufferPercent: number = Utils.GAS_LIMIT_BUFFER_PERCENT): ethers.BigNumber {
+    return gasLimit.mul(100 + bufferPercent).div(100);
+  }
+
+  /**
+   * Helper: Calculate total transaction cost (gas + value)
+   * Works for any EVM chain (ETH, MATIC, etc.)
+   */
+  private static calculateTotalCost(gasLimit: ethers.BigNumber, gasPrice: ethers.BigNumber, value: BigNumberish = 0): ethers.BigNumber {
+    const totalGas = gasPrice.mul(gasLimit);
+    return totalGas.add(value);
+  }
+
   public static InitServerWallet(domain: string = 'localhost'): ethers.Wallet | null {
     try {
       if (!this.config) {
@@ -178,23 +220,20 @@ export class Utils {
         clientWallet
       );
 
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(clientWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.write(clientWallet.publicKey, hash);
-        
-        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
-        gasLimit = estimatedGas.mul(130).div(100);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract write - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
       catch (error) {
         console.warn('Gas estimation for contract write failed, using default limit');
-        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
-
-      // Get gas price with buffer
-      const baseGasPrice = await clientWallet.getGasPrice();
-      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
 
       // Call the write function with publicKey and data
       const tx = await agentContract.write(clientWallet.publicKey, hash, {
@@ -230,23 +269,20 @@ export class Utils {
         clientWallet
       );
 
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(clientWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerWalletAddress);
-        
-        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
-        gasLimit = estimatedGas.mul(130).div(100);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
       catch (error) {
         console.warn('Gas estimation for contract transferOwnership failed, using default limit');
-        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
-
-      // Get gas price with buffer
-      const baseGasPrice = await clientWallet.getGasPrice();
-      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
 
       // Call the transferOwnership function with pubKey of future owner
       const tx = await agentContract.transferOwnership(futureOwnerWalletAddress, {
@@ -269,33 +305,57 @@ export class Utils {
     }
   }
 
-  public static async FundWallet(from: Wallet, to: Wallet, amount: BigNumberish): Promise<string | null> {
+  /**
+   * Fund a wallet with native currency (ETH, MATIC, etc.)
+   * Works with any EVM chain (Ethereum, Polygon, Arbitrum, etc.)
+   * @param from - Source wallet (pays gas + amount)
+   * @param to - Destination wallet (receives amount)
+   * @param amount - Amount to send in wei
+   * @param estimatedGasForNextOp - Optional: estimated gas for recipient's next operation
+   * @returns Transaction hash or null
+   */
+  public static async FundWallet(
+    from: Wallet,
+    to: Wallet,
+    amount: BigNumberish,
+    estimatedGasForNextOp?: ethers.BigNumber
+  ): Promise<string | null> {
     try {
       if (!from || !to)
         return null;
 
-      // Get current gas price and add 20% buffer for price fluctuations
-      const baseGasPrice: ethers.BigNumber = await from.getGasPrice();
-      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100); // +20% buffer
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(from, Utils.GAS_PRICE_BUFFER_PERCENT);
 
-      // Estimate gas for the transaction
-      const estimatedGas: ethers.BigNumber = await from.estimateGas({
+      // Estimate gas for THIS funding transaction
+      const estimatedGas = await from.estimateGas({
         to: to.address,
         value: amount
       });
+      const gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
 
-      // Add 30% buffer to gas limit to avoid UNPREDICTABLE_GAS_LIMIT errors
-      const gasLimit: ethers.BigNumber = estimatedGas.mul(130).div(100); // +30% buffer
+      // If we know the recipient needs to do another operation, add that gas cost to the amount
+      let finalAmount = ethers.BigNumber.from(amount);
+      if (estimatedGasForNextOp) {
+        const additionalGasCost = gasPrice.mul(estimatedGasForNextOp);
+        finalAmount = finalAmount.add(additionalGasCost);
+        console.log(`Adding gas for recipient's next operation: ${ethers.utils.formatEther(additionalGasCost)} (native currency)`);
+      }
+
+      const provider = from.provider;
+      const chainId = provider ? await provider.getNetwork().then(n => n.chainId) : 'unknown';
+      const currencySymbol = chainId === Utils.POLYGON_MAINNET_CHAIN_ID || chainId === Utils.POLYGON_AMOY_CHAIN_ID ? 'MATIC' : 'ETH';
 
       console.log(`Funding wallet with:`);
-      console.log(`  Amount: ${ethers.utils.formatEther(amount)} ETH`);
+      console.log(`  Chain ID: ${chainId} (${currencySymbol})`);
+      console.log(`  Amount: ${ethers.utils.formatEther(finalAmount)} ${currencySymbol}`);
       console.log(`  Estimated Gas: ${estimatedGas.toString()}`);
       console.log(`  Gas Limit (with buffer): ${gasLimit.toString()}`);
       console.log(`  Gas Price: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
 
-      const fundingTxn: ethers.providers.TransactionResponse = await from.sendTransaction({
+      const fundingTxn = await from.sendTransaction({
         to: to.address,
-        value: amount,
+        value: finalAmount,
         gasLimit: gasLimit,
         gasPrice: gasPrice
       });
@@ -323,9 +383,8 @@ export class Utils {
 
       const data = ethers.utils.toUtf8Bytes(JSON.stringify(genesisData));
 
-      // Get gas price with buffer
-      const baseGasPrice: ethers.BigNumber = await wallet.getGasPrice();
-      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100); // +20% buffer
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(wallet, 20);
 
       // Estimate gas for the transaction
       let gasLimit: ethers.BigNumber;
@@ -335,12 +394,11 @@ export class Utils {
           value: ethers.utils.parseEther('0.000'),
           data: data
         });
-        // Add 30% buffer
-        gasLimit = estimatedGas.mul(130).div(100);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Genesis - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       } catch (error) {
         console.warn('Gas estimation for genesis failed, using default');
-        gasLimit = ethers.BigNumber.from(30000); // Fallback
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GENESIS_GAS_LIMIT);
       }
 
       const genesisTxn = await wallet.sendTransaction({
@@ -363,47 +421,114 @@ export class Utils {
     }
   }
 
-  public static async HasEnoughFunds(wallet: Wallet, minimumAmountToSend: ethers.BigNumber): Promise<boolean> {
+  /**
+   * Ensure a wallet has enough funds for an operation, funding it if necessary
+   * This is the recommended way to prepare wallets for contract operations
+   * @param serverWallet - Wallet to fund from (typically server wallet)
+   * @param clientWallet - Wallet to check/fund (typically client wallet)
+   * @param operationGasEstimate - Estimated gas for the operation the client will perform
+   * @param value - Optional value the client needs to send (default 0)
+   * @returns True if wallet has or was given enough funds
+   */
+  public static async EnsureFunded(
+    serverWallet: Wallet,
+    clientWallet: Wallet,
+    operationGasEstimate: ethers.BigNumber,
+    value: BigNumberish = 0
+  ): Promise<boolean> {
+    try {
+      // Check if client has enough funds
+      const hasEnough = await this.HasEnoughFunds(clientWallet, ethers.BigNumber.from(value), operationGasEstimate);
+
+      if (hasEnough) {
+        console.log(`Client wallet ${clientWallet.address} has sufficient funds`);
+        return true;
+      }
+
+      console.log(`Client wallet ${clientWallet.address} needs funding...`);
+
+      // Calculate how much to fund
+      const gasPrice = await this.getGasPriceWithBuffer(clientWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+      const gasLimit = this.addGasBuffer(operationGasEstimate, Utils.GAS_LIMIT_BUFFER_PERCENT);
+      const totalNeeded = this.calculateTotalCost(gasLimit, gasPrice, value);
+
+      // Add a small buffer for safety
+      const fundingAmount = totalNeeded.mul(100 + Utils.FUNDING_SAFETY_BUFFER_PERCENT).div(100);
+
+      console.log(`Funding client with ${ethers.utils.formatEther(fundingAmount)} (native currency)`);
+
+      // Fund the wallet
+      const txHash = await this.FundWallet(serverWallet, clientWallet, fundingAmount);
+
+      if (!txHash) {
+        console.error('Funding failed');
+        return false;
+      }
+
+      console.log(`Client wallet funded successfully`);
+      return true;
+    }
+    catch (error) {
+      console.error('Error ensuring wallet is funded:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if wallet has enough funds for a transaction (works with any EVM chain)
+   * @param wallet - Wallet to check
+   * @param minimumAmountToSend - Amount needed for the transaction
+   * @param estimatedGasLimit - Optional: pre-estimated gas limit for the operation
+   * @returns True if wallet has enough funds
+   */
+  public static async HasEnoughFunds(
+    wallet: Wallet,
+    minimumAmountToSend: ethers.BigNumber,
+    estimatedGasLimit?: ethers.BigNumber
+  ): Promise<boolean> {
     if (!wallet)
       return false;
 
     try {
-      const balance: ethers.BigNumber = await wallet.getBalance();
+      const balance = await wallet.getBalance();
 
-      // Get gas price with 20% buffer for fluctuations
-      const baseGasPrice: ethers.BigNumber = await wallet.getGasPrice();
-      const gasPrice: ethers.BigNumber = baseGasPrice.mul(120).div(100);
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(wallet, Utils.GAS_PRICE_BUFFER_PERCENT);
 
-      // Estimate gas for a typical transaction (self-transfer)
-      let estimatedGas: ethers.BigNumber;
-      try {
-        estimatedGas = await wallet.estimateGas({
-          to: wallet.address,
-          value: minimumAmountToSend
-        });
-      } catch (error) {
-        // Fallback to standard 21000 gas for simple transfers if estimation fails
-        console.warn('Gas estimation failed, using default 21000');
-        estimatedGas = ethers.BigNumber.from(21000);
+      // Estimate gas if not provided
+      let gasLimit: ethers.BigNumber;
+      if (estimatedGasLimit) {
+        gasLimit = this.addGasBuffer(estimatedGasLimit, Utils.GAS_LIMIT_BUFFER_PERCENT);
+      } else {
+        let estimatedGas: ethers.BigNumber;
+        try {
+          estimatedGas = await wallet.estimateGas({
+            to: wallet.address,
+            value: minimumAmountToSend
+          });
+        } catch (error) {
+          console.warn('Gas estimation failed, using default 21000');
+          estimatedGas = ethers.BigNumber.from(Utils.FALLBACK_SIMPLE_TRANSFER_GAS);
+        }
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
       }
 
-      // Add 30% buffer to gas estimate
-      const gasLimit: ethers.BigNumber = estimatedGas.mul(130).div(100);
-      const totalGasCost: ethers.BigNumber = gasPrice.mul(gasLimit);
+      const totalCost = this.calculateTotalCost(gasLimit, gasPrice, minimumAmountToSend);
+
+      const provider = wallet.provider;
+      const chainId = provider ? await provider.getNetwork().then(n => n.chainId) : 'unknown';
+      const currencySymbol = chainId === Utils.POLYGON_MAINNET_CHAIN_ID || chainId === Utils.POLYGON_AMOY_CHAIN_ID ? 'MATIC' : 'ETH';
 
       console.log(`Checking funds for ${wallet.address}:`);
-      console.log(`  Balance: ${ethers.utils.formatEther(balance)} ETH`);
-      console.log(`  Amount to send: ${ethers.utils.formatEther(minimumAmountToSend)} ETH`);
-      console.log(`  Estimated Gas: ${estimatedGas.toString()}`);
+      console.log(`  Chain ID: ${chainId} (${currencySymbol})`);
+      console.log(`  Balance: ${ethers.utils.formatEther(balance)} ${currencySymbol}`);
+      console.log(`  Amount to send: ${ethers.utils.formatEther(minimumAmountToSend)} ${currencySymbol}`);
       console.log(`  Gas Limit (with buffer): ${gasLimit.toString()}`);
       console.log(`  Gas Price (with buffer): ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
-      console.log(`  Total Gas Cost: ${ethers.utils.formatEther(totalGasCost)} ETH`);
+      console.log(`  Total Cost: ${ethers.utils.formatEther(totalCost)} ${currencySymbol}`);
 
-      const totalNeeded: ethers.BigNumber = totalGasCost.add(minimumAmountToSend);
-      console.log(`  Total Needed: ${ethers.utils.formatEther(totalNeeded)} ETH`);
-
-      if (balance.lt(totalNeeded)) {
-        console.log(`  Insufficient funds (short by ${ethers.utils.formatEther(totalNeeded.sub(balance))} ETH)`);
+      if (balance.lt(totalCost)) {
+        console.log(`  Insufficient funds (short by ${ethers.utils.formatEther(totalCost.sub(balance))} ${currencySymbol})`);
         return false;
       }
 
@@ -429,23 +554,20 @@ export class Utils {
         ownerWallet
       );
 
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(ownerWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.addToWhitelist(addressToAdd, domain);
-
-        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
-        gasLimit = estimatedGas.mul(130).div(100);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract addToWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
       catch (error) {
         console.warn('Gas estimation for contract addToWhitelist failed, using default limit');
-        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
-
-      // Get gas price with buffer
-      const baseGasPrice = await ownerWallet.getGasPrice();
-      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
 
       const tx = await agentContract.addToWhitelist(addressToAdd, domain, {
         gasLimit: gasLimit,
@@ -480,23 +602,20 @@ export class Utils {
         ownerWallet
       );
 
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(ownerWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.removeFromWhitelist(addressToRemove, domain);
-
-        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
-        gasLimit = estimatedGas.mul(130).div(100);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract removeFromWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
       catch (error) {
         console.warn('Gas estimation for contract removeFromWhitelist failed, using default limit');
-        gasLimit = ethers.BigNumber.from(100000); // Fallback gas limit
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
-
-      // Get gas price with buffer
-      const baseGasPrice = await ownerWallet.getGasPrice();
-      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
 
       // Call the removeFromWhitelist function
       const tx = await agentContract.removeFromWhitelist(addressToRemove, domain, {
@@ -564,6 +683,207 @@ export class Utils {
     catch (error) {
       console.error('Error checking whitelist status:', error);
       throw new Error(`Failed to check whitelist status: ${error}`);
+    }
+  }
+
+  public static async CreateApproval(requestorWallet: Wallet, approverAddress: string, fileName: string, fileHash: string, domain: string): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        requestorWallet
+      );
+
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(requestorWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.createApproval(approverAddress, fileName, fileHash, domain);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+        console.log(`Contract createApproval - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract createApproval failed, using default limit');
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+      }
+
+      const tx = await agentContract.createApproval(approverAddress, fileName, fileHash, domain, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Created request from ${requestorWallet.address} to ${approverAddress} for file ${fileName}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error creating approval:', error);
+      throw new Error(`Failed to create approval: ${error}`);
+    }
+  }
+
+  public static async GetApprovalsByAddress(wallet: Wallet, approverAddress: string, requestorAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getApprovalsByAddress(approverAddress, requestorAddress);
+
+      console.log(`Found ${approvals.length} request(s) for approver ${approverAddress} from requestor ${requestorAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      const plainApprovals = approvals.map((approval: any) => ({
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting approvals:', error);
+      throw new Error(`Failed to get approvals: ${error}`);
+    }
+  }
+
+  public static async GetAllApprovalsForApprover(wallet: Wallet, approverAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getAllApprovalsForApprover(approverAddress);
+
+      console.log(`Found ${approvals.length} total request(s) for approver ${approverAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      const plainApprovals = approvals.map((approval: any) => ({
+        requestor: approval.requestor,
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting all approvals:', error);
+      throw new Error(`Failed to get all approvals: ${error}`);
+    }
+  }
+
+  public static async GetAllApprovalsForRequestor(wallet: Wallet, requestorAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getAllApprovalsForRequestor(requestorAddress);
+
+      console.log(`Found ${approvals.length} total request(s) for requestor ${requestorAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      // Note: The 'requestor' field actually contains the approver address for this function
+      const plainApprovals = approvals.map((approval: any) => ({
+        approver: approval.requestor, // This is actually the approver address
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting all approvals for requestor:', error);
+      throw new Error(`Failed to get all approvals for requestor: ${error}`);
+    }
+  }
+
+  public static async HandleApproval(approverWallet: Wallet, requestorAddress: string, fileName: string, approved: boolean): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        approverWallet
+      );
+
+      // Use helper functions
+      const gasPrice = await this.getGasPriceWithBuffer(approverWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.handleApproval(requestorAddress, fileName, approved);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+        console.log(`Contract handleApproval - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract handleApproval failed, using default limit');
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+      }
+
+      const tx = await agentContract.handleApproval(requestorAddress, fileName, approved, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Approval ${approved ? 'approved' : 'denied'} by ${approverWallet.address} for request from ${requestorAddress} (file: ${fileName}). Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error handling approval:', error);
+      throw new Error(`Failed to handle approval: ${error}`);
     }
   }
 }

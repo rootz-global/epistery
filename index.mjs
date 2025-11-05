@@ -203,6 +203,10 @@ class EpisteryAttach {
     // Key exchange endpoint - handles POST requests for key exchange
     router.post('/connect', async (req, res) => {
       try {
+        const data = req.body;
+        if (!data && Object.keys(data).length <= 0)
+          data = req.body;
+
         const serverWallet = this.domain;
 
         if (!serverWallet?.wallet) {
@@ -210,14 +214,14 @@ class EpisteryAttach {
         }
 
         // Handle key exchange request
-        const keyExchangeResponse = await Epistery.handleKeyExchange(req.body, serverWallet.wallet);
+        const keyExchangeResponse = await Epistery.handleKeyExchange(data, serverWallet.wallet);
 
         if (!keyExchangeResponse) {
           return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
         }
         const clientInfo = {
-          address: req.body.clientAddress,
-          publicKey:req.body.clientPublicKey
+          address: data.clientAddress,
+          publicKey: data.clientPublicKey
         }
         if (this.options.authentication) {
           clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
@@ -244,7 +248,8 @@ class EpisteryAttach {
 
     router.post('/data/write', async (req, res) => {
       try {
-        const { clientWalletInfo, data } = req.body;
+        const body = req.body;
+        const { clientWalletInfo, data } = body;
 
         if (!clientWalletInfo || !data) {
           return res.status(400).json({ error: 'Missing client wallet or data' });
@@ -268,7 +273,8 @@ class EpisteryAttach {
 
     router.post('/data/read', async (req, res) => {
       try {
-        const { clientWalletInfo } = req.body;
+        const body = req.body;
+        const { clientWalletInfo } = body;
 
         if (!clientWalletInfo) {
           return res.status(400).json({ error: 'Missing client wallet' });
@@ -289,7 +295,8 @@ class EpisteryAttach {
 
     router.put('/data/ownership', async (req, res) => {
       try {
-        const { clientWalletInfo, futureOwnerWalletAddress } = req.body;
+        const body = req.body;
+        const { clientWalletInfo, futureOwnerWalletAddress } = body;
 
         if (!clientWalletInfo || !futureOwnerWalletAddress) {
           return res.status(400).json({ error: 'Missing either client wallet or future owner address.' });
@@ -308,11 +315,131 @@ class EpisteryAttach {
       }
     });
 
+    // Approval endpoints
+    router.post('/approval/create', async (req, res) => {
+      try {
+        const body = req.body;
+        const { clientWalletInfo, approverAddress, fileName, fileHash, domain } = body;
+
+        if (!clientWalletInfo || !approverAddress || !fileName || !fileHash || !domain) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, fileName, fileHash, domain' });
+        }
+
+        const result = await Epistery.createApproval(clientWalletInfo, approverAddress, fileName, fileHash, domain);
+        if (!result) {
+          return res.status(500).json({ error: 'Create approval failed' });
+        }
+
+        res.json(result);
+      }
+      catch (error) {
+        console.error('Create approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get', async (req, res) => {
+      try {
+        const body = req.body;
+        const { clientWalletInfo, approverAddress, requestorAddress } = body;
+
+        if (!clientWalletInfo || !approverAddress || !requestorAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, requestorAddress' });
+        }
+
+        const result = await Epistery.getApprovals(clientWalletInfo, approverAddress, requestorAddress);
+
+        res.json({
+          approverAddress: approverAddress,
+          requestorAddress: requestorAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get approvals error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get-all', async (req, res) => {
+      try {
+        const body = req.body;
+        const { clientWalletInfo, approverAddress } = body;
+
+        if (!clientWalletInfo || !approverAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress' });
+        }
+
+        const result = await Epistery.getAllApprovalsForApprover(clientWalletInfo, approverAddress);
+
+        res.json({
+          approverAddress: approverAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get all approvals error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get-all-requestor', async (req, res) => {
+      try {
+        const body = req.body;
+        const { clientWalletInfo, requestorAddress } = body;
+
+        if (!clientWalletInfo || !requestorAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress' });
+        }
+
+        const result = await Epistery.getAllApprovalsForRequestor(clientWalletInfo, requestorAddress);
+
+        res.json({
+          requestorAddress: requestorAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get all approvals for requestor error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/handle', async (req, res) => {
+      try {
+        const body = req.body;
+        const { clientWalletInfo, requestorAddress, fileName, approved } = body;
+
+        if (!clientWalletInfo || !requestorAddress || !fileName || approved === undefined) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress, fileName, approved' });
+        }
+
+        const result = await Epistery.handleApproval(clientWalletInfo, requestorAddress, fileName, approved);
+        if (!result) {
+          return res.status(500).json({ error: 'Handle approval failed' });
+        }
+
+        res.json(result);
+      }
+      catch (error) {
+        console.error('Handle approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Domain initialization endpoint - use to set up domain with custom provider
     router.post('/domain/initialize', async (req, res) => {
       try {
+        const body = req.body;
         const domain = req.hostname;
-        const { provider } = req.body;
+        const { provider } = body;
+
+        console.log(`[debug] Domain initialization request for: ${domain}`);
+        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
+        console.log(`[debug] Full request body:`, JSON.stringify(body, null, 2));
 
         if (!provider || !provider.name || !provider.chainId || !provider.rpc) {
           return res.status(400).json({ error: 'Invalid provider configuration' });

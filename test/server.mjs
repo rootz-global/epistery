@@ -77,7 +77,7 @@ async function main() {
 
   app.listen(PORT, () => {
     console.log(`Test site: http://localhost:${PORT}`);
-    console.log(`Status: http://localhost:${PORT}/.epistery/status`);
+    console.log(`Status: http://localhost:${PORT}/.well-known/epistery/status`);
     console.log(`Whitelist API: http://localhost:${PORT}/.well-known/epistery/whitelist`);
     console.log(`Whitelist Info: http://localhost:${PORT}/whitelist-info`);
   });

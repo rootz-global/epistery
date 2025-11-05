@@ -1,3 +1,4 @@
+soljson-*.js
 secrets.mjs
 .nginx/domains/*
 .nginx/nginx.conf

@@ -9,6 +9,9 @@ export class Epistery {
   private static ipfsGatewayUrl: string | undefined;
   private static isInitialized: boolean = false;
 
+  // Gas estimation constants
+  private static readonly FALLBACK_GAS_LIMIT = 200000;
+
   constructor() { }
 
   public static async initialize(): Promise<void> {
@@ -99,17 +102,36 @@ export class Epistery {
 
     const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
 
-    const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
-    const serverHasEnough:boolean = await Utils.HasEnoughFunds(serverWallet, amount);
-    if (!serverHasEnough) {
-      console.log("Server wallet does not have enough funds.");
+    // Estimate gas for the write operation that will happen later
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      console.error('Agent contract address not configured');
       return null;
     }
 
-    const clientHasEnough:boolean = await Utils.HasEnoughFunds(clientWallet, amount);
-    if (!clientHasEnough) {
-      const fundTxnHash: string | null = await Utils.FundWallet(serverWallet, clientWallet, amount);
-      if (!fundTxnHash) return null;
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      clientWallet
+    );
+
+    // Estimate gas for contract write
+    let estimatedGas: ethers.BigNumber;
+    try {
+      // We need to estimate with a placeholder hash since we don't have the IPFS hash yet
+      // Use a realistic placeholder that matches the actual hash length
+      const placeholderHash = 'QmPlaceholderHashForGasEstimation1234567890';
+      estimatedGas = await agentContract.estimateGas.write(clientWallet.publicKey, placeholderHash);
+    } catch (error) {
+      console.warn('Gas estimation failed, using default estimate');
+      estimatedGas = ethers.BigNumber.from(Epistery.FALLBACK_GAS_LIMIT);
+    }
+
+    // Ensure client wallet is funded for the operation
+    const isFunded = await Utils.EnsureFunded(serverWallet, clientWallet, estimatedGas);
+    if (!isFunded) {
+      console.error('Failed to ensure client wallet has sufficient funds');
+      return null;
     }
 
     // Create Genesis block (self-transfer)
@@ -181,6 +203,173 @@ export class Epistery {
       const receipt = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress);
       if (!receipt) return false;
       return true;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Creates a request for a file
+   * @param clientWalletInfo The requestor's wallet information
+   * @param approverAddress The address that will approve/deny the request
+   * @param fileName The name of the file being requested
+   * @param fileHash The hash of the file being requested
+   * @param domain The domain to check whitelist against
+   */
+  public static async createApproval(clientWalletInfo: ClientWalletInfo, approverAddress: string, fileName: string, fileHash: string, domain: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const serverWalletConfig: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig)
+      return null;
+
+    const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Estimate gas for the createApproval operation
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      console.error('Agent contract address not configured');
+      return null;
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      clientWallet
+    );
+
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.createApproval(approverAddress, fileName, fileHash, domain);
+    } catch (error) {
+      console.warn('Gas estimation for createApproval failed, using default estimate');
+      estimatedGas = ethers.BigNumber.from(Epistery.FALLBACK_GAS_LIMIT);
+    }
+
+    // Ensure client wallet is funded for the operation
+    const isFunded = await Utils.EnsureFunded(serverWallet, clientWallet, estimatedGas);
+    if (!isFunded) {
+      console.error('Failed to ensure client wallet has sufficient funds');
+      return null;
+    }
+
+    try {
+      const receipt = await Utils.CreateApproval(clientWallet, approverAddress, fileName, fileHash, domain);
+      if (!receipt) return false;
+      return receipt;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for a specific requestor from an approver
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param approverAddress The address of the approver
+   * @param requestorAddress The address of the requestor
+   */
+  public static async getApprovals(clientWalletInfo: ClientWalletInfo, approverAddress: string, requestorAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetApprovalsByAddress(clientWallet, approverAddress, requestorAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for an approver from all requestors
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param approverAddress The address of the approver
+   */
+  public static async getAllApprovalsForApprover(clientWalletInfo: ClientWalletInfo, approverAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetAllApprovalsForApprover(clientWallet, approverAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for a requestor from all approvers
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param requestorAddress The address of the requestor
+   */
+  public static async getAllApprovalsForRequestor(clientWalletInfo: ClientWalletInfo, requestorAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetAllApprovalsForRequestor(clientWallet, requestorAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Handles a request (approve or deny)
+   * @param clientWalletInfo The approver's wallet information
+   * @param requestorAddress The address that requested the approval
+   * @param fileName The name of the file to approve/deny
+   * @param approved Whether to approve or deny the request
+   */
+  public static async handleApproval(clientWalletInfo: ClientWalletInfo, requestorAddress: string, fileName: string, approved: boolean): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const domain: string = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig)
+      return null;
+
+    const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Estimate gas for the handleApproval operation
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      console.error('Agent contract address not configured');
+      return null;
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      clientWallet
+    );
+
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.handleApproval(requestorAddress, fileName, approved);
+    } catch (error) {
+      console.warn('Gas estimation for handleApproval failed, using default estimate');
+      estimatedGas = ethers.BigNumber.from(Epistery.FALLBACK_GAS_LIMIT);
+    }
+
+    // Ensure client wallet is funded for the operation
+    const isFunded = await Utils.EnsureFunded(serverWallet, clientWallet, estimatedGas);
+    if (!isFunded) {
+      console.error('Failed to ensure client wallet has sufficient funds');
+      return null;
+    }
+
+    try {
+      const receipt = await Utils.HandleApproval(clientWallet, requestorAddress, fileName, approved);
+      if (!receipt) return false;
+      return receipt;
     }
     catch(error) {
       throw error;
