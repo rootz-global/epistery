@@ -302,6 +302,116 @@ class EpisteryAttach {
       }
     });
 
+    // Approval endpoints
+    router.post('/approval/create', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, approverAddress, fileName, fileHash, domain } = req.body;
+
+        if (!clientWalletInfo || !approverAddress || !fileName || !fileHash || !domain) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, fileName, fileHash, domain' });
+        }
+
+        const result = await Epistery.createApproval(clientWalletInfo, approverAddress, fileName, fileHash, domain);
+        if (!result) {
+          return res.status(500).json({ error: 'Create approval failed' });
+        }
+
+        res.json(result);
+      }
+      catch (error) {
+        console.error('Create approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, approverAddress, requestorAddress } = req.body;
+
+        if (!clientWalletInfo || !approverAddress || !requestorAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, requestorAddress' });
+        }
+
+        const result = await Epistery.getApprovals(clientWalletInfo, approverAddress, requestorAddress);
+
+        res.json({
+          approverAddress: approverAddress,
+          requestorAddress: requestorAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get approvals error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get-all', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, approverAddress } = req.body;
+
+        if (!clientWalletInfo || !approverAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress' });
+        }
+
+        const result = await Epistery.getAllApprovalsForApprover(clientWalletInfo, approverAddress);
+
+        res.json({
+          approverAddress: approverAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get all approvals error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/get-all-requestor', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, requestorAddress } = req.body;
+
+        if (!clientWalletInfo || !requestorAddress) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress' });
+        }
+
+        const result = await Epistery.getAllApprovalsForRequestor(clientWalletInfo, requestorAddress);
+
+        res.json({
+          requestorAddress: requestorAddress,
+          approvals: result,
+          count: result.length
+        });
+      }
+      catch (error) {
+        console.error('Get all approvals for requestor error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    router.post('/approval/handle', express.json(), async (req, res) => {
+      try {
+        const { clientWalletInfo, requestorAddress, fileName, approved } = req.body;
+
+        if (!clientWalletInfo || !requestorAddress || !fileName || approved === undefined) {
+          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress, fileName, approved' });
+        }
+
+        const result = await Epistery.handleApproval(clientWalletInfo, requestorAddress, fileName, approved);
+        if (!result) {
+          return res.status(500).json({ error: 'Handle approval failed' });
+        }
+
+        res.json(result);
+      }
+      catch (error) {
+        console.error('Handle approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Domain initialization endpoint - use to set up domain with custom provider
     router.post('/domain/initialize', express.json(), async (req, res) => {
       try {

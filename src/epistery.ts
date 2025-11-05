@@ -181,6 +181,143 @@ export class Epistery {
     }
   }
 
+  /**
+   * Creates a request for a file
+   * @param clientWalletInfo The requestor's wallet information
+   * @param approverAddress The address that will approve/deny the request
+   * @param fileName The name of the file being requested
+   * @param fileHash The hash of the file being requested
+   * @param domain The domain to check whitelist against
+   */
+  public static async createApproval(clientWalletInfo: ClientWalletInfo, approverAddress: string, fileName: string, fileHash: string, domain: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const serverWalletConfig: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig)
+      return null;
+
+    const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
+    const serverHasEnough:boolean = await Utils.HasEnoughFunds(serverWallet, amount);
+    if (!serverHasEnough) {
+      console.log("Server wallet does not have enough funds.");
+      return null;
+    }
+
+    const clientHasEnough:boolean = await Utils.HasEnoughFunds(clientWallet, amount);
+    if (!clientHasEnough) {
+      const fundTxnHash: string | null = await Utils.FundWallet(serverWallet, clientWallet, amount);
+      if (!fundTxnHash) return null;
+    }
+
+    try {
+      const receipt = await Utils.CreateApproval(clientWallet, approverAddress, fileName, fileHash, domain);
+      if (!receipt) return false;
+      return receipt;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for a specific requestor from an approver
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param approverAddress The address of the approver
+   * @param requestorAddress The address of the requestor
+   */
+  public static async getApprovals(clientWalletInfo: ClientWalletInfo, approverAddress: string, requestorAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetApprovalsByAddress(clientWallet, approverAddress, requestorAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for an approver from all requestors
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param approverAddress The address of the approver
+   */
+  public static async getAllApprovalsForApprover(clientWalletInfo: ClientWalletInfo, approverAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetAllApprovalsForApprover(clientWallet, approverAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Gets all requests for a requestor from all approvers
+   * @param clientWalletInfo The wallet information to use for the query
+   * @param requestorAddress The address of the requestor
+   */
+  public static async getAllApprovalsForRequestor(clientWalletInfo: ClientWalletInfo, requestorAddress: string): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    try {
+      const approvals = await Utils.GetAllApprovalsForRequestor(clientWallet, requestorAddress);
+      return approvals;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Handles a request (approve or deny)
+   * @param clientWalletInfo The approver's wallet information
+   * @param requestorAddress The address that requested the approval
+   * @param fileName The name of the file to approve/deny
+   * @param approved Whether to approve or deny the request
+   */
+  public static async handleApproval(clientWalletInfo: ClientWalletInfo, requestorAddress: string, fileName: string, approved: boolean): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const domain: string = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig)
+      return null;
+
+    const serverWallet: Wallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    const amount:ethers.BigNumber = ethers.utils.parseEther('0.0001');
+    const serverHasEnough:boolean = await Utils.HasEnoughFunds(serverWallet, amount);
+    if (!serverHasEnough) {
+      console.log("Server wallet does not have enough funds.");
+      return null;
+    }
+
+    const clientHasEnough:boolean = await Utils.HasEnoughFunds(clientWallet, amount);
+    if (!clientHasEnough) {
+      const fundTxnHash: string | null = await Utils.FundWallet(serverWallet, clientWallet, amount);
+      if (!fundTxnHash) return null;
+    }
+
+    try {
+      const receipt = await Utils.HandleApproval(clientWallet, requestorAddress, fileName, approved);
+      if (!receipt) return false;
+      return receipt;
+    }
+    catch(error) {
+      throw error;
+    }
+  }
+
   private static async initIPFS(): Promise<void> {
     try {
       console.log("IPFS Node URL:", Epistery.ipfsApiUrl);

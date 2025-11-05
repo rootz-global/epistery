@@ -390,8 +390,8 @@ export default class Witness {
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
-        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
-        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
       };
 
       let options = {
@@ -418,6 +418,197 @@ export default class Witness {
     }
   }
 
+  async createApprovalEvent(approverAddress, fileName, fileHash, domain) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        approverAddress: approverAddress,
+        fileName: fileName,
+        fileHash: fileHash,
+        domain: domain
+      });
+
+      let result = await fetch('/.well-known/epistery/approval/create', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Create approval failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute create approval event:', e);
+      throw e;
+    }
+  }
+
+  async getApprovalsEvent(approverAddress, requestorAddress) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        approverAddress: approverAddress,
+        requestorAddress: requestorAddress
+      });
+
+      let result = await fetch('/.well-known/epistery/approval/get', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Get approvals failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute get approvals event:', e);
+      throw e;
+    }
+  }
+
+  async getAllApprovalsForApproverEvent(approverAddress) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        approverAddress: approverAddress
+      });
+
+      let result = await fetch('/.well-known/epistery/approval/get-all', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Get all approvals failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute get all approvals event:', e);
+      throw e;
+    }
+  }
+
+  async getAllApprovalsForRequestorEvent(requestorAddress) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        requestorAddress: requestorAddress
+      });
+
+      let result = await fetch('/.well-known/epistery/approval/get-all-requestor', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Get all approvals for requestor failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute get all approvals for requestor event:', e);
+      throw e;
+    }
+  }
+
+  async handleApprovalEvent(requestorAddress, fileName, approved) {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    try {
+      const clientWalletInfo = {
+        address: this.wallet.address,
+        publicKey: this.wallet.publicKey,
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
+      };
+
+      let options = {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type': 'application/json'}
+      };
+      options.body = JSON.stringify({
+        clientWalletInfo: clientWalletInfo,
+        requestorAddress: requestorAddress,
+        fileName: fileName,
+        approved: approved
+      });
+
+      let result = await fetch('/.well-known/epistery/approval/handle', options);
+
+      if (result.ok) {
+        return await result.json();
+      }
+      else {
+        throw new Error(`Handle approval failed with status: ${result.status}`);
+      }
+    } catch (e) {
+      console.error('Failed to execute handle approval event:', e);
+      throw e;
+    }
+  }
+
   async readEvent() {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
@@ -427,8 +618,8 @@ export default class Witness {
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
-        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
-        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
       };
 
       let options = {
@@ -467,8 +658,8 @@ export default class Witness {
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
-        mnemonic: this.wallet.mnemonic || '', // Only available for browser wallets
-        privateKey: this.wallet.privateKey || '', // Only available for browser wallets
+        mnemonic: this.wallet.mnemonic || '',
+        privateKey: this.wallet.privateKey || '',
       };
 
       let options = {

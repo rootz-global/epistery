@@ -566,4 +566,211 @@ export class Utils {
       throw new Error(`Failed to check whitelist status: ${error}`);
     }
   }
+
+  public static async CreateApproval(requestorWallet: Wallet, approverAddress: string, fileName: string, fileHash: string, domain: string): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        requestorWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.createApproval(approverAddress, fileName, fileHash, domain);
+
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract createApproval - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract createApproval failed, using default limit');
+        gasLimit = ethers.BigNumber.from(200000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await requestorWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      const tx = await agentContract.createApproval(approverAddress, fileName, fileHash, domain, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Created request from ${requestorWallet.address} to ${approverAddress} for file ${fileName}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error creating approval:', error);
+      throw new Error(`Failed to create approval: ${error}`);
+    }
+  }
+
+  public static async GetApprovalsByAddress(wallet: Wallet, approverAddress: string, requestorAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getApprovalsByAddress(approverAddress, requestorAddress);
+
+      console.log(`Found ${approvals.length} request(s) for approver ${approverAddress} from requestor ${requestorAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      const plainApprovals = approvals.map((approval: any) => ({
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting approvals:', error);
+      throw new Error(`Failed to get approvals: ${error}`);
+    }
+  }
+
+  public static async GetAllApprovalsForApprover(wallet: Wallet, approverAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getAllApprovalsForApprover(approverAddress);
+
+      console.log(`Found ${approvals.length} total request(s) for approver ${approverAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      const plainApprovals = approvals.map((approval: any) => ({
+        requestor: approval.requestor,
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting all approvals:', error);
+      throw new Error(`Failed to get all approvals: ${error}`);
+    }
+  }
+
+  public static async GetAllApprovalsForRequestor(wallet: Wallet, requestorAddress: string): Promise<any[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const approvals = await agentContract.getAllApprovalsForRequestor(requestorAddress);
+
+      console.log(`Found ${approvals.length} total request(s) for requestor ${requestorAddress}`);
+
+      // Convert ethers.js Result objects to plain JavaScript objects
+      // Note: The 'requestor' field actually contains the approver address for this function
+      const plainApprovals = approvals.map((approval: any) => ({
+        approver: approval.requestor, // This is actually the approver address
+        approved: approval.approved,
+        fileName: approval.fileName,
+        fileHash: approval.fileHash,
+        processedAt: approval.processedAt.toNumber(),
+        exists: approval.exists
+      }));
+
+      return plainApprovals;
+    }
+    catch (error) {
+      console.error('Error getting all approvals for requestor:', error);
+      throw new Error(`Failed to get all approvals for requestor: ${error}`);
+    }
+  }
+
+  public static async HandleApproval(approverWallet: Wallet, requestorAddress: string, fileName: string, approved: boolean): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        approverWallet
+      );
+
+      // Estimate gas for the contract write
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.handleApproval(requestorAddress, fileName, approved);
+
+        // Add 30% buffer to avoid UNPREDICTABLE_GAS_LIMIT errors
+        gasLimit = estimatedGas.mul(130).div(100);
+        console.log(`Contract handleApproval - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      }
+      catch (error) {
+        console.warn('Gas estimation for contract handleApproval failed, using default limit');
+        gasLimit = ethers.BigNumber.from(150000); // Fallback gas limit
+      }
+
+      // Get gas price with buffer
+      const baseGasPrice = await approverWallet.getGasPrice();
+      const gasPrice = baseGasPrice.mul(120).div(100); // +20% buffer
+
+      const tx = await agentContract.handleApproval(requestorAddress, fileName, approved, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Approval ${approved ? 'approved' : 'denied'} by ${approverWallet.address} for request from ${requestorAddress} (file: ${fileName}). Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    }
+    catch (error) {
+      console.error('Error handling approval:', error);
+      throw new Error(`Failed to handle approval: ${error}`);
+    }
+  }
 }
