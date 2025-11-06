@@ -142,6 +142,19 @@ class EpisteryAttach {
       res.sendFile(modulePath);
     });
 
+    // Serve contract artifacts
+    router.get('/artifacts/:contractFile', (req, res) => {
+      const contractFile = req.params.contractFile;
+      const artifactPath = path.resolve(__dirname, 'artifacts/contracts', contractFile.replace('.json', '.sol'), contractFile);
+
+      if (!fs.existsSync(artifactPath)) {
+        return res.status(404).send('Contract artifact not found');
+      }
+
+      res.set('Content-Type', 'application/json');
+      res.sendFile(artifactPath);
+    });
+
     router.get('/status', (req, res) => {
       const domain = req.hostname;
       const serverWallet = this.domain;

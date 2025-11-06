@@ -5,7 +5,7 @@
  * and provides local wallet functionality for signing data
  */
 
-import { Wallet, Web3Wallet, BrowserWallet } from './wallet.js';
+import { Wallet, Web3Wallet, BrowserWallet, RivetWallet } from './wallet.js?v=7';
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -146,7 +146,12 @@ export default class Witness {
   }
 
   generateWalletId(source) {
-    const prefix = source === 'web3' ? 'web3-wallet' : 'browser-wallet';
+    let prefix = 'browser-wallet'; // legacy default
+    if (source === 'web3') {
+      prefix = 'web3-wallet';
+    } else if (source === 'rivet') {
+      prefix = 'rivet';
+    }
     return prefix + '-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
   }
 
@@ -189,18 +194,17 @@ export default class Witness {
 
   async initialize() {
     try {
-      // Try Web3 first, then fall back to browser wallet
-      this.wallet = await Web3Wallet.create(ethers);
+      // Try RivetWallet first (non-extractable, invisible, zero friction)
+      this.wallet = await RivetWallet.create(ethers);
 
-      if (!this.wallet) {
-        this.wallet = await BrowserWallet.create(ethers);
-      }
+      // Only try Web3 if user explicitly requests (not automatic)
+      // BrowserWallet is legacy fallback only
 
       if (this.wallet) {
         console.log(`Wallet initialized: ${this.wallet.source} (${this.wallet.address})`);
         this.save();
       } else {
-        throw new Error('Failed to create any wallet type');
+        throw new Error('Failed to create rivet wallet');
       }
     } catch (e) {
       console.error('Failed to initialize wallet:', e);
@@ -305,9 +309,14 @@ export default class Witness {
         throw new Error('No wallet available for key exchange');
       }
 
+      // For rivets with identity contracts, use the rivet address for signing
+      // but present the contract address as the identity
+      const signingAddress = this.wallet.rivetAddress || this.wallet.address;
+      const identityAddress = this.wallet.address;
+
       // Create a message to sign for identity proof
       const challenge = this.generateChallenge();
-      const message = `Epistery Key Exchange - ${this.wallet.address} - ${challenge}`;
+      const message = `Epistery Key Exchange - ${signingAddress} - ${challenge}`;
 
       // Sign the message using the wallet
       const signature = await this.wallet.sign(message, ethers);
@@ -317,12 +326,15 @@ export default class Witness {
 
       // Send key exchange request to server
       const keyExchangeData = {
-        clientAddress: this.wallet.address,
+        clientAddress: signingAddress, // Use signing address for verification
         clientPublicKey: publicKey,
         challenge: challenge,
         message: message,
         signature: signature,
-        walletSource: this.wallet.source
+        walletSource: this.wallet.source,
+        // Include identity info if using a contract
+        identityAddress: identityAddress !== signingAddress ? identityAddress : undefined,
+        contractAddress: this.wallet.contractAddress
       };
 
       const response = await fetch('/.well-known/epistery/connect', {
