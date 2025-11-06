@@ -33,6 +33,9 @@
         // Setup wallet management UI
         await setupWalletManagement();
 
+        // Setup Identity Contract UI
+        await setupIdentityContract();
+
         // Set up export wallet functionality
         const exportSection = document.getElementById('export-section');
         const exportButton = document.getElementById('export-button');
@@ -541,6 +544,338 @@
           // Initial render
           renderWalletList();
         }
+
+        // Identity Contract Functions
+        async function setupIdentityContract() {
+          const identitySection = document.getElementById('identity-contract-section');
+          const identityStatus = document.getElementById('identity-status');
+          const identityOutput = document.getElementById('identity-output');
+          const deployButton = document.getElementById('deploy-identity-button');
+          const generateTokenButton = document.getElementById('generate-join-token-button');
+          const acceptTokenButton = document.getElementById('accept-join-token-button');
+          const joinTokenInputSection = document.getElementById('join-token-input-section');
+          const submitJoinTokenButton = document.getElementById('submit-join-token-button');
+          const joinTokenInput = document.getElementById('join-token-input');
+
+          // Only show for rivet wallets
+          if (witness.wallet?.source !== 'rivet') {
+            identitySection.style.display = 'none';
+            return;
+          }
+
+          identitySection.style.display = 'block';
+
+          // Display current identity status
+          function updateIdentityStatus() {
+            const wallet = witness.wallet;
+
+            if (wallet.contractAddress) {
+              identityStatus.innerHTML = `
+                <h4>✅ Identity Contract Active</h4>
+                <p><strong>Contract Address:</strong> <code>${wallet.contractAddress}</code></p>
+                <p><strong>Rivet Address:</strong> <code>${wallet.rivetAddress || wallet.address}</code></p>
+                <p><strong>Type:</strong> ${wallet.type}</p>
+              `;
+              deployButton.style.display = 'none';
+              generateTokenButton.style.display = 'inline-block';
+              acceptTokenButton.style.display = 'inline-block';
+            } else {
+              identityStatus.innerHTML = `
+                <h4>📱 Rivet Wallet</h4>
+                <p><strong>Address:</strong> <code>${wallet.address}</code></p>
+                <p><strong>Status:</strong> Not upgraded to Identity Contract</p>
+                <p><i>You can either deploy a new Identity Contract, or join an existing one using a token from another device.</i></p>
+              `;
+              deployButton.style.display = 'inline-block';
+              generateTokenButton.style.display = 'none';
+              acceptTokenButton.style.display = 'inline-block'; // Show join button for fresh rivets!
+            }
+          }
+
+          updateIdentityStatus();
+
+          // Deploy Identity Contract
+          deployButton.onclick = async () => {
+            try {
+              deployButton.disabled = true;
+              deployButton.textContent = '⏳ Deploying...';
+              identityOutput.innerHTML = '<div class="loading">Deploying Identity Contract to blockchain...</div>';
+
+              const providerConfig = {
+                rpc: witness.serverInfo.rpc,
+                chainId: witness.serverInfo.chainId
+              };
+
+              const contractAddress = await witness.wallet.deployIdentityContract(window.ethers, providerConfig);
+
+              witness.save(); // Save updated wallet
+              updateIdentityStatus();
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>🎉 Identity Contract Deployed!</h4>
+                  <p><strong>Contract Address:</strong> <code>${contractAddress}</code></p>
+                  <p>Your rivet has been upgraded to a portable identity contract.</p>
+                  <p>You can now generate a join token to add this identity from other devices.</p>
+                </div>
+              `;
+            } catch (error) {
+              // Parse error for better UX
+              let errorHTML = '';
+              const wallet = witness.wallet;
+              const rivetAddress = wallet.rivetAddress || wallet.address;
+
+              // Check for gas price too low error
+              if (error.message && error.message.includes('gas price below minimum')) {
+                // Extract gas tip values
+                let currentTip = 'unknown';
+                let minimumTip = 'unknown';
+
+                const tipMatch = error.message.match(/gas tip cap (\d+), minimum needed (\d+)/);
+                if (tipMatch) {
+                  currentTip = (parseFloat(tipMatch[1]) / 1e9).toFixed(2) + ' Gwei';
+                  minimumTip = (parseFloat(tipMatch[2]) / 1e9).toFixed(2) + ' Gwei';
+                }
+
+                errorHTML = `
+                  <div class="error">
+                    <h4>⛽ Gas Price Too Low</h4>
+                    <p>The transaction gas price is below the network's minimum requirement.</p>
+
+                    <div class="result-section">
+                      <h5>Gas Price Issue:</h5>
+                      <p><strong>Your Gas Tip:</strong> ${currentTip}</p>
+                      <p><strong>Network Minimum:</strong> ${minimumTip}</p>
+                      <p>The network requires a higher gas tip to process this transaction.</p>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Rivet Address:</h5>
+                      <p><code>${rivetAddress}</code></p>
+                      <button onclick="navigator.clipboard.writeText('${rivetAddress}').then(() => alert('Address copied to clipboard!'))" class="action-button">📋 Copy Address</button>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Next Steps:</h5>
+                      <ol>
+                        <li>Send more POL to your rivet address above</li>
+                        <li>Recommended amount: <strong>0.01 POL</strong> (ensures sufficient funds for higher gas)</li>
+                        <li>Wait for transaction confirmation</li>
+                        <li>Click "Deploy Identity Contract" again</li>
+                      </ol>
+                      <p><em>Note: Having more POL allows the wallet to use higher gas prices when needed.</em></p>
+                    </div>
+
+                    <details style="margin-top: 15px;">
+                      <summary>View Technical Details</summary>
+                      <pre><code>${error.message}</code></pre>
+                    </details>
+                  </div>
+                `;
+              } else if (error.message && error.message.includes('insufficient funds')) {
+                // Try to extract gas estimation from error
+                let gasEstimate = 'unknown';
+
+                // Common error patterns
+                const gasMatch = error.message.match(/(\d+)\s*wei/i);
+                if (gasMatch) {
+                  const weiNeeded = gasMatch[1];
+                  const ethNeeded = (parseFloat(weiNeeded) / 1e18).toFixed(6);
+                  gasEstimate = `${ethNeeded} POL (${weiNeeded} wei)`;
+                }
+
+                errorHTML = `
+                  <div class="error">
+                    <h4>💰 Insufficient Funds</h4>
+                    <p>Your rivet wallet does not have enough funds to deploy the Identity Contract.</p>
+
+                    <div class="result-section">
+                      <h5>Rivet Address:</h5>
+                      <p><code>${rivetAddress}</code></p>
+                      <button onclick="navigator.clipboard.writeText('${rivetAddress}').then(() => alert('Address copied to clipboard!'))" class="action-button">📋 Copy Address</button>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Network:</h5>
+                      <p><strong>Chain:</strong> ${witness.serverInfo.provider || 'Unknown'}</p>
+                      <p><strong>Chain ID:</strong> ${witness.serverInfo.chainId || 'Unknown'}</p>
+                      ${gasEstimate !== 'unknown' ? `<p><strong>Estimated Cost:</strong> ~${gasEstimate}</p>` : ''}
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Next Steps:</h5>
+                      <ol>
+                        <li>Copy the rivet address above</li>
+                        <li>Send POL (Polygon Amoy testnet tokens) to this address</li>
+                        <li>Recommended amount: <strong>0.01 POL</strong> (includes gas + buffer)</li>
+                        <li>Wait for transaction confirmation</li>
+                        <li>Click "Deploy Identity Contract" again</li>
+                      </ol>
+                    </div>
+
+                    <details style="margin-top: 15px;">
+                      <summary>View Technical Details</summary>
+                      <pre><code>${error.message}</code></pre>
+                    </details>
+                  </div>
+                `;
+              } else {
+                errorHTML = `
+                  <div class="error">
+                    <h4>Deployment Failed</h4>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+                  </div>
+                `;
+              }
+
+              identityOutput.innerHTML = errorHTML;
+            } finally {
+              deployButton.disabled = false;
+              deployButton.textContent = '🚀 Deploy Identity Contract';
+            }
+          };
+
+          // Generate Join Token
+          generateTokenButton.onclick = async () => {
+            try {
+              generateTokenButton.disabled = true;
+              generateTokenButton.textContent = '⏳ Generating...';
+              identityOutput.innerHTML = '<div class="loading">Generating join token...</div>';
+
+              const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+              const token = await witness.wallet.generateJoinToken(contractAddress, window.ethers);
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>🔗 Join Token Generated!</h4>
+                  <p>Use this token on another device to add that rivet to this identity:</p>
+                  <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
+                  <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                  <p class="warning-text">⚠️ This token expires in 1 hour. Anyone with this token can add a rivet to your identity.</p>
+                </div>
+              `;
+            } catch (error) {
+              identityOutput.innerHTML = `
+                <div class="error">
+                  <h4>Token Generation Failed</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            } finally {
+              generateTokenButton.disabled = false;
+              generateTokenButton.textContent = '🔗 Generate Join Token';
+            }
+          };
+
+          // Show join token input
+          acceptTokenButton.onclick = () => {
+            joinTokenInputSection.style.display = 'block';
+          };
+
+          // Accept join token
+          submitJoinTokenButton.onclick = async () => {
+            try {
+              submitJoinTokenButton.disabled = true;
+              submitJoinTokenButton.textContent = '⏳ Processing...';
+              identityOutput.innerHTML = '<div class="loading">Verifying join token and upgrading rivet...</div>';
+
+              const token = joinTokenInput.value.trim();
+              if (!token) {
+                throw new Error('Please enter a join token');
+              }
+
+              const result = await witness.wallet.acceptJoinToken(token, window.ethers);
+
+              witness.save(); // Save updated wallet
+              updateIdentityStatus();
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>✅ Ready to Join!</h4>
+                  <p>This rivet has been upgraded to use the identity contract.</p>
+                  <p><strong>Your Rivet Address:</strong> <code>${result.myRivetAddress}</code></p>
+                  <button onclick="navigator.clipboard.writeText('${result.myRivetAddress}').then(() => alert('Address copied!'))" class="action-button">📋 Copy Address</button>
+                  <div class="result-section">
+                    <h5>Next Step:</h5>
+                    <p>Go back to your other device and provide this rivet address to complete the join process.</p>
+                    <p>The other device (which deployed the contract) needs to add this address to authorize it.</p>
+                  </div>
+                </div>
+              `;
+
+              joinTokenInput.value = '';
+              joinTokenInputSection.style.display = 'none';
+            } catch (error) {
+              identityOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Accept Token</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            } finally {
+              submitJoinTokenButton.disabled = false;
+              submitJoinTokenButton.textContent = 'Add Rivet to Identity';
+            }
+          };
+
+          // Add rivet to contract
+          const addRivetSection = document.getElementById('add-rivet-section');
+          const addRivetButton = document.getElementById('add-rivet-button');
+          const rivetAddressInput = document.getElementById('rivet-address-input');
+
+          // Show add-rivet section if wallet has a contract
+          if (witness.wallet?.contractAddress) {
+            addRivetSection.style.display = 'block';
+          }
+
+          addRivetButton.onclick = async () => {
+            try {
+              addRivetButton.disabled = true;
+              addRivetButton.textContent = '⏳ Adding...';
+              identityOutput.innerHTML = '<div class="loading">Adding rivet to identity contract...</div>';
+
+              const rivetAddressToAdd = rivetAddressInput.value.trim();
+              if (!rivetAddressToAdd) {
+                throw new Error('Please enter a rivet address');
+              }
+
+              // Validate Ethereum address format
+              if (!/^0x[a-fA-F0-9]{40}$/.test(rivetAddressToAdd)) {
+                throw new Error('Invalid Ethereum address format');
+              }
+
+              const providerConfig = {
+                rpc: witness.serverInfo.rpc,
+                chainId: witness.serverInfo.chainId
+              };
+
+              await witness.wallet.addRivetToContract(rivetAddressToAdd, window.ethers, providerConfig);
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>✅ Rivet Added to Identity!</h4>
+                  <p><strong>Rivet Address:</strong> <code>${rivetAddressToAdd}</code></p>
+                  <p>This rivet is now authorized to use your identity contract.</p>
+                  <p>The other device can now use this identity to interact with Epistery services.</p>
+                </div>
+              `;
+
+              rivetAddressInput.value = '';
+            } catch (error) {
+              identityOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Add Rivet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+                </div>
+              `;
+            } finally {
+              addRivetButton.disabled = false;
+              addRivetButton.textContent = 'Authorize Rivet';
+            }
+          };
+        }
       }
       catch (error) {
         console.error('Failed to initialize Epistery:', error);
@@ -627,6 +962,13 @@
       .action-button:disabled { background-color: #6c757d; cursor: not-allowed; }
       .action-button.danger { background-color: #dc3545; }
       .action-button.danger:hover { background-color: #c82333; }
+
+      /* Identity Contract Styles */
+      .identity-contract-section { background-color: #f0fff4; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #28a745; }
+      .identity-status { background-color: white; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #28a745; }
+      .identity-status code { background-color: #f1f3f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+      .identity-actions { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+      #join-token-input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
   </style>
 </head>
 <body>
@@ -659,6 +1001,35 @@
         </div>
 
         <div id="wallet-management-output"></div>
+    </div>
+
+    <div id="identity-contract-section" class="identity-contract-section" style="display: none;">
+        <h2>Identity Contract</h2>
+        <p><i>Upgrade your rivet to a portable identity that works across devices and browsers.</i></p>
+        <p>An Identity Contract lets you bind multiple rivets together into a single, unified identity.</p>
+
+        <div id="identity-status" class="identity-status"></div>
+
+        <div class="identity-actions">
+            <button id="deploy-identity-button" class="action-button">🚀 Deploy Identity Contract</button>
+            <button id="generate-join-token-button" class="action-button" style="display: none;">🔗 Generate Join Token</button>
+            <button id="accept-join-token-button" class="action-button" style="display: none;">📥 Add Rivet from Token</button>
+        </div>
+
+        <div id="join-token-input-section" style="display: none; margin-top: 20px;">
+            <p><strong>Enter join token from another device:</strong></p>
+            <input type="text" id="join-token-input" class="write-input" placeholder="Paste join token here..." />
+            <button id="submit-join-token-button" class="action-button">Process Join Token</button>
+        </div>
+
+        <div id="add-rivet-section" style="display: none; margin-top: 20px;">
+            <p><strong>Add a rivet address to this identity contract:</strong></p>
+            <p><em>(After another device accepts your join token, paste their rivet address here)</em></p>
+            <input type="text" id="rivet-address-input" class="write-input" placeholder="Paste rivet address (0x...)" />
+            <button id="add-rivet-button" class="action-button">Authorize Rivet</button>
+        </div>
+
+        <div id="identity-output"></div>
     </div>
 
     <div id="export-section" class="export-section" style="display: none;">
