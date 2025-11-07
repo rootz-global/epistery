@@ -493,15 +493,32 @@ export class RivetWallet extends Wallet {
         maxFeePerGasGwei: ethers.utils.formatUnits(maxFeePerGas, 'gwei') + ' Gwei'
       });
 
+      // Manual gas limit since estimation may fail with low balance
+      const gasLimit = ethers.BigNumber.from(750000); // Sufficient for IdentityContract deployment
+
+      // Check if wallet has sufficient balance before attempting deployment
+      const balance = await signer.getBalance();
+      const estimatedCost = gasLimit.mul(maxFeePerGas);
+
+      if (balance.lt(estimatedCost)) {
+        const networkName = providerConfig.networkName || `Chain ID ${providerConfig.chainId}`;
+        const currency = providerConfig.nativeCurrency?.symbol || 'native currency';
+        throw new Error(
+          `Insufficient ${currency} to deploy Identity Contract.\n\n` +
+          `Network: ${networkName}\n` +
+          `Your balance: ${ethers.utils.formatEther(balance)} ${currency}\n` +
+          `Estimated cost: ${ethers.utils.formatEther(estimatedCost)} ${currency}\n` +
+          `Needed: ${ethers.utils.formatEther(estimatedCost.sub(balance))} ${currency} more\n\n` +
+          `Get testnet ${currency} from a faucet or switch to a different network.`
+        );
+      }
+
       // Deploy contract with proper gas settings
       const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, signer);
 
       // For factory.deploy(), overrides must be the LAST parameter
       // Since contract has no constructor args, we still need to pass overrides separately
       const deployTx = factory.getDeployTransaction();
-
-      // Manual gas limit since estimation may fail with low balance
-      const gasLimit = ethers.BigNumber.from(750000); // Sufficient for IdentityContract deployment
 
       const tx = await signer.sendTransaction({
         ...deployTx,

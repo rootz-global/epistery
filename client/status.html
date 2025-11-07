@@ -603,7 +603,9 @@
 
               const providerConfig = {
                 rpc: witness.serverInfo.rpc,
-                chainId: witness.serverInfo.chainId
+                chainId: witness.serverInfo.chainId,
+                networkName: witness.serverInfo.provider,
+                nativeCurrency: witness.serverInfo.nativeCurrency
               };
 
               const contractAddress = await witness.wallet.deployIdentityContract(window.ethers, providerConfig);
