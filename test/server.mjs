@@ -13,6 +13,8 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 async function main() {
   const app = express();
+  app.use(express.urlencoded({extended: true}));
+  app.use(express.json());
 
   // attach Epistery directly to app
   const epistery = await Epistery.connect();
