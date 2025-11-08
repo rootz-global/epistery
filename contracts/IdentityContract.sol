@@ -22,9 +22,12 @@ contract IdentityContract {
     // Mapping to track when each rivet was added
     mapping(address => uint256) public rivetAddedAt;
 
+    // Mapping to store optional friendly names for rivets
+    mapping(address => string) public rivetNames;
+
     // Events
     event IdentityCreated(address indexed owner, address indexed firstRivet, uint256 timestamp);
-    event RivetAdded(address indexed rivet, address indexed addedBy, uint256 timestamp);
+    event RivetAdded(address indexed rivet, address indexed addedBy, string name, uint256 timestamp);
     event RivetRemoved(address indexed rivet, address indexed removedBy, uint256 timestamp);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner, uint256 timestamp);
 
@@ -50,19 +53,21 @@ contract IdentityContract {
     }
 
     /**
-     * @dev Adds a new rivet to the identity
+     * @dev Adds a new rivet to the identity with an optional name
      * Can only be called by an already-authorized rivet
      * @param rivet The address of the rivet to add
+     * @param name Optional friendly name for the rivet (e.g., "chrome-ubuntu on rhonda.help")
      */
-    function addRivet(address rivet) external onlyAuthorized {
+    function addRivet(address rivet, string memory name) external onlyAuthorized {
         require(rivet != address(0), "Rivet address cannot be zero");
         require(!isAuthorized[rivet], "Rivet is already authorized");
 
         authorizedRivets.push(rivet);
         isAuthorized[rivet] = true;
         rivetAddedAt[rivet] = block.timestamp;
+        rivetNames[rivet] = name;
 
-        emit RivetAdded(rivet, msg.sender, block.timestamp);
+        emit RivetAdded(rivet, msg.sender, name, block.timestamp);
     }
 
     /**
@@ -75,9 +80,10 @@ contract IdentityContract {
         require(isAuthorized[rivet], "Rivet is not authorized");
         require(authorizedRivets.length > 1, "Cannot remove the last rivet");
 
-        // Remove from mapping
+        // Remove from mappings
         isAuthorized[rivet] = false;
         delete rivetAddedAt[rivet];
+        delete rivetNames[rivet];
 
         // Remove from array by swapping with last element and popping
         for (uint256 i = 0; i < authorizedRivets.length; i++) {
@@ -97,6 +103,22 @@ contract IdentityContract {
      */
     function getRivets() external view returns (address[] memory) {
         return authorizedRivets;
+    }
+
+    /**
+     * @dev Returns all authorized rivet addresses with their names
+     * @return addresses Array of rivet addresses
+     * @return names Array of rivet names (corresponding to addresses)
+     */
+    function getRivetsWithNames() external view returns (address[] memory addresses, string[] memory names) {
+        addresses = authorizedRivets;
+        names = new string[](authorizedRivets.length);
+
+        for (uint256 i = 0; i < authorizedRivets.length; i++) {
+            names[i] = rivetNames[authorizedRivets[i]];
+        }
+
+        return (addresses, names);
     }
 
     /**

@@ -629,6 +629,48 @@ export class RivetWallet extends Wallet {
   }
 
   /**
+   * Static helper: Generates a rivet name based on browser, OS, and hostname
+   * Format: "browser-os on hostname" (e.g., "chrome-ubuntu on rhonda.help")
+   * @returns {string} Generated rivet name
+   */
+  static generateRivetName() {
+    // Detect browser
+    const userAgent = navigator.userAgent.toLowerCase();
+    let browser = 'unknown';
+
+    if (userAgent.includes('chrome') && !userAgent.includes('edg')) {
+      browser = 'chrome';
+    } else if (userAgent.includes('firefox')) {
+      browser = 'firefox';
+    } else if (userAgent.includes('safari') && !userAgent.includes('chrome')) {
+      browser = 'safari';
+    } else if (userAgent.includes('edg')) {
+      browser = 'edge';
+    } else if (userAgent.includes('opr') || userAgent.includes('opera')) {
+      browser = 'opera';
+    }
+
+    // Detect OS
+    let os = 'unknown';
+    if (userAgent.includes('win')) {
+      os = 'windows';
+    } else if (userAgent.includes('mac')) {
+      os = 'macos';
+    } else if (userAgent.includes('linux')) {
+      os = 'linux';
+    } else if (userAgent.includes('android')) {
+      os = 'android';
+    } else if (userAgent.includes('iphone') || userAgent.includes('ipad')) {
+      os = 'ios';
+    }
+
+    // Get hostname
+    const hostname = window.location.hostname;
+
+    return `${browser}-${os} on ${hostname}`;
+  }
+
+  /**
    * Static helper: Fetches a rivet address from a website URL
    * Queries the site's /.well-known/epistery endpoint to get the rivet address
    * @param {string} url - The website URL (can be with or without https://)
@@ -673,9 +715,10 @@ export class RivetWallet extends Wallet {
    * @param {string} rivetAddressToAdd - The rivet address to add
    * @param {ethers} ethers - ethers.js instance
    * @param {object} providerConfig - Provider configuration with rpc
+   * @param {string} rivetName - Optional name for the rivet (auto-generated if not provided)
    * @returns {Promise<void>}
    */
-  async addRivetToContract(rivetAddressToAdd, ethers, providerConfig) {
+  async addRivetToContract(rivetAddressToAdd, ethers, providerConfig, rivetName = '') {
     try {
       if (!this.contractAddress) {
         throw new Error('This rivet is not part of an identity contract');
@@ -726,15 +769,18 @@ export class RivetWallet extends Wallet {
       // Connect to the identity contract
       const contract = new ethers.Contract(this.contractAddress, artifact.abi, signer);
 
-      // Add the rivet to the identity contract
-      const tx = await contract.addRivet(rivetAddressToAdd, {
+      // Generate name if not provided (empty string is considered "not provided")
+      const finalRivetName = rivetName || RivetWallet.generateRivetName();
+
+      // Add the rivet to the identity contract with name
+      const tx = await contract.addRivet(rivetAddressToAdd, finalRivetName, {
         maxPriorityFeePerGas,
         maxFeePerGas,
         gasLimit: ethers.BigNumber.from(100000) // Manual gas limit
       });
       await tx.wait();
 
-      console.log('Rivet added to identity contract:', rivetAddressToAdd);
+      console.log('Rivet added to identity contract:', rivetAddressToAdd, 'with name:', finalRivetName);
     } catch (error) {
       console.error('Failed to add rivet to contract:', error);
       throw error;
@@ -742,10 +788,10 @@ export class RivetWallet extends Wallet {
   }
 
   /**
-   * Gets all authorized rivets from the identity contract
+   * Gets all authorized rivets from the identity contract with their names
    * @param {ethers} ethers - ethers.js instance
    * @param {object} providerConfig - Provider configuration with rpc
-   * @returns {Promise<string[]>} Array of rivet addresses
+   * @returns {Promise<Array<{address: string, name: string}>>} Array of rivets with addresses and names
    */
   async getRivetsInContract(ethers, providerConfig) {
     try {
@@ -762,10 +808,14 @@ export class RivetWallet extends Wallet {
       // Connect to the identity contract (read-only, no signer needed)
       const contract = new ethers.Contract(this.contractAddress, artifact.abi, provider);
 
-      // Call getRivets() from the smart contract
-      const rivets = await contract.getRivets();
+      // Call getRivetsWithNames() from the smart contract
+      const [addresses, names] = await contract.getRivetsWithNames();
 
-      return rivets;
+      // Combine addresses and names into objects
+      return addresses.map((address, index) => ({
+        address: address,
+        name: names[index] || 'Unnamed Rivet'
+      }));
     } catch (error) {
       console.error('Failed to get rivets from contract:', error);
       throw error;

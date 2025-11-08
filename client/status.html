@@ -597,12 +597,13 @@
                   const rivets = await witness.wallet.getRivetsInContract(window.ethers, providerConfig);
 
                   let rivetsListHTML = '';
-                  rivets.forEach((rivetAddr, index) => {
-                    const isCurrentRivet = rivetAddr.toLowerCase() === (witness.wallet.rivetAddress || witness.wallet.address).toLowerCase();
+                  rivets.forEach((rivet, index) => {
+                    const isCurrentRivet = rivet.address.toLowerCase() === (witness.wallet.rivetAddress || witness.wallet.address).toLowerCase();
                     rivetsListHTML += `
                       <tr ${isCurrentRivet ? 'class="current-rivet"' : ''}>
                         <td>${index + 1}</td>
-                        <td><code>${rivetAddr}</code></td>
+                        <td><strong>${rivet.name || 'Unnamed Rivet'}</strong></td>
+                        <td><code>${rivet.address}</code></td>
                         <td>${isCurrentRivet ? '<strong>(This Device)</strong>' : ''}</td>
                       </tr>
                     `;
@@ -615,6 +616,7 @@
                       <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
                         <tr style="background-color: #007bff; color: white;">
                           <th style="padding: 10px; text-align: left;">#</th>
+                          <th style="padding: 10px; text-align: left;">Name</th>
                           <th style="padding: 10px; text-align: left;">Rivet Address</th>
                           <th style="padding: 10px; text-align: left;">Status</th>
                         </tr>
