@@ -808,14 +808,26 @@ export class RivetWallet extends Wallet {
       // Connect to the identity contract (read-only, no signer needed)
       const contract = new ethers.Contract(this.contractAddress, artifact.abi, provider);
 
-      // Call getRivetsWithNames() from the smart contract
-      const [addresses, names] = await contract.getRivetsWithNames();
+      try {
+        // Try to call getRivetsWithNames() (new contract version)
+        const [addresses, names] = await contract.getRivetsWithNames();
 
-      // Combine addresses and names into objects
-      return addresses.map((address, index) => ({
-        address: address,
-        name: names[index] || 'Unnamed Rivet'
-      }));
+        // Combine addresses and names into objects
+        return addresses.map((address, index) => ({
+          address: address,
+          name: names[index] || 'Unnamed Rivet'
+        }));
+      } catch (error) {
+        // Fallback to getRivets() for old contracts that don't have names
+        console.warn('Contract does not support getRivetsWithNames(), falling back to getRivets()');
+        const addresses = await contract.getRivets();
+
+        // Return addresses with default names
+        return addresses.map((address) => ({
+          address: address,
+          name: 'Unnamed Rivet (old contract)'
+        }));
+      }
     } catch (error) {
       console.error('Failed to get rivets from contract:', error);
       throw error;
