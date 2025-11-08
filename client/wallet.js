@@ -548,15 +548,17 @@ export class RivetWallet extends Wallet {
   }
 
   /**
-   * Generates a join token - this creates an INVITATION for another rivet to request joining
-   * The new rivet will provide its address, and this rivet (already in the contract) will add it
+   * Generates a join token bound to a specific target rivet address
+   * This creates a secure invitation that can only be used by the specified rivet
+   * @param {string} targetRivetAddress - The rivet address that will use this token
    * @param {string} contractAddress - The identity contract address
    * @param {ethers} ethers - ethers.js instance
    * @returns {Promise<string>} Join token (base64-encoded JSON)
    */
-  async generateJoinToken(contractAddress, ethers) {
+  async generateJoinToken(targetRivetAddress, contractAddress, ethers) {
     const payload = {
       contractAddress,
+      targetRivetAddress, // Token is bound to this specific address
       inviterRivetAddress: this.rivetAddress || this.address,
       timestamp: Date.now(),
       expiresAt: Date.now() + 3600000 // 1 hour
@@ -577,7 +579,7 @@ export class RivetWallet extends Wallet {
 
   /**
    * Accepts a join token - verifies the invitation and upgrades this rivet to use that contract
-   * Returns this rivet's address so the inviter can add it to the contract
+   * Verifies that the token was generated specifically for this rivet's address
    * @param {string} joinToken - The join token from another rivet (base64-encoded)
    * @param {ethers} ethers - ethers.js instance
    * @returns {Promise<{contractAddress: string, myRivetAddress: string}>}
@@ -593,6 +595,14 @@ export class RivetWallet extends Wallet {
         throw new Error('Join token has expired');
       }
 
+      // Get current rivet address
+      const myRivetAddress = this.rivetAddress || this.address;
+
+      // SECURITY: Verify this token was generated for THIS rivet's address
+      if (payload.targetRivetAddress.toLowerCase() !== myRivetAddress.toLowerCase()) {
+        throw new Error('This join token was not generated for your rivet address. Token is bound to: ' + payload.targetRivetAddress);
+      }
+
       // The contract we're joining (from the token)
       const targetContract = payload.contractAddress;
 
@@ -606,7 +616,6 @@ export class RivetWallet extends Wallet {
       // Upgrade this rivet to use the contract as its identity
       this.upgradeToContract(targetContract);
 
-      const myRivetAddress = this.rivetAddress || this.address;
       console.log('Rivet ready to join identity contract:', myRivetAddress);
 
       return {
@@ -616,6 +625,46 @@ export class RivetWallet extends Wallet {
     } catch (error) {
       console.error('Failed to accept join token:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Static helper: Fetches a rivet address from a website URL
+   * Queries the site's /.well-known/epistery endpoint to get the rivet address
+   * @param {string} url - The website URL (can be with or without https://)
+   * @returns {Promise<string>} The rivet address for that website
+   */
+  static async getRivetAddressFromURL(url) {
+    try {
+      // Normalize URL - ensure it has a protocol
+      let normalizedURL = url.trim();
+      if (!normalizedURL.startsWith('http://') && !normalizedURL.startsWith('https://')) {
+        normalizedURL = `https://${normalizedURL}`;
+      }
+
+      // Remove trailing slash if present
+      normalizedURL = normalizedURL.replace(/\/$/, '');
+
+      // Fetch epistery status from the site
+      const response = await fetch(`${normalizedURL}/.well-known/epistery`);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch epistery info from ${normalizedURL}. Status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // The rivet address should be in client.walletAddress
+      const rivetAddress = data.client?.walletAddress;
+
+      if (!rivetAddress) {
+        throw new Error(`No rivet address found at ${normalizedURL}. The site may not have Epistery enabled or no rivet is connected.`);
+      }
+
+      return rivetAddress;
+    } catch (error) {
+      console.error('Failed to get rivet address from URL:', error);
+      throw new Error(`Unable to get rivet address from "${url}": ${error.message}`);
     }
   }
 
@@ -693,6 +742,37 @@ export class RivetWallet extends Wallet {
   }
 
   /**
+   * Gets all authorized rivets from the identity contract
+   * @param {ethers} ethers - ethers.js instance
+   * @param {object} providerConfig - Provider configuration with rpc
+   * @returns {Promise<string[]>} Array of rivet addresses
+   */
+  async getRivetsInContract(ethers, providerConfig) {
+    try {
+      if (!this.contractAddress) {
+        throw new Error('This rivet is not part of an identity contract');
+      }
+
+      const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
+
+      // Load contract artifact
+      const response = await fetch('/.well-known/epistery/artifacts/IdentityContract.json');
+      const artifact = await response.json();
+
+      // Connect to the identity contract (read-only, no signer needed)
+      const contract = new ethers.Contract(this.contractAddress, artifact.abi, provider);
+
+      // Call getRivets() from the smart contract
+      const rivets = await contract.getRivets();
+
+      return rivets;
+    } catch (error) {
+      console.error('Failed to get rivets from contract:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Upgrades this rivet to use an identity contract
    * Updates the wallet to present the contract address instead of rivet address
    * @param {string} contractAddress - The deployed identity contract address
@@ -708,4 +788,9 @@ export class RivetWallet extends Wallet {
     this.type = 'Contract';
     this.lastUpdated = Date.now();
   }
+}
+
+// Expose RivetWallet globally for browser access
+if (typeof window !== 'undefined') {
+  window.RivetWallet = RivetWallet;
 }

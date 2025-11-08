@@ -575,10 +575,72 @@
                 <p><strong>Contract Address:</strong> <code>${wallet.contractAddress}</code></p>
                 <p><strong>Rivet Address:</strong> <code>${wallet.rivetAddress || wallet.address}</code></p>
                 <p><strong>Type:</strong> ${wallet.type}</p>
+                <button id="view-rivets-button" class="action-button" style="margin-top: 10px;">👥 View All Rivets</button>
               `;
               deployButton.style.display = 'none';
               generateTokenButton.style.display = 'inline-block';
               acceptTokenButton.style.display = 'inline-block';
+
+              // Add event listener for view rivets button
+              document.getElementById('view-rivets-button').onclick = async () => {
+                try {
+                  const viewButton = document.getElementById('view-rivets-button');
+                  viewButton.disabled = true;
+                  viewButton.textContent = '⏳ Loading...';
+                  identityOutput.innerHTML = '<div class="loading">Fetching rivets from blockchain...</div>';
+
+                  const providerConfig = {
+                    rpc: witness.serverInfo.rpc,
+                    chainId: witness.serverInfo.chainId
+                  };
+
+                  const rivets = await witness.wallet.getRivetsInContract(window.ethers, providerConfig);
+
+                  let rivetsListHTML = '';
+                  rivets.forEach((rivetAddr, index) => {
+                    const isCurrentRivet = rivetAddr.toLowerCase() === (witness.wallet.rivetAddress || witness.wallet.address).toLowerCase();
+                    rivetsListHTML += `
+                      <tr ${isCurrentRivet ? 'class="current-rivet"' : ''}>
+                        <td>${index + 1}</td>
+                        <td><code>${rivetAddr}</code></td>
+                        <td>${isCurrentRivet ? '<strong>(This Device)</strong>' : ''}</td>
+                      </tr>
+                    `;
+                  });
+
+                  identityOutput.innerHTML = `
+                    <div class="success">
+                      <h4>👥 Authorized Rivets</h4>
+                      <p>Found <strong>${rivets.length}</strong> rivet(s) authorized to use this identity:</p>
+                      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                        <tr style="background-color: #007bff; color: white;">
+                          <th style="padding: 10px; text-align: left;">#</th>
+                          <th style="padding: 10px; text-align: left;">Rivet Address</th>
+                          <th style="padding: 10px; text-align: left;">Status</th>
+                        </tr>
+                        ${rivetsListHTML}
+                      </table>
+                      <style>
+                        .current-rivet { background-color: #d4edda; }
+                        table tr:not(:first-child) { border-bottom: 1px solid #dee2e6; }
+                        table td { padding: 10px; }
+                      </style>
+                    </div>
+                  `;
+
+                  viewButton.disabled = false;
+                  viewButton.textContent = '👥 View All Rivets';
+                } catch (error) {
+                  identityOutput.innerHTML = `
+                    <div class="error">
+                      <h4>Failed to Load Rivets</h4>
+                      <p><strong>Error:</strong> ${error.message}</p>
+                    </div>
+                  `;
+                  document.getElementById('view-rivets-button').disabled = false;
+                  document.getElementById('view-rivets-button').textContent = '👥 View All Rivets';
+                }
+              };
             } else {
               identityStatus.innerHTML = `
                 <h4>📱 Rivet Wallet</h4>
@@ -738,36 +800,88 @@
             }
           };
 
-          // Generate Join Token
+          // Add Rivet to Identity (new secure flow)
           generateTokenButton.onclick = async () => {
-            try {
-              generateTokenButton.disabled = true;
-              generateTokenButton.textContent = '⏳ Generating...';
-              identityOutput.innerHTML = '<div class="loading">Generating join token...</div>';
+            // Show input form for URL or address
+            identityOutput.innerHTML = `
+              <div class="input-section">
+                <h4>➕ Add Rivet to Identity</h4>
+                <p>Enter the website URL or rivet address of the device you want to add:</p>
+                <input type="text" id="rivet-target-input"
+                  placeholder="e.g., localhost:3000 or 0x742d35..."
+                  style="width: 100%; padding: 10px; margin: 10px 0; font-family: monospace;">
+                <p class="info-text">
+                  💡 <strong>Tip:</strong> Enter a website URL to automatically fetch that site's rivet address,
+                  or paste the rivet address directly.
+                </p>
+                <button id="submit-target-button" class="action-button">🔗 Generate Token & Authorize</button>
+                <button onclick="document.getElementById('identity-output').innerHTML = ''" class="action-button" style="background: #666;">Cancel</button>
+              </div>
+            `;
 
-              const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
-              const token = await witness.wallet.generateJoinToken(contractAddress, window.ethers);
+            // Handle the submit
+            document.getElementById('submit-target-button').onclick = async () => {
+              try {
+                const submitButton = document.getElementById('submit-target-button');
+                const targetInput = document.getElementById('rivet-target-input').value.trim();
 
-              identityOutput.innerHTML = `
-                <div class="success">
-                  <h4>🔗 Join Token Generated!</h4>
-                  <p>Use this token on another device to add that rivet to this identity:</p>
-                  <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
-                  <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
-                  <p class="warning-text">⚠️ This token expires in 1 hour. Anyone with this token can add a rivet to your identity.</p>
-                </div>
-              `;
-            } catch (error) {
-              identityOutput.innerHTML = `
-                <div class="error">
-                  <h4>Token Generation Failed</h4>
-                  <p><strong>Error:</strong> ${error.message}</p>
-                </div>
-              `;
-            } finally {
-              generateTokenButton.disabled = false;
-              generateTokenButton.textContent = '🔗 Generate Join Token';
-            }
+                if (!targetInput) {
+                  throw new Error('Please enter a URL or rivet address');
+                }
+
+                submitButton.disabled = true;
+                submitButton.textContent = '⏳ Processing...';
+
+                // Determine if input is a URL or address
+                let targetAddress;
+                const isAddress = /^0x[a-fA-F0-9]{40}$/.test(targetInput);
+
+                if (isAddress) {
+                  targetAddress = targetInput;
+                  identityOutput.innerHTML = '<div class="loading">Using provided rivet address...</div>';
+                } else {
+                  // It's a URL - fetch the rivet address
+                  identityOutput.innerHTML = `<div class="loading">Fetching rivet address from ${targetInput}...</div>`;
+                  targetAddress = await window.RivetWallet.getRivetAddressFromURL(targetInput);
+                }
+
+                // Generate token bound to this specific address
+                identityOutput.innerHTML = '<div class="loading">Generating join token for: ' + targetAddress + '</div>';
+                const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+                const token = await witness.wallet.generateJoinToken(targetAddress, contractAddress, window.ethers);
+
+                // Immediately authorize the rivet on-chain
+                identityOutput.innerHTML = '<div class="loading">Authorizing rivet on blockchain...</div>';
+                const providerConfig = {
+                  rpc: witness.serverInfo.rpc,
+                  chainId: witness.serverInfo.chainId
+                };
+                await witness.wallet.addRivetToContract(targetAddress, window.ethers, providerConfig);
+
+                // Success - show the token
+                identityOutput.innerHTML = `
+                  <div class="success">
+                    <h4>✅ Rivet Authorized!</h4>
+                    <p><strong>Target Rivet:</strong> <code>${targetAddress}</code></p>
+                    <p>The rivet has been authorized on the blockchain. Now send this token to the other device:</p>
+                    <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
+                    <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                    <p class="info-text">
+                      The other device should use "Add Rivet from Token" to accept this invitation.
+                      Token expires in 1 hour and can only be used by the target rivet.
+                    </p>
+                  </div>
+                `;
+              } catch (error) {
+                identityOutput.innerHTML = `
+                  <div class="error">
+                    <h4>Failed to Add Rivet</h4>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <button onclick="document.getElementById('generate-join-token-button').click()" class="action-button">Try Again</button>
+                  </div>
+                `;
+              }
+            };
           };
 
           // Show join token input
@@ -852,14 +966,28 @@
                 chainId: witness.serverInfo.chainId
               };
 
+              // Step 1: Authorize the rivet on-chain
+              identityOutput.innerHTML = '<div class="loading">Authorizing rivet on blockchain...</div>';
               await witness.wallet.addRivetToContract(rivetAddressToAdd, window.ethers, providerConfig);
 
+              // Step 2: Generate join token for the rivet
+              identityOutput.innerHTML = '<div class="loading">Generating join token...</div>';
+              const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+              const token = await witness.wallet.generateJoinToken(rivetAddressToAdd, contractAddress, window.ethers);
+
+              // Step 3: Display success with token
               identityOutput.innerHTML = `
                 <div class="success">
-                  <h4>✅ Rivet Added to Identity!</h4>
+                  <h4>✅ Rivet Authorized!</h4>
                   <p><strong>Rivet Address:</strong> <code>${rivetAddressToAdd}</code></p>
-                  <p>This rivet is now authorized to use your identity contract.</p>
-                  <p>The other device can now use this identity to interact with Epistery services.</p>
+                  <p>The rivet has been authorized on the blockchain. Send this token to the other device to complete the join:</p>
+                  <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
+                  <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                  <div class="result-section">
+                    <h5>Next Step:</h5>
+                    <p>On the other device, go to the status page and click <strong>"📥 Add Rivet from Token"</strong>, then paste this token to complete the join process.</p>
+                    <p class="info-text">Token expires in 1 hour and can only be used by the authorized rivet.</p>
+                  </div>
                 </div>
               `;
 
