@@ -222,18 +222,11 @@ class EpisteryAttach {
         if (this.options.authentication) {
           clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
           clientInfo.authenticated = !!clientInfo.profile;
-          console.log('[epistery] Authentication result:', {
-            address: clientInfo.address,
-            hasProfile: !!clientInfo.profile,
-            authenticated: clientInfo.authenticated,
-            hasCallback: !!this.options.onAuthenticated
-          });
         }
         req.episteryClient = clientInfo;
 
         // Call onAuthenticated hook if provided
         if (this.options.onAuthenticated && clientInfo.authenticated) {
-          console.log('[epistery] Calling onAuthenticated callback');
           await this.options.onAuthenticated(clientInfo, req, res);
         }
 
@@ -321,12 +314,7 @@ class EpisteryAttach {
         const domain = req.hostname;
         const { provider } = req.body;
 
-        console.log(`[debug] Domain initialization request for: ${domain}`);
-        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
-        console.log(`[debug] Full request body:`, JSON.stringify(req.body, null, 2));
-
         if (!provider || !provider.name || !provider.chainId || !provider.rpc) {
-          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpc=${!!provider?.rpc}`);
           return res.status(400).json({ error: 'Invalid provider configuration' });
         }
 
@@ -345,7 +333,6 @@ class EpisteryAttach {
 
         // Save domain config with custom provider (marked as pending)
         config.save();
-        console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
 
         res.json({ status: 'success', message: 'Domain initialized with custom provider' });
 
