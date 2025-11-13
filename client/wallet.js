@@ -330,6 +330,13 @@ export class RivetWallet extends Wallet {
     }
   }
 
+  /**
+    * Signs a message only (client-side)
+    *
+    * @param {object} message - blob of data to sign
+    * @param {ethers} ethers - ethers.js instance
+    * @returns {Promise<string>} Signed message as hex string
+    */
   async sign(message, ethers) {
     try {
       // Retrieve master key from IndexedDB
@@ -361,6 +368,60 @@ export class RivetWallet extends Wallet {
       return signature;
     } catch (error) {
       console.error('Failed to sign message with rivet:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Signs a complete transaction
+   *
+   * This is the core of client-side signing for RivetWallet.
+   * The private key is temporarily decrypted, used to sign, then discarded.
+   *
+   * @param {object} unsignedTx - Unsigned transaction object from server
+   * @param {ethers} ethers - ethers.js instance
+   * @returns {Promise<string>} Signed transaction as hex string
+   */
+  async signTransaction(unsignedTx, ethers) {
+    try {
+      console.log('RivetWallet: Signing transaction');
+
+      const masterKey = await RivetWallet.getMasterKey(this.keyId);
+      if (!masterKey) {
+        throw new Error('Master key not found - rivet may have been created in a different browser context');
+      }
+
+      const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
+      const encryptedBytes = ethers.utils.arrayify(encrypted);
+      const ivBytes = ethers.utils.arrayify(iv);
+
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: ivBytes
+        },
+        masterKey,
+        encryptedBytes
+      );
+
+      const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
+
+      // NOTE: This wallet object exists only in this function scope.
+      // When the function returns, the wallet and privateKey are garbage collected.
+      const signer = new ethers.Wallet(privateKey);
+
+      // Validate that our address matches
+      if (signer.address.toLowerCase() !== this.address.toLowerCase()) {
+        throw new Error('Decrypted key does not match rivet address');
+      }
+
+      const signedTx = await signer.signTransaction(unsignedTx);
+
+      console.log('RivetWallet: Transaction signed successfully');
+      return signedTx;
+    }
+    catch (error) {
+      console.error('Failed to sign transaction with rivet:', error);
       throw error;
     }
   }
@@ -484,14 +545,6 @@ export class RivetWallet extends Wallet {
       if (feeData.maxFeePerGas && feeData.maxFeePerGas.gte(minPriorityFee)) {
         maxFeePerGas = feeData.maxFeePerGas;
       }
-
-      console.log('Raw feeData from network:', feeData);
-      console.log('Calculated gas settings:', {
-        maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
-        maxPriorityFeePerGasGwei: ethers.utils.formatUnits(maxPriorityFeePerGas, 'gwei') + ' Gwei',
-        maxFeePerGas: maxFeePerGas.toString(),
-        maxFeePerGasGwei: ethers.utils.formatUnits(maxFeePerGas, 'gwei') + ' Gwei'
-      });
 
       // Manual gas limit since estimation may fail with low balance
       const gasLimit = ethers.BigNumber.from(750000); // Sufficient for IdentityContract deployment

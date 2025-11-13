@@ -144,7 +144,10 @@
               url: location.href
             });
 
-            writeOutput.innerHTML = `
+            // Handle both old (server-side signing) and new (client-side signing) response structures
+            const isClientSideSigning = result.transactionHash && !result.signature;
+
+            let outputHTML = `
               <div class="success">
                 <h4>Write Successful!</h4>
                 <div class="result-section">
@@ -152,30 +155,64 @@
                   <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
                   <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
                 </div>
+            `;
+
+            if (isClientSideSigning) {
+              // New client-side signing flow
+              outputHTML += `
+                <div class="result-section">
+                  <h5>Blockchain Transaction:</h5>
+                  <p><strong>Transaction Hash:</strong> <code>${result.transactionHash}</code></p>
+                  <p><strong>Block Number:</strong> ${result.blockNumber}</p>
+                  <p><strong>Gas Used:</strong> ${result.gasUsed}</p>
+                  <p><strong>Status:</strong> ${result.status === 1 ? '✅ Success' : '❌ Reverted'}</p>
+                </div>
+                <div class="result-section">
+                  <h5>Client Info:</h5>
+                  <p><strong>Client Address:</strong> <code>${witness.wallet.address}</code></p>
+                  <p><strong>Wallet Type:</strong> ${witness.wallet.source} (client-side signing)</p>
+                </div>
+              `;
+            } else {
+              // Old server-side signing flow
+              outputHTML += `
                 <div class="result-section">
                   <h5>Cryptographic Proof:</h5>
-                  <p><strong>Message Hash:</strong> <code>${result.messageHash}</code></p>
-                  <p><strong>Signature:</strong> <code>${result.signature}</code></p>
-                  <p><strong>Signed By:</strong> <code>${result.signedBy}</code></p>
+                  <p><strong>Message Hash:</strong> <code>${result.messageHash || 'N/A'}</code></p>
+                  <p><strong>Signature:</strong> <code>${result.signature || 'N/A'}</code></p>
+                  <p><strong>Signed By:</strong> <code>${result.signedBy || 'N/A'}</code></p>
                 </div>
                 <div class="result-section">
                   <h5>Metadata:</h5>
-                  <p><strong>Timestamp:</strong> ${result.timestamp}</p>
-                  <p><strong>Client Address:</strong> <code>${result.client.address}</code></p>
-                  <p><strong>Server Domain:</strong> ${result.server.domain}</p>
+                  <p><strong>Timestamp:</strong> ${result.timestamp || 'N/A'}</p>
+                  <p><strong>Client Address:</strong> <code>${result.client?.address || witness.wallet.address}</code></p>
+                  <p><strong>Server Domain:</strong> ${result.server?.domain || 'N/A'}</p>
                 </div>
+              `;
+            }
+
+            // Show raw data if available
+            if (result.data) {
+              outputHTML += `
                 <div class="result-section">
                   <h5>Raw Data:</h5>
                   <pre><code>${JSON.stringify(result.data, null, 2)}</code></pre>
                 </div>
-                ${result.aquaTree ? `
+              `;
+            }
+
+            // Show Aqua Tree if available
+            if (result.aquaTree) {
+              outputHTML += `
                 <div class="result-section">
                   <h5>Aqua Tree:</h5>
                   <pre><code>${JSON.stringify(result.aquaTree, null, 2)}</code></pre>
                 </div>
-                ` : ''}
-              </div>
-            `;
+              `;
+            }
+
+            outputHTML += `</div>`;
+            writeOutput.innerHTML = outputHTML;
 
             writeInput.value = '';
           }
@@ -1481,10 +1518,10 @@
         <div id="transfer-output"></div>
     </div>
 
-    <h2>Approval System Test</h2>
+    <h2>Request System Test</h2>
     <div class="approval-section">
         <h3>Create Request</h3>
-        <p>Request approval from another wallet address for a file:</p>
+        <p>Request review from another wallet address for a file:</p>
         <input type="text" id="approval-approver-input" class="approval-input" placeholder="Approver Address (0x...)" />
         <input type="file" id="approval-file-input" class="approval-input" />
         <input type="text" id="approval-domain-input" class="approval-input" placeholder="Domain (e.g., localhost)" value="localhost" />
@@ -1493,16 +1530,16 @@
     </div>
 
     <div class="approval-section" style="margin-top: 20px; background-color: #fff3e0; border: 2px solid #ff9800;">
-        <h3>Get All My Requests (As Requestor)</h3>
-        <p>Retrieve all requests you have made to approvers:</p>
-        <button id="get-all-requestor-button" class="approval-button" style="background-color: #ff9800;">Get All My Requests</button>
+        <h3>Get My Requests</h3>
+        <p>Retrieve all requests you have made to reviewers:</p>
+        <button id="get-all-requestor-button" class="approval-button" style="background-color: #ff9800;">Get My Requests</button>
         <div id="get-all-requestor-output"></div>
     </div>
 
     <div class="approval-section" style="margin-top: 20px; background-color: #e8f5e9; border: 2px solid #4caf50;">
-        <h3>Get All My Requests (As Approver)</h3>
-        <p>Retrieve all requests where you are the approver:</p>
-        <button id="get-all-approvals-button" class="approval-button" style="background-color: #4caf50;">Get All My Requests</button>
+        <h3>Get Pending Requests</h3>
+        <p>Retrieve all requests where you are the reviewer:</p>
+        <button id="get-all-approvals-button" class="approval-button" style="background-color: #4caf50;">Get Pending Requests</button>
         <div id="get-all-approvals-output"></div>
     </div>
 

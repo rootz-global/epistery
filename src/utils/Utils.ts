@@ -129,7 +129,7 @@ export class Utils {
     return this.config.data;
   }
 
-  public static async ReadFromContract(clientWallet: Wallet): Promise<any> {
+  public static async ReadFromContract(provider: ethers.providers.Provider, clientAddress: string): Promise<any> {
     try {
       const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
@@ -139,10 +139,12 @@ export class Utils {
       const agentContract = new ethers.Contract(
         agentContractAddress,
         AgentArtifact.abi,
-        clientWallet
+        provider
       );
 
-      const ipfsHashes = await agentContract.read();
+      // Use callStatic to simulate calling from the client's address
+      // This works for view functions without needing a private key
+      const ipfsHashes = await agentContract.callStatic.read({ from: clientAddress });
 
       if (!ipfsHashes || ipfsHashes.length === 0) {
         console.log('No data found for this address');
@@ -475,6 +477,69 @@ export class Utils {
   }
 
   /**
+   * Ensure an address has enough funds for an operation
+   *
+   * This is the client-side signing version of EnsureFunded.
+   * It doesn't need the client's private key, only their address.
+   *
+   * @param serverWallet - Wallet to fund from
+   * @param clientAddress - Address to check/fund (NOT a wallet object)
+   * @param operationGasEstimate - Estimated gas for the operation
+   * @param value - Optional value the client needs to send (default 0)
+   * @returns True if address has or was given enough funds
+   */
+  public static async EnsureFundedByAddress(
+    serverWallet: Wallet,
+    clientAddress: string,
+    operationGasEstimate: ethers.BigNumber,
+    value: BigNumberish = 0
+  ): Promise<boolean> {
+    try {
+      const provider = serverWallet.provider!;
+      const balance = await provider.getBalance(clientAddress);
+
+      // Calculate total needed
+      const gasPrice = await this.getGasPriceWithBuffer(serverWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+      const gasLimit = this.addGasBuffer(operationGasEstimate, Utils.GAS_LIMIT_BUFFER_PERCENT);
+      const totalNeeded = this.calculateTotalCost(gasLimit, gasPrice, value);
+
+      // Check if already has enough
+      if (balance.gte(totalNeeded)) {
+        const chainId = await provider.getNetwork().then(n => n.chainId);
+        const currencySymbol = chainId === Utils.POLYGON_MAINNET_CHAIN_ID || chainId === Utils.POLYGON_AMOY_CHAIN_ID ? 'MATIC' : 'ETH';
+        console.log(`Address ${clientAddress} has sufficient funds (${ethers.utils.formatEther(balance)} ${currencySymbol})`);
+        return true;
+      }
+
+      console.log(`Address ${clientAddress} needs funding...`);
+
+      // Calculate funding amount with safety buffer
+      const fundingAmount = totalNeeded.mul(100 + Utils.FUNDING_SAFETY_BUFFER_PERCENT).div(100);
+
+      const chainId = await provider.getNetwork().then(n => n.chainId);
+      const currencySymbol = chainId === Utils.POLYGON_MAINNET_CHAIN_ID || chainId === Utils.POLYGON_AMOY_CHAIN_ID ? 'MATIC' : 'ETH';
+      console.log(`Funding address with ${ethers.utils.formatEther(fundingAmount)} ${currencySymbol}`);
+
+      // Fund the address directly (no wallet object needed)
+      const tx = await serverWallet.sendTransaction({
+        to: clientAddress,
+        value: fundingAmount,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100),  // Simple transfer
+        gasPrice: gasPrice
+      });
+
+      console.log(`Funding transaction sent: ${tx.hash}`);
+      const receipt = await tx.wait();
+      console.log(`Funding confirmed in block ${receipt.blockNumber}`);
+
+      return true;
+    } catch (error) {
+      console.error('Error ensuring address is funded:', error);
+      return false;
+    }
+  }
+
+  /**
    * Check if wallet has enough funds for a transaction (works with any EVM chain)
    * @param wallet - Wallet to check
    * @param minimumAmountToSend - Amount needed for the transaction
@@ -768,7 +833,7 @@ export class Utils {
     }
   }
 
-  public static async GetAllApprovalsForApprover(wallet: Wallet, approverAddress: string): Promise<any[]> {
+  public static async GetAllApprovalsForApprover(provider: ethers.providers.Provider, approverAddress: string): Promise<any[]> {
     try {
       const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
@@ -778,7 +843,7 @@ export class Utils {
       const agentContract = new ethers.Contract(
         agentContractAddress,
         AgentArtifact.abi,
-        wallet
+        provider
       );
 
       const approvals = await agentContract.getAllApprovalsForApprover(approverAddress);
@@ -803,7 +868,7 @@ export class Utils {
     }
   }
 
-  public static async GetAllApprovalsForRequestor(wallet: Wallet, requestorAddress: string): Promise<any[]> {
+  public static async GetAllApprovalsForRequestor(provider: ethers.providers.Provider, requestorAddress: string): Promise<any[]> {
     try {
       const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
@@ -813,7 +878,7 @@ export class Utils {
       const agentContract = new ethers.Contract(
         agentContractAddress,
         AgentArtifact.abi,
-        wallet
+        provider
       );
 
       const approvals = await agentContract.getAllApprovalsForRequestor(requestorAddress);

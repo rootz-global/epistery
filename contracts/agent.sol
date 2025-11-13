@@ -88,7 +88,7 @@ contract Agent {
 
   /**
    * @dev Transfers ownership of all data to a new address
-   * Moves all data and public keys from caller to new owner
+   * Moves all data, public keys, and approval requests from caller to new owner
    * Clears the caller's data after transfer
    * @param newOwner The address to transfer ownership to
    */
@@ -104,9 +104,65 @@ contract Agent {
       addressPublicKeys[newOwner].push(addressPublicKeys[msg.sender][i]);
     }
 
+    // Transfer all approval requests where msg.sender is the requestor
+    // These are requests that msg.sender made TO other approvers
+    address[] memory approvers = requestorApprovers[msg.sender];
+    for (uint256 i = 0; i < approvers.length; i++) {
+      address approver = approvers[i];
+
+      // Transfer all requests from this approver
+      ApprovalRequest[] memory requests = approvalRequests[approver][msg.sender];
+      for (uint256 j = 0; j < requests.length; j++) {
+        approvalRequests[approver][newOwner].push(requests[j]);
+      }
+
+      // Update the approver's requestor list
+      // Remove msg.sender and add newOwner if not already present
+      address[] storage requestors = approverRequestors[approver];
+      bool newOwnerExists = false;
+
+      // Check if newOwner is already in the list
+      for (uint256 k = 0; k < requestors.length; k++) {
+        if (requestors[k] == newOwner) {
+          newOwnerExists = true;
+        }
+      }
+
+      // Remove msg.sender from requestors list
+      for (uint256 k = 0; k < requestors.length; k++) {
+        if (requestors[k] == msg.sender) {
+          requestors[k] = requestors[requestors.length - 1];
+          requestors.pop();
+          break;
+        }
+      }
+
+      // Add newOwner to requestors list if not already present
+      if (!newOwnerExists) {
+        approverRequestors[approver].push(newOwner);
+      }
+
+      // Add approver to newOwner's approver list if not already present
+      bool approverExistsForNewOwner = false;
+      address[] storage newOwnerApprovers = requestorApprovers[newOwner];
+      for (uint256 k = 0; k < newOwnerApprovers.length; k++) {
+        if (newOwnerApprovers[k] == approver) {
+          approverExistsForNewOwner = true;
+          break;
+        }
+      }
+      if (!approverExistsForNewOwner) {
+        requestorApprovers[newOwner].push(approver);
+      }
+
+      // Clear old requests
+      delete approvalRequests[approver][msg.sender];
+    }
+
     // Clear old owner's data
     delete addressData[msg.sender];
     delete addressPublicKeys[msg.sender];
+    delete requestorApprovers[msg.sender];
 
     emit OwnershipTransferred(msg.sender, newOwner, block.timestamp);
   }

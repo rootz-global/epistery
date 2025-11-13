@@ -255,9 +255,6 @@ class EpisteryAttach {
           return res.status(400).json({ error: 'Missing client wallet or data' });
         }
 
-        // Set the domain for the write operation
-        //process.env.SERVER_DOMAIN = req.hostname;
-
         const result = await Epistery.write(clientWalletInfo, data);
         if (!result) {
           return res.status(500).json({ error: 'Write operation failed' });
@@ -430,6 +427,161 @@ class EpisteryAttach {
       }
     });
 
+    // ============================================================================
+    // CLIENT-SIDE SIGNING ENDPOINTS
+    //
+    // These endpoints support the new client-side signing flow.
+    // They work alongside the old endpoints for backward compatibility.
+    // ============================================================================
+
+    // ----- PREPARE ENDPOINTS (Build unsigned transactions) -----
+
+    /**
+     * POST /data/prepare-write
+     *
+     * Prepares an unsigned transaction for writing data.
+     * Server handles IPFS upload, gas estimation, and client funding.
+     * Returns unsigned transaction for client to sign.
+     */
+    router.post('/data/prepare-write', async (req, res) => {
+      try {
+        const { clientAddress, publicKey, data } = req.body;
+
+        if (!clientAddress || !publicKey || !data) {
+          return res.status(400).json({
+            error: 'Missing required fields: clientAddress, publicKey, data'
+          });
+        }
+
+        const result = await Epistery.prepareWrite(clientAddress, publicKey, data);
+        res.json(result);
+
+      } catch (error) {
+        console.error('Prepare write error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    /**
+     * POST /data/prepare-transfer-ownership
+     *
+     * Prepares an unsigned transaction for transferring ownership.
+     */
+    router.post('/data/prepare-transfer-ownership', async (req, res) => {
+      try {
+        const { clientAddress, futureOwnerAddress } = req.body;
+
+        if (!clientAddress || !futureOwnerAddress) {
+          return res.status(400).json({
+            error: 'Missing required fields: clientAddress, futureOwnerAddress'
+          });
+        }
+
+        const result = await Epistery.prepareTransferOwnership(clientAddress, futureOwnerAddress);
+        res.json(result);
+
+      } catch (error) {
+        console.error('Prepare transfer ownership error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    /**
+     * POST /approval/prepare-create
+     *
+     * Prepares an unsigned transaction for creating an approval request.
+     */
+    router.post('/approval/prepare-create', async (req, res) => {
+      try {
+        const { clientAddress, approverAddress, fileName, fileHash, domain } = req.body;
+
+        if (!clientAddress || !approverAddress || !fileName || !fileHash || !domain) {
+          return res.status(400).json({
+            error: 'Missing required fields: clientAddress, approverAddress, fileName, fileHash, domain'
+          });
+        }
+
+        const result = await Epistery.prepareCreateApproval(
+          clientAddress,
+          approverAddress,
+          fileName,
+          fileHash,
+          domain
+        );
+        res.json(result);
+
+      } catch (error) {
+        console.error('Prepare create approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    /**
+     * POST /approval/prepare-handle
+     *
+     * Prepares an unsigned transaction for handling an approval request.
+     */
+    router.post('/approval/prepare-handle', async (req, res) => {
+      try {
+        const { approverAddress, requestorAddress, fileName, approved, domain } = req.body;
+
+        if (!approverAddress || !requestorAddress || !fileName || approved === undefined || !domain) {
+          return res.status(400).json({
+            error: 'Missing required fields: approverAddress, requestorAddress, fileName, approved, domain'
+          });
+        }
+
+        const result = await Epistery.prepareHandleApproval(
+          approverAddress,
+          requestorAddress,
+          fileName,
+          approved,
+          domain
+        );
+        res.json(result);
+
+      } catch (error) {
+        console.error('Prepare handle approval error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ----- SUBMIT ENDPOINT (Broadcast signed transactions) -----
+
+    /**
+     * POST /data/submit-signed
+     *
+     * Submits a client-signed transaction to the blockchain.
+     * This is a generic endpoint used by all write operations.
+     *
+     * The transaction is already signed and immutable.
+     * Server just broadcasts it and returns the receipt.
+     */
+    router.post('/data/submit-signed', async (req, res) => {
+      try {
+        const { signedTransaction, operation, metadata } = req.body;
+
+        if (!signedTransaction) {
+          return res.status(400).json({
+            error: 'Missing required field: signedTransaction'
+          });
+        }
+
+        const result = await Epistery.submitSignedTransaction(signedTransaction);
+
+        // Merge metadata into response (e.g., ipfsHash for write operations)
+        res.json({
+          ...result,
+          operation: operation,
+          metadata: metadata
+        });
+
+      } catch (error) {
+        console.error('Submit signed transaction error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Domain initialization endpoint - use to set up domain with custom provider
     router.post('/domain/initialize', async (req, res) => {
       try {
@@ -501,11 +653,6 @@ class EpisteryAttach {
         res.status(500).json({ error: error.message });
       }
     });
-
-    // // Status and service projection
-    // router.get('/', (req, res) => {
-    //
-    // })
 
     return router;
   }

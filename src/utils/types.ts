@@ -49,9 +49,17 @@ export interface RootConfig {
 
 export interface ClientWalletInfo {
   address: string;
-  mnemonic: string;
   publicKey: string;
-  privateKey: string;
+
+  // Used by legacy (browser) data-wallets -- left in for backward compatibility
+  mnemonic?: string;
+  privateKey?: string;
+
+  // Used by RivetWallets
+  walletType?: 'browser' | 'web3' | 'rivet';
+
+  // (For client-side signed operations) This contains the complete signed transaction
+  signedTransaction?: string;
 }
 
 export interface EpisteryStatus {
@@ -77,7 +85,7 @@ export interface HashResult {
 
 export interface EpisteryWrite {
   data: string;
-  aquaTree: AquaTree;
+  aquaTree?: AquaTree;
   signature: string;
   messageHash: string;
   client: {
@@ -112,4 +120,68 @@ export interface KeyExchangeResponse {
   identified: boolean;
   authenticated: boolean;
   profile: object | undefined;
+}
+
+/**
+ * Unsigned transaction prepared by server for client to sign
+ * Used in new client-side signing flow
+ *
+ * Contains ONLY valid Ethereum transaction fields
+ */
+export interface UnsignedTransaction {
+  // Transaction fields
+  to: string;
+  data: string;
+  value: string;
+  nonce: number;
+  chainId: number;
+
+  // Gas configuration (EIP-1559 for Polygon, legacy for others)
+  gasLimit: string;
+
+  // Legacy gas (Ethereum mainnet, some L2s)
+  gasPrice?: string;
+
+  // EIP-1559 gas (Polygon, modern chains)
+  maxFeePerGas?: string;
+  maxPriorityFeePerGas?: string;
+}
+
+/**
+ * Request to prepare an unsigned transaction
+ */
+export interface PrepareTransactionRequest {
+  clientAddress: string;
+  publicKey: string;
+  operation: 'write' | 'transferOwnership' | 'createApproval' | 'handleApproval';
+  params: any;
+}
+
+/**
+ * Response from transaction preparation
+ */
+export interface PrepareTransactionResponse {
+  unsignedTransaction: UnsignedTransaction;
+  ipfsHash?: string;
+  metadata?: any;
+}
+
+/**
+ * Request to submit a signed transaction
+ */
+export interface SubmitSignedTransactionRequest {
+  signedTransaction: string;
+  operation: string;
+  metadata?: any;
+}
+
+/**
+ * Response from transaction submission
+ */
+export interface SubmitSignedTransactionResponse {
+  transactionHash: string;
+  blockNumber: number;
+  gasUsed: string;
+  status: number;  // 1 = success, 0 = reverted
+  receipt: any;    // Full ethers receipt object
 }

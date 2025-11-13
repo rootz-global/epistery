@@ -1,4 +1,18 @@
-import { ClientWalletInfo, DomainConfig, EpisteryStatus, EpisteryWrite, Utils, WalletConfig, KeyExchangeRequest, KeyExchangeResponse } from './utils/index.js';
+import {
+  ClientWalletInfo,
+  DomainConfig,
+  EpisteryStatus,
+  EpisteryWrite,
+  Utils,
+  WalletConfig,
+  KeyExchangeRequest,
+  KeyExchangeResponse,
+  UnsignedTransaction,
+  PrepareTransactionRequest,
+  PrepareTransactionResponse,
+  SubmitSignedTransactionRequest,
+  SubmitSignedTransactionResponse
+} from './utils/index.js';
 import { ethers, Wallet } from 'ethers';
 import { AquaTree } from 'aqua-js-sdk';
 import { Aquafy } from './utils/Aqua.js';
@@ -77,10 +91,10 @@ export class Epistery {
 
   public static async read(clientWalletInfo: ClientWalletInfo): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
-    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
+    // Read operations don't require signing - just need address
     try {
-      const result = await Utils.ReadFromContract(clientWallet);
+      const result = await Utils.ReadFromContract(provider, clientWalletInfo.address);
       return result;
     }
     catch(error) {
@@ -91,6 +105,11 @@ export class Epistery {
   public static async write(clientWalletInfo: ClientWalletInfo, data: any): Promise<EpisteryWrite | null> {
     // Create real wallet from client info
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     // TODO: The environment should not define the domain. The domain is in req.app.locals.epistery
@@ -141,21 +160,21 @@ export class Epistery {
 
     // Aquafy the message
     const dataString: string = JSON.stringify(data);
-    const aquaTree: AquaTree | undefined = await Aquafy(dataString, clientWalletInfo);
+    //const aquaTree: AquaTree | undefined = await Aquafy(dataString, clientWalletInfo);
 
-    if (aquaTree === undefined) {
+    /* if (aquaTree === undefined) {
       console.error("Aqua Tree is undefined.");
       return null;
-    }
+    } */
 
     // Create message hash and sign it
-    const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(JSON.stringify(aquaTree)));
+    const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString));
     const signature = await clientWallet.signMessage(messageHash);
 
     // Create the JSON object to store in IPFS
     let ipfsData: EpisteryWrite = {
       data: data,
-      aquaTree: aquaTree,
+      aquaTree: undefined,
       signature: signature,
       messageHash: messageHash,
       client: {
@@ -197,6 +216,11 @@ export class Epistery {
   */
   public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     try {
@@ -219,6 +243,11 @@ export class Epistery {
    */
   public static async createApproval(clientWalletInfo: ClientWalletInfo, approverAddress: string, fileName: string, fileHash: string, domain: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     const serverWalletConfig: WalletConfig | undefined = Utils.GetDomainInfo(domain)?.wallet;
@@ -273,6 +302,11 @@ export class Epistery {
    */
   public static async getApprovals(clientWalletInfo: ClientWalletInfo, approverAddress: string, requestorAddress: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     try {
@@ -291,10 +325,10 @@ export class Epistery {
    */
   public static async getAllApprovalsForApprover(clientWalletInfo: ClientWalletInfo, approverAddress: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
-    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
+    // Read operations don't require signing - just need address
     try {
-      const approvals = await Utils.GetAllApprovalsForApprover(clientWallet, approverAddress);
+      const approvals = await Utils.GetAllApprovalsForApprover(provider, approverAddress);
       return approvals;
     }
     catch(error) {
@@ -309,10 +343,10 @@ export class Epistery {
    */
   public static async getAllApprovalsForRequestor(clientWalletInfo: ClientWalletInfo, requestorAddress: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
-    const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
+    // Read operations don't require signing - just need address
     try {
-      const approvals = await Utils.GetAllApprovalsForRequestor(clientWallet, requestorAddress);
+      const approvals = await Utils.GetAllApprovalsForRequestor(provider, requestorAddress);
       return approvals;
     }
     catch(error) {
@@ -329,6 +363,11 @@ export class Epistery {
    */
   public static async handleApproval(clientWalletInfo: ClientWalletInfo, requestorAddress: string, fileName: string, approved: boolean): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     const domain: string = process.env.SERVER_DOMAIN || 'localhost';
@@ -466,5 +505,678 @@ export class Epistery {
       console.error('Key exchange error:', error);
       return null;
     }
+  }
+
+  /**
+   * Client-Side Signing Methods
+   *
+   * These methods prepare unsigned transactions for data-wallets to sign.
+   * They handle IPFS uploads, gas estimation, and wallet funding, but do NOT
+   * sign transactions - that happens client-side.
+   */
+
+  /**
+   * Prepares an unsigned "write" transaction
+   *
+   * Flow:
+   * 1. Upload data to IPFS (server-side, doesn't need private key)
+   * 2. Ensure client has gas funds (server funds if needed)
+   * 3. Estimate gas for contract.write()
+   * 4. Build unsigned transaction object
+   *
+   * @param clientAddress - Client's wallet address
+   * @param publicKey - Client's public key
+   * @param data - Data to write
+   * @returns Unsigned transaction ready for client to sign
+   */
+  public static async prepareWrite(
+    clientAddress: string,
+    publicKey: string,
+    data: any
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding operations
+    const domain = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    const dataString = JSON.stringify(data);
+    //const aquaTree = await Aquafy(dataString, { address: clientAddress, publicKey });
+
+    /* if (!aquaTree) {
+      throw new Error('Failed to create Aqua tree');
+    } */
+
+    // Create message hash and signature placeholder (will be replaced by client)
+    const messageHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(dataString));
+
+    // Create IPFS data structure
+    const ipfsData: EpisteryWrite = {
+      data: data,
+      aquaTree: undefined,
+      signature: '0x00', // Placeholder - client will sign this data separately
+      messageHash: messageHash,
+      client: {
+        address: clientAddress,
+        publicKey: publicKey
+      },
+      server: {
+        address: serverWallet.address,
+        domain: domain
+      },
+      timestamp: new Date().toISOString(),
+      signedBy: clientAddress,
+      ipfsHash: undefined,
+      ipfsUrl: undefined,
+    };
+
+    // Upload to IPFS
+    const jsonString = JSON.stringify(ipfsData, null, 2);
+    const ipfsHash = await Epistery.addToIPFS(jsonString);
+
+    if (!ipfsHash) {
+      throw new Error('Failed to upload to IPFS');
+    }
+    
+    // Setup contract for execution
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      provider  // Read-only provider, no signer
+    );
+    
+    // Estimate gas for contract/transactions
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.write(publicKey, ipfsHash, {
+        from: clientAddress  // Simulate as if client is calling
+      });
+    }
+    catch (error) {
+      console.warn('Gas estimation failed, using fallback:', error);
+      estimatedGas = ethers.BigNumber.from(200000);
+    }
+
+    // Add 30% buffer to gas estimate
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build unsigned transaction (before funding to know exact cost)
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(clientAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    // Encode function call
+    const txData = agentContract.interface.encodeFunctionData('write', [publicKey, ipfsHash]);
+
+    // Build transaction object
+    const unsignedTx: any = {
+      to: agentContractAddress,
+      data: txData,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    // Add gas pricing based on network support
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      // Polygon networks require higher **MINIMUM** priority fees
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        // Ensure maxFeePerGas is at least priorityFee + base fee
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2); // Set to 2x priority fee as safety margin; Ensures the TX always execs
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;  // EIP-1559 transaction type
+
+      // Calculate total cost using maxFeePerGas
+      totalTxCost = gasLimit.mul(maxFee);
+    }
+    else {
+      // Legacy gas pricing
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      // Calculate total cost using gasPrice
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Client Wallet with exact amount needed
+    // Check if client has enough balance for this specific transaction
+    const clientBalance = await provider.getBalance(clientAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);  // 50% safety buffer
+
+    if (clientBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(clientBalance);
+      console.log(`Client needs funding: ${ethers.utils.formatEther(amountToFund)} MATIC`);
+
+      // Build funding transaction with proper gas params
+      const fundTxParams: any = {
+        to: clientAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      // Use same gas parameters as main transaction
+      if (unsignedTx.type === 2) {
+        // EIP-1559 - use the same gas params we calculated
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        // Legacy - use the gas price we calculated
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      console.log(`Funding transaction sent: ${fundTx.hash}`);
+      await fundTx.wait();
+      console.log(`Client wallet funded successfully`);
+    } else {
+      console.log(`Client has sufficient funds: ${ethers.utils.formatEther(clientBalance)} MATIC`);
+    }
+
+    console.log(`Prepared write transaction for ${clientAddress}`);
+    console.log(`  IPFS Hash: ${ipfsHash}`);
+    console.log(`  Gas Limit: ${gasLimit.toString()}`);
+    console.log(`  Nonce: ${nonce}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      ipfsHash: ipfsHash,
+      metadata: {
+        operation: 'write',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        ipfsUrl: `${Epistery.ipfsGatewayUrl}/ipfs/${ipfsHash}`
+      }
+    };
+  }
+
+  /**
+   * Prepares an unsigned "transferOwnership" transaction
+   *
+   * @param clientAddress - Current owner's address
+   * @param futureOwnerAddress - New owner's address
+   * @returns Unsigned transaction ready for client to sign
+   */
+  public static async prepareTransferOwnership(
+    clientAddress: string,
+    futureOwnerAddress: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding
+    const domain = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Contract Setup
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      provider
+    );
+
+    // Gas Estimation
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerAddress, {
+        from: clientAddress
+      });
+    } catch (error) {
+      console.warn('Gas estimation failed, using fallback');
+      estimatedGas = ethers.BigNumber.from(100000);
+    }
+
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build Transaction (before funding so we know exact cost)
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(clientAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    const txData = agentContract.interface.encodeFunctionData('transferOwnership', [futureOwnerAddress]);
+
+    const unsignedTx: any = {
+      to: agentContractAddress,
+      data: txData,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2);
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;
+
+      totalTxCost = gasLimit.mul(maxFee);
+    } else {
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Client Wallet
+    const clientBalance = await provider.getBalance(clientAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);
+
+    if (clientBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(clientBalance);
+
+      const fundTxParams: any = {
+        to: clientAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      if (unsignedTx.type === 2) {
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      await fundTx.wait();
+    }
+
+    console.log(`Prepared transferOwnership transaction from ${clientAddress} to ${futureOwnerAddress}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      metadata: {
+        operation: 'transferOwnership',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        currentOwner: clientAddress,
+        newOwner: futureOwnerAddress
+      }
+    };
+  }
+
+  /**
+   * Prepares an unsigned "createApproval" transaction
+   *
+   * @param clientAddress - Requestor's address
+   * @param approverAddress - Address that will approve/deny
+   * @param fileName - Name of file being requested
+   * @param fileHash - Hash of file being requested
+   * @param domain - Domain context
+   * @returns Unsigned transaction ready for client to sign
+   */
+  public static async prepareCreateApproval(
+    clientAddress: string,
+    approverAddress: string,
+    fileName: string,
+    fileHash: string,
+    domain: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Contract Setup
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      provider
+    );
+
+    // Gas Estimation
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.createApproval(
+        approverAddress,
+        fileName,
+        fileHash,
+        domain,
+        { from: clientAddress }
+      );
+    } catch (error) {
+      console.warn('Gas estimation failed, using fallback');
+      estimatedGas = ethers.BigNumber.from(200000);
+    }
+
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build Transaction (before funding so we know exact cost)
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(clientAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    const txData = agentContract.interface.encodeFunctionData('createApproval', [
+      approverAddress,
+      fileName,
+      fileHash,
+      domain
+    ]);
+
+    const unsignedTx: any = {
+      to: agentContractAddress,
+      data: txData,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2);
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;
+
+      totalTxCost = gasLimit.mul(maxFee);
+    } else {
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Client Wallet
+    const clientBalance = await provider.getBalance(clientAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);
+
+    if (clientBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(clientBalance);
+
+      const fundTxParams: any = {
+        to: clientAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      if (unsignedTx.type === 2) {
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      await fundTx.wait();
+    }
+
+    console.log(`Prepared createApproval transaction: ${clientAddress} → ${approverAddress} for ${fileName}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      metadata: {
+        operation: 'createApproval',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        requestor: clientAddress,
+        approver: approverAddress,
+        fileName: fileName,
+        fileHash: fileHash,
+        domain: domain
+      }
+    };
+  }
+
+  /**
+   * Prepares an unsigned "handleApproval" transaction
+   *
+   * @param approverAddress - Approver's address (signer)
+   * @param requestorAddress - Requestor's address
+   * @param fileName - Name of file to approve/deny
+   * @param approved - True to approve, false to deny
+   * @param domain - Domain context
+   * @returns Unsigned transaction ready for client to sign
+   */
+  public static async prepareHandleApproval(
+    approverAddress: string,
+    requestorAddress: string,
+    fileName: string,
+    approved: boolean,
+    domain: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Contract Setup
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      provider
+    );
+
+    // Gas Estimation
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.handleApproval(
+        requestorAddress,
+        fileName,
+        approved,
+        { from: approverAddress }
+      );
+    } catch (error) {
+      console.warn('Gas estimation failed, using fallback');
+      estimatedGas = ethers.BigNumber.from(150000);
+    }
+
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build Transaction (before funding so we know exact cost)
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(approverAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    const txData = agentContract.interface.encodeFunctionData('handleApproval', [
+      requestorAddress,
+      fileName,
+      approved
+    ]);
+
+    const unsignedTx: any = {
+      to: agentContractAddress,
+      data: txData,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2);
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;
+
+      totalTxCost = gasLimit.mul(maxFee);
+    } else {
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Approver Wallet
+    const approverBalance = await provider.getBalance(approverAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);
+
+    if (approverBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(approverBalance);
+
+      const fundTxParams: any = {
+        to: approverAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      if (unsignedTx.type === 2) {
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      await fundTx.wait();
+    }
+
+    console.log(`Prepared handleApproval transaction: ${approverAddress} ${approved ? 'approving' : 'denying'} ${requestorAddress}/${fileName}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      metadata: {
+        operation: 'handleApproval',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        approver: approverAddress,
+        requestor: requestorAddress,
+        fileName: fileName,
+        approved: approved
+      }
+    };
+  }
+
+  /**
+   * Submits a client-signed transaction to the blockchain
+   *
+   * This is the final step in client-side signing flow.
+   * The transaction is already signed and immutable.
+   * Server just broadcasts it to the blockchain.
+   *
+   * @param signedTx - Complete signed transaction (hex string)
+   * @returns Transaction receipt
+   */
+  public static async submitSignedTransaction(
+    signedTx: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Parse signed transaction to validate and log
+    const parsedTx = ethers.utils.parseTransaction(signedTx);
+    console.log(`Broadcasting signed transaction:`);
+    console.log(`  From: ${parsedTx.from}`);
+    console.log(`  To: ${parsedTx.to}`);
+    console.log(`  Nonce: ${parsedTx.nonce}`);
+    console.log(`  Gas Limit: ${parsedTx.gasLimit?.toString()}`);
+
+    // Broadcast to blockchain
+    const response = await provider.sendTransaction(signedTx);
+    console.log(`  Transaction Hash: ${response.hash}`);
+    console.log(`  Waiting for confirmation...`);
+
+    // Wait for confirmation
+    const receipt = await response.wait();
+    console.log(`  Confirmed in block: ${receipt.blockNumber}`);
+    console.log(`  Gas Used: ${receipt.gasUsed.toString()}`);
+    console.log(`  Status: ${receipt.status === 1 ? 'Success' : 'Reverted'}`);
+
+    return {
+      transactionHash: receipt.transactionHash,
+      blockNumber: receipt.blockNumber,
+      gasUsed: receipt.gasUsed.toString(),
+      status: receipt.status,
+      receipt: receipt
+    };
   }
 }

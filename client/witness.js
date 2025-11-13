@@ -393,80 +393,177 @@ export default class Witness {
     }
   }
 
+  /**
+   * Transfers ownership of data wallet to another address
+   *
+   * Supports both client-side (rivet) and server-side (browser/web3) signing.
+   *
+   * @param {string} futureOwnerWalletAddress - Address of new owner
+   * @returns {Promise<any>} Transaction receipt
+   */
   async transferOwnershipEvent(futureOwnerWalletAddress) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
 
-    try {
+    if (this.wallet.source === 'rivet') {
+
+      try {
+        // STEP 1: Prepare
+        const prepareResponse = await fetch('/.well-known/epistery/data/prepare-transfer-ownership', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientAddress: this.wallet.address,
+            futureOwnerAddress: futureOwnerWalletAddress
+          })
+        });
+
+        if (!prepareResponse.ok) {
+          const error = await prepareResponse.json();
+          throw new Error(`Failed to prepare: ${error.error}`);
+        }
+
+        const { unsignedTransaction, metadata } = await prepareResponse.json();
+
+        // STEP 2: Sign
+        await ensureEthers();
+        const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
+        console.log('Transaction signed');
+
+        // STEP 3: Submit
+        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: 'transferOwnership',
+            metadata: metadata
+          })
+        });
+
+        if (!submitResponse.ok) {
+          const error = await submitResponse.json();
+          throw new Error(`Failed to submit: ${error.error}`);
+        }
+
+        return await submitResponse.json();
+
+      } catch (error) {
+        console.error('Client-side signing for transferOwnership failed:', error);
+        throw error;
+      }
+
+    } else {
+      // ===== OLD FLOW: Server-Side Signing =====
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
+        walletType: this.wallet.source
       };
 
-      let options = {
+      const result = await fetch('/.well-known/epistery/data/ownership', {
         method: 'PUT',
-        credentials: 'include',
-        headers: {'Content-Type': 'application/json'}
-      };
-      options.body = JSON.stringify({
-        clientWalletInfo: clientWalletInfo,
-        futureOwnerWalletAddress: futureOwnerWalletAddress
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientWalletInfo, futureOwnerWalletAddress })
       });
 
-      let result = await fetch('/.well-known/epistery/data/ownership', options);
+      if (!result.ok) {
+        const error = await result.json();
+        throw new Error(`Transfer ownership failed: ${error.error}`);
+      }
 
-      if (result.ok) {
-        return await result.json();
-      }
-      else {
-        throw new Error(`Transfer ownership failed with status: ${result.status}`);
-      }
-    } catch (e) {
-      console.error('Failed to execute transfer ownership event:', e);
-      throw e;
+      return await result.json();
     }
   }
 
+  /**
+   * Creates an approval request
+   *
+   * @param {string} approverAddress - Address that will approve/deny
+   * @param {string} fileName - Name of file
+   * @param {string} fileHash - Hash of file
+   * @param {string} domain - Domain context
+   * @returns {Promise<any>} Transaction receipt
+   */
   async createApprovalEvent(approverAddress, fileName, fileHash, domain) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
 
-    try {
+    if (this.wallet.source === 'rivet') {
+      try {
+        // STEP 1: Prepare
+        const prepareResponse = await fetch('/.well-known/epistery/approval/prepare-create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientAddress: this.wallet.address,
+            approverAddress,
+            fileName,
+            fileHash,
+            domain
+          })
+        });
+
+        if (!prepareResponse.ok) {
+          const error = await prepareResponse.json();
+          throw new Error(`Failed to prepare: ${error.error}`);
+        }
+
+        const { unsignedTransaction, metadata } = await prepareResponse.json();
+
+        // STEP 2: Sign
+        await ensureEthers();
+        const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
+
+        // STEP 3: Submit
+        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: 'createApproval',
+            metadata: metadata
+          })
+        });
+
+        if (!submitResponse.ok) {
+          const error = await submitResponse.json();
+          throw new Error(`Failed to submit: ${error.error}`);
+        }
+
+        return await submitResponse.json();
+
+      } catch (error) {
+        console.error('Client-side signing for createApproval failed:', error);
+        throw error;
+      }
+
+    } else {
+      // ===== OLD FLOW =====
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
+        walletType: this.wallet.source
       };
 
-      let options = {
+      const result = await fetch('/.well-known/epistery/approval/create', {
         method: 'POST',
-        credentials: 'include',
-        headers: {'Content-Type': 'application/json'}
-      };
-      options.body = JSON.stringify({
-        clientWalletInfo: clientWalletInfo,
-        approverAddress: approverAddress,
-        fileName: fileName,
-        fileHash: fileHash,
-        domain: domain
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientWalletInfo, approverAddress, fileName, fileHash, domain })
       });
 
-      let result = await fetch('/.well-known/epistery/approval/create', options);
+      if (!result.ok) {
+        const error = await result.json();
+        throw new Error(`Create approval failed: ${error.error}`);
+      }
 
-      if (result.ok) {
-        return await result.json();
-      }
-      else {
-        throw new Error(`Create approval failed with status: ${result.status}`);
-      }
-    } catch (e) {
-      console.error('Failed to execute create approval event:', e);
-      throw e;
+      return await result.json();
     }
   }
 
@@ -582,42 +679,90 @@ export default class Witness {
     }
   }
 
+  /**
+   * Handles an approval request (approve or deny)
+   *
+   * @param {string} requestorAddress - Address that made the request
+   * @param {string} fileName - Name of file
+   * @param {boolean} approved - True to approve, false to deny
+   * @returns {Promise<any>} Transaction receipt
+   */
   async handleApprovalEvent(requestorAddress, fileName, approved) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
 
-    try {
+    if (this.wallet.source === 'rivet') {
+      try {
+        // STEP 1: Prepare
+        const prepareResponse = await fetch('/.well-known/epistery/approval/prepare-handle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            approverAddress: this.wallet.address,
+            requestorAddress,
+            fileName,
+            approved,
+            domain: window.location.hostname
+          })
+        });
+
+        if (!prepareResponse.ok) {
+          const error = await prepareResponse.json();
+          throw new Error(`Failed to prepare: ${error.error}`);
+        }
+
+        const { unsignedTransaction, metadata } = await prepareResponse.json();
+
+        // STEP 2: Sign
+        await ensureEthers();
+        const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
+
+        // STEP 3: Submit
+        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: 'handleApproval',
+            metadata: metadata
+          })
+        });
+
+        if (!submitResponse.ok) {
+          const error = await submitResponse.json();
+          throw new Error(`Failed to submit: ${error.error}`);
+        }
+
+        return await submitResponse.json();
+
+      } catch (error) {
+        console.error('Client-side signing for handleApproval failed:', error);
+        throw error;
+      }
+
+    } else {
+      // ===== OLD FLOW =====
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
+        walletType: this.wallet.source
       };
 
-      let options = {
+      const result = await fetch('/.well-known/epistery/approval/handle', {
         method: 'POST',
-        credentials: 'include',
-        headers: {'Content-Type': 'application/json'}
-      };
-      options.body = JSON.stringify({
-        clientWalletInfo: clientWalletInfo,
-        requestorAddress: requestorAddress,
-        fileName: fileName,
-        approved: approved
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientWalletInfo, requestorAddress, fileName, approved })
       });
 
-      let result = await fetch('/.well-known/epistery/approval/handle', options);
+      if (!result.ok) {
+        const error = await result.json();
+        throw new Error(`Handle approval failed: ${error.error}`);
+      }
 
-      if (result.ok) {
-        return await result.json();
-      }
-      else {
-        throw new Error(`Handle approval failed with status: ${result.status}`);
-      }
-    } catch (e) {
-      console.error('Failed to execute handle approval event:', e);
-      throw e;
+      return await result.json();
     }
   }
 
@@ -660,40 +805,97 @@ export default class Witness {
     }
   }
 
+  /**
+   * Writes an event to the data wallet
+   *
+   * This method now supports TWO flows:
+   * 1. NEW FLOW (RivetWallet): Client-side signing
+   *    - prepare transaction → sign locally → submit signed tx
+   * 2. OLD FLOW (BrowserWallet, Web3Wallet): Server-side signing
+   *    - send mnemonic → server signs and broadcasts
+   *
+   * @param {any} data - Data to write
+   * @returns {Promise<any>} Transaction receipt
+   */
   async writeEvent(data) {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
 
-    try {
-      // Convert wallet to the format expected by the server
+    if (this.wallet.source === 'rivet') {
+      try {
+        const prepareResponse = await fetch('/.well-known/epistery/data/prepare-write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientAddress: this.wallet.address,
+            publicKey: this.wallet.publicKey,
+            data: data
+          })
+        });
+
+        if (!prepareResponse.ok) {
+          const error = await prepareResponse.json();
+          throw new Error(`Failed to prepare transaction: ${error.error}`);
+        }
+
+        const { unsignedTransaction, ipfsHash, metadata } = await prepareResponse.json();
+
+        await ensureEthers();
+        const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
+        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: 'write',
+            metadata: { ipfsHash, ...metadata }
+          })
+        });
+
+        if (!submitResponse.ok) {
+          const error = await submitResponse.json();
+          throw new Error(`Failed to submit transaction: ${error.error}`);
+        }
+
+        const receipt = await submitResponse.json();
+
+        return {
+          success: true,
+          transactionHash: receipt.transactionHash,
+          blockNumber: receipt.blockNumber,
+          gasUsed: receipt.gasUsed,
+          status: receipt.status,
+          ipfsHash: ipfsHash,
+          ipfsUrl: metadata.ipfsUrl
+        };
+
+      } catch (error) {
+        console.error('Client-side signing flow failed:', error);
+        throw error;
+      }
+
+    } else {
       const clientWalletInfo = {
         address: this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
+        walletType: this.wallet.source  // 'browser' or 'web3'
       };
 
-      let options = {
+      const result = await fetch('/.well-known/epistery/data/write', {
         method: 'POST',
-        credentials: 'include',
-        headers: {'Content-Type': 'application/json'}
-      };
-      options.body = JSON.stringify({
-        clientWalletInfo: clientWalletInfo,
-        data: data
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientWalletInfo, data })
       });
 
-      let result = await fetch('/.well-known/epistery/data/write', options);
-
-      if (result.ok) {
-        return await result.json();
-      } else {
-        throw new Error(`Write failed with status: ${result.status}`);
+      if (!result.ok) {
+        const error = await result.json();
+        throw new Error(`Write failed: ${error.error}`);
       }
-    } catch (e) {
-      console.error('Failed to write event:', e);
-      throw e;
+
+      return await result.json();
     }
   }
 
