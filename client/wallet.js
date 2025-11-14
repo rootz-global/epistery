@@ -411,7 +411,8 @@ export class RivetWallet extends Wallet {
       const signer = new ethers.Wallet(privateKey);
 
       // Validate that our address matches
-      if (signer.address.toLowerCase() !== this.address.toLowerCase()) {
+      const addressToValidate = this.rivetAddress || this.address;
+      if (signer.address.toLowerCase() !== addressToValidate.toLowerCase()) {
         throw new Error('Decrypted key does not match rivet address');
       }
 
@@ -497,103 +498,61 @@ export class RivetWallet extends Wallet {
 
   /**
    * Deploys a new IdentityContract with this rivet as the first authorized signer
+   * Uses the prepare → sign → submit architecture (server handles funding)
    * @param {ethers} ethers - ethers.js instance
    * @param {object} providerConfig - Provider configuration with rpc and chainId
+   * @param {string} domain - Domain context for the deployment
    * @returns {Promise<string>} Contract address
    */
-  async deployIdentityContract(ethers, providerConfig) {
+  async deployIdentityContract(ethers, providerConfig, domain = 'localhost') {
     try {
-      // Get the private key to create a signer
-      const masterKey = await RivetWallet.getMasterKey(this.keyId);
-      if (!masterKey) {
-        throw new Error('Master key not found');
-      }
-
-      const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-      const encryptedBytes = ethers.utils.arrayify(encrypted);
-      const ivBytes = ethers.utils.arrayify(iv);
-
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: ivBytes },
-        masterKey,
-        encryptedBytes
-      );
-
-      const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-      const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
-      const signer = new ethers.Wallet(privateKey, provider);
-
-      // Load contract artifact
-      const response = await fetch('/.well-known/epistery/artifacts/IdentityContract.json');
-      const artifact = await response.json();
-
-      // Get current gas price from network
-      const feeData = await provider.getFeeData();
-
-      // Polygon Amoy requires minimum 25 Gwei priority fee
-      const minPriorityFee = ethers.utils.parseUnits('25', 'gwei');
-      const safePriorityFee = ethers.utils.parseUnits('30', 'gwei');
-      const safeMaxFee = ethers.utils.parseUnits('50', 'gwei');
-
-      // Use network gas prices but ensure they meet the minimum
-      let maxPriorityFeePerGas = safePriorityFee;
-      if (feeData.maxPriorityFeePerGas && feeData.maxPriorityFeePerGas.gte(minPriorityFee)) {
-        maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-      }
-
-      let maxFeePerGas = safeMaxFee;
-      if (feeData.maxFeePerGas && feeData.maxFeePerGas.gte(minPriorityFee)) {
-        maxFeePerGas = feeData.maxFeePerGas;
-      }
-
-      // Manual gas limit since estimation may fail with low balance
-      const gasLimit = ethers.BigNumber.from(750000); // Sufficient for IdentityContract deployment
-
-      // Check if wallet has sufficient balance before attempting deployment
-      const balance = await signer.getBalance();
-      const estimatedCost = gasLimit.mul(maxFeePerGas);
-
-      if (balance.lt(estimatedCost)) {
-        const networkName = providerConfig.networkName || `Chain ID ${providerConfig.chainId}`;
-        const currency = providerConfig.nativeCurrency?.symbol || 'native currency';
-        throw new Error(
-          `Insufficient ${currency} to deploy Identity Contract.\n\n` +
-          `Network: ${networkName}\n` +
-          `Your balance: ${ethers.utils.formatEther(balance)} ${currency}\n` +
-          `Estimated cost: ${ethers.utils.formatEther(estimatedCost)} ${currency}\n` +
-          `Needed: ${ethers.utils.formatEther(estimatedCost.sub(balance))} ${currency} more\n\n` +
-          `Get testnet ${currency} from a faucet or switch to a different network.`
-        );
-      }
-
-      // Deploy contract with proper gas settings
-      const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, signer);
-
-      // For factory.deploy(), overrides must be the LAST parameter
-      // Since contract has no constructor args, we still need to pass overrides separately
-      const deployTx = factory.getDeployTransaction();
-
-      const tx = await signer.sendTransaction({
-        ...deployTx,
-        type: 2,
-        maxPriorityFeePerGas: maxPriorityFeePerGas,
-        maxFeePerGas: maxFeePerGas,
-        gasLimit: gasLimit
+      // Step 1: Prepare unsigned deployment transaction (server funds the wallet)
+      const prepareResponse = await fetch('/.well-known/epistery/identity/prepare-deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientAddress: this.address,
+          domain: domain
+        })
       });
 
-      console.log('Deploy transaction sent:', tx.hash);
-      const receipt = await tx.wait();
-      console.log('Contract deployed at:', receipt.contractAddress);
+      if (!prepareResponse.ok) {
+        const error = await prepareResponse.json();
+        throw new Error(`Failed to prepare deployment: ${error.error || prepareResponse.statusText}`);
+      }
 
-      // Create contract instance
-      const contract = new ethers.Contract(receipt.contractAddress, artifact.abi, signer);
-      await contract.deployed();
+      const { unsignedTransaction, metadata } = await prepareResponse.json();
+
+      // Step 2: Sign the transaction client-side
+      const signedTx = await this.signTransaction(unsignedTransaction, ethers);
+
+      // Step 3: Submit signed transaction to blockchain
+      const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signedTransaction: signedTx,
+          operation: 'deployIdentityContract',
+          metadata: metadata
+        })
+      });
+
+      if (!submitResponse.ok) {
+        const error = await submitResponse.json();
+        throw new Error(`Failed to submit deployment: ${error.error || submitResponse.statusText}`);
+      }
+
+      const receipt = await submitResponse.json();
+
+      if (!receipt.contractAddress) {
+        throw new Error('Contract deployment succeeded but no contract address in receipt');
+      }
 
       // Upgrade this rivet to use the contract
-      this.upgradeToContract(contract.address);
+      this.upgradeToContract(receipt.contractAddress);
 
-      console.log('IdentityContract deployed at:', contract.address);
-      return contract.address;
+      return receipt.contractAddress;
+
     } catch (error) {
       console.error('Failed to deploy IdentityContract:', error);
       throw error;
@@ -765,75 +724,67 @@ export class RivetWallet extends Wallet {
 
   /**
    * Adds another rivet to this identity contract (must be called by an authorized rivet)
+   * Uses the prepare → sign → submit architecture (server handles funding)
    * @param {string} rivetAddressToAdd - The rivet address to add
    * @param {ethers} ethers - ethers.js instance
    * @param {object} providerConfig - Provider configuration with rpc
    * @param {string} rivetName - Optional name for the rivet (auto-generated if not provided)
+   * @param {string} domain - Domain context for the transaction
    * @returns {Promise<void>}
    */
-  async addRivetToContract(rivetAddressToAdd, ethers, providerConfig, rivetName = '') {
+  async addRivetToContract(rivetAddressToAdd, ethers, providerConfig, rivetName = '', domain = 'localhost') {
     try {
       if (!this.contractAddress) {
         throw new Error('This rivet is not part of an identity contract');
       }
 
-      // Get this rivet's private key to interact with the contract
-      const masterKey = await RivetWallet.getMasterKey(this.keyId);
-      if (!masterKey) {
-        throw new Error('Master key not found');
-      }
-
-      const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-      const encryptedBytes = ethers.utils.arrayify(encrypted);
-      const ivBytes = ethers.utils.arrayify(iv);
-
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: ivBytes },
-        masterKey,
-        encryptedBytes
-      );
-
-      const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-      const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
-      const signer = new ethers.Wallet(privateKey, provider);
-
-      // Load contract artifact
-      const response = await fetch('/.well-known/epistery/artifacts/IdentityContract.json');
-      const artifact = await response.json();
-
-      // Get current gas price from network
-      const feeData = await provider.getFeeData();
-
-      // Polygon Amoy requires minimum 25 Gwei priority fee
-      const minPriorityFee = ethers.utils.parseUnits('25', 'gwei');
-      const safePriorityFee = ethers.utils.parseUnits('30', 'gwei');
-      const safeMaxFee = ethers.utils.parseUnits('50', 'gwei');
-
-      let maxPriorityFeePerGas = safePriorityFee;
-      if (feeData.maxPriorityFeePerGas && feeData.maxPriorityFeePerGas.gte(minPriorityFee)) {
-        maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-      }
-
-      let maxFeePerGas = safeMaxFee;
-      if (feeData.maxFeePerGas && feeData.maxFeePerGas.gte(minPriorityFee)) {
-        maxFeePerGas = feeData.maxFeePerGas;
-      }
-
-      // Connect to the identity contract
-      const contract = new ethers.Contract(this.contractAddress, artifact.abi, signer);
-
       // Generate name if not provided (empty string is considered "not provided")
       const finalRivetName = rivetName || RivetWallet.generateRivetName();
 
-      // Add the rivet to the identity contract with name
-      const tx = await contract.addRivet(rivetAddressToAdd, finalRivetName, {
-        maxPriorityFeePerGas,
-        maxFeePerGas,
-        gasLimit: ethers.BigNumber.from(100000) // Manual gas limit
+      // Step 1: Prepare unsigned transaction (server funds the wallet)
+      const prepareResponse = await fetch('/.well-known/epistery/identity/prepare-add-rivet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signerAddress: this.rivetAddress || this.address,
+          contractAddress: this.contractAddress,
+          rivetAddressToAdd: rivetAddressToAdd,
+          rivetName: finalRivetName,
+          domain: domain
+        })
       });
-      await tx.wait();
+
+      if (!prepareResponse.ok) {
+        const error = await prepareResponse.json();
+        throw new Error(`Failed to prepare add rivet: ${error.error || prepareResponse.statusText}`);
+      }
+
+      const { unsignedTransaction, metadata } = await prepareResponse.json();
+
+      // Step 2: Sign the transaction client-side
+      const signedTx = await this.signTransaction(unsignedTransaction, ethers);
+
+      // Step 3: Submit signed transaction to blockchain
+      const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signedTransaction: signedTx,
+          operation: 'addRivetToContract',
+          metadata: metadata
+        })
+      });
+
+      if (!submitResponse.ok) {
+        const error = await submitResponse.json();
+        throw new Error(`Failed to submit add rivet: ${error.error || submitResponse.statusText}`);
+      }
+
+      const receipt = await submitResponse.json();
 
       console.log('Rivet added to identity contract:', rivetAddressToAdd, 'with name:', finalRivetName);
+      return receipt;
+
     } catch (error) {
       console.error('Failed to add rivet to contract:', error);
       throw error;

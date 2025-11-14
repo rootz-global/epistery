@@ -1138,6 +1138,269 @@ export class Epistery {
   }
 
   /**
+   * Prepares an unsigned "deploy IdentityContract" transaction
+   *
+   * @param clientAddress - Deployer's address (will be contract owner)
+   * @param domain - Domain context
+   * @returns Unsigned deployment transaction ready for client to sign
+   */
+  public static async prepareDeployIdentityContract(
+    clientAddress: string,
+    domain: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Load IdentityContract artifact from file system
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    const artifact = JSON.parse(artifactData);
+
+    // Create contract factory to get deployment bytecode (no signer needed for getting deployment tx)
+    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode);
+    const deployTx = factory.getDeployTransaction();
+
+    // Estimate gas for contract deployment
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await provider.estimateGas({
+        ...deployTx,
+        from: clientAddress
+      });
+    } catch (error) {
+      console.warn('Gas estimation failed for contract deployment, using fallback');
+      estimatedGas = ethers.BigNumber.from(750000);
+    }
+
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build Transaction
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(clientAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    const unsignedTx: any = {
+      data: deployTx.data,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    // Add gas pricing
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2);
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;
+
+      totalTxCost = gasLimit.mul(maxFee);
+    } else {
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Client Wallet
+    const clientBalance = await provider.getBalance(clientAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);
+
+    if (clientBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(clientBalance);
+
+      const fundTxParams: any = {
+        to: clientAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      if (unsignedTx.type === 2) {
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      await fundTx.wait();
+    }
+
+    console.log(`Prepared IdentityContract deployment transaction for ${clientAddress}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      metadata: {
+        operation: 'deployIdentityContract',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        deployer: clientAddress
+      }
+    };
+  }
+
+  /**
+   * Prepares an unsigned "add rivet to IdentityContract" transaction
+   *
+   * @param signerAddress - Address of the rivet calling addRivet (must be authorized)
+   * @param contractAddress - Address of the IdentityContract
+   * @param rivetAddressToAdd - Address of the rivet to add
+   * @param rivetName - Name for the new rivet
+   * @param domain - Domain context
+   * @returns Unsigned transaction ready for client to sign
+   */
+  public static async prepareAddRivetToContract(
+    signerAddress: string,
+    contractAddress: string,
+    rivetAddressToAdd: string,
+    rivetName: string,
+    domain: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get server wallet for funding
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Load IdentityContract artifact from file system
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    const artifact = JSON.parse(artifactData);
+
+    // Create contract interface to encode function call
+    const contractInterface = new ethers.utils.Interface(artifact.abi);
+    const txData = contractInterface.encodeFunctionData('addRivet', [rivetAddressToAdd, rivetName]);
+
+    // Estimate gas for the addRivet transaction
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await provider.estimateGas({
+        from: signerAddress,
+        to: contractAddress,
+        data: txData
+      });
+    } catch (error) {
+      console.warn('Gas estimation failed for addRivet, using fallback');
+      estimatedGas = ethers.BigNumber.from(100000);
+    }
+
+    const gasLimit = estimatedGas.mul(130).div(100);
+
+    // Build Transaction
+    const network = await provider.getNetwork();
+    const nonce = await provider.getTransactionCount(signerAddress, 'pending');
+    const feeData = await provider.getFeeData();
+
+    const unsignedTx: any = {
+      to: contractAddress,
+      data: txData,
+      value: '0x00',
+      nonce: nonce,
+      chainId: network.chainId,
+      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+    };
+
+    // Add gas pricing
+    let totalTxCost: ethers.BigNumber;
+    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+      const isPolygon = network.chainId === 137 || network.chainId === 80002;
+      if (isPolygon) {
+        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+        if (priorityFee.lt(minPriorityFee)) {
+          priorityFee = minPriorityFee;
+        }
+        if (maxFee.lt(priorityFee)) {
+          maxFee = priorityFee.mul(2);
+        }
+      }
+
+      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      unsignedTx.type = 2;
+
+      totalTxCost = gasLimit.mul(maxFee);
+    } else {
+      const gasPrice = feeData.gasPrice!.mul(120).div(100);
+      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+      totalTxCost = gasLimit.mul(gasPrice);
+    }
+
+    // Fund Signer Wallet
+    const signerBalance = await provider.getBalance(signerAddress);
+    const neededWithBuffer = totalTxCost.mul(150).div(100);
+
+    if (signerBalance.lt(neededWithBuffer)) {
+      const amountToFund = neededWithBuffer.sub(signerBalance);
+
+      const fundTxParams: any = {
+        to: signerAddress,
+        value: amountToFund,
+        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
+      };
+
+      if (unsignedTx.type === 2) {
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
+        fundTxParams.type = 2;
+      } else {
+        fundTxParams.gasPrice = unsignedTx.gasPrice;
+      }
+
+      const fundTx = await serverWallet.sendTransaction(fundTxParams);
+      await fundTx.wait();
+    }
+
+    console.log(`Prepared addRivet transaction for ${signerAddress} to add ${rivetAddressToAdd}`);
+
+    return {
+      unsignedTransaction: unsignedTx,
+      metadata: {
+        operation: 'addRivetToContract',
+        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
+        signer: signerAddress,
+        contractAddress: contractAddress,
+        rivetToAdd: rivetAddressToAdd,
+        rivetName: rivetName
+      }
+    };
+  }
+
+  /**
    * Submits a client-signed transaction to the blockchain
    *
    * This is the final step in client-side signing flow.
@@ -1176,6 +1439,7 @@ export class Epistery {
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString(),
       status: receipt.status,
+      contractAddress: receipt.contractAddress,
       receipt: receipt
     };
   }

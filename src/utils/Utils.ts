@@ -148,7 +148,10 @@ export class Utils {
 
       if (!ipfsHashes || ipfsHashes.length === 0) {
         console.log('No data found for this address');
-        return null;
+        return {
+          count: 0,
+          messages: [],
+        };
       }
 
       console.log(`Data read from Agent contract. Found ${ipfsHashes.length} message(s)`);

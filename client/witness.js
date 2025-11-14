@@ -414,7 +414,7 @@ export default class Witness {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            clientAddress: this.wallet.address,
+            clientAddress: this.wallet.rivetAddress || this.wallet.address,
             futureOwnerAddress: futureOwnerWalletAddress
           })
         });
@@ -457,7 +457,7 @@ export default class Witness {
     } else {
       // ===== OLD FLOW: Server-Side Signing =====
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -500,7 +500,7 @@ export default class Witness {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            clientAddress: this.wallet.address,
+            clientAddress: this.wallet.rivetAddress || this.wallet.address,
             approverAddress,
             fileName,
             fileHash,
@@ -545,7 +545,7 @@ export default class Witness {
     } else {
       // ===== OLD FLOW =====
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -574,7 +574,7 @@ export default class Witness {
 
     try {
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -612,7 +612,7 @@ export default class Witness {
 
     try {
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -649,7 +649,7 @@ export default class Witness {
 
     try {
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -699,7 +699,7 @@ export default class Witness {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            approverAddress: this.wallet.address,
+            approverAddress: this.wallet.rivetAddress || this.wallet.address,
             requestorAddress,
             fileName,
             approved,
@@ -744,7 +744,7 @@ export default class Witness {
     } else {
       // ===== OLD FLOW =====
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -773,7 +773,7 @@ export default class Witness {
 
     try {
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -828,7 +828,7 @@ export default class Witness {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            clientAddress: this.wallet.address,
+            clientAddress: this.wallet.rivetAddress || this.wallet.address,
             publicKey: this.wallet.publicKey,
             data: data
           })
@@ -877,7 +877,7 @@ export default class Witness {
 
     } else {
       const clientWalletInfo = {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         mnemonic: this.wallet.mnemonic || '',
         privateKey: this.wallet.privateKey || '',
@@ -1057,7 +1057,7 @@ export default class Witness {
   getStatus() {
     return {
       client: this.wallet ? {
-        address: this.wallet.address,
+        address: this.wallet.rivetAddress || this.wallet.address,
         publicKey: this.wallet.publicKey,
         source: this.wallet.source
       } : null,

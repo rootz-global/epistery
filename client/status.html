@@ -243,7 +243,18 @@
 
             const result = await witness.readEvent();
 
-            if (!result || !result.messages || result.messages.length === 0) {
+            // Check for no data - handle both null result and empty messages array
+            if (!result || result === null) {
+              readOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Data Found</h4>
+                  <p>No data has been written to the contract for this wallet yet.</p>
+                </div>
+              `;
+              return;
+            }
+
+            if (!result.messages || result.messages.length === 0) {
               readOutput.innerHTML = `
                 <div class="error">
                   <h4>No Data Found</h4>
@@ -542,8 +553,8 @@
             getAllRequestorButton.textContent = 'Fetching...';
             getAllRequestorOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
 
-            // Use the current wallet address as the requestor
-            const requestorAddress = witness.wallet.address;
+            // Use the rivet address (actual signer) as the requestor
+            const requestorAddress = witness.wallet.rivetAddress || witness.wallet.address;
 
             const result = await witness.getAllApprovalsForRequestorEvent(requestorAddress);
 
@@ -617,8 +628,8 @@
             getAllApprovalsButton.textContent = 'Fetching...';
             getAllApprovalsOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
 
-            // Use the current wallet address as the approver
-            const approverAddress = witness.wallet.address;
+            // Use the rivet address (actual signer) as the approver
+            const approverAddress = witness.wallet.rivetAddress || witness.wallet.address;
 
             const result = await witness.getAllApprovalsForApproverEvent(approverAddress);
 
@@ -1258,7 +1269,7 @@
             try {
               addRivetButton.disabled = true;
               addRivetButton.textContent = '⏳ Adding...';
-              identityOutput.innerHTML = '<div class="loading">Adding rivet to identity contract...</div>';
+              identityOutput.innerHTML = '<div class="loading">Checking authorization status...</div>';
 
               const rivetAddressToAdd = rivetAddressInput.value.trim();
               if (!rivetAddressToAdd) {
@@ -1274,6 +1285,24 @@
                 rpc: witness.serverInfo.rpc,
                 chainId: witness.serverInfo.chainId
               };
+
+              // Check if rivet is already authorized
+              const rivetsInContract = await witness.wallet.getRivetsInContract(window.ethers, providerConfig);
+              const alreadyAuthorized = rivetsInContract.some(r =>
+                r.address.toLowerCase() === rivetAddressToAdd.toLowerCase()
+              );
+
+              if (alreadyAuthorized) {
+                identityOutput.innerHTML = `
+                  <div class="error">
+                    <h4>⚠️ Already Authorized</h4>
+                    <p>Rivet <code>${rivetAddressToAdd}</code> is already authorized on this identity contract.</p>
+                    <p>You can generate a new join token for this rivet without re-authorizing it on the blockchain.</p>
+                    <button onclick="document.getElementById('identity-output').innerHTML = ''" class="action-button" style="background: #666; margin-top: 10px;">Close</button>
+                  </div>
+                `;
+                return;
+              }
 
               // Step 1: Authorize the rivet on-chain
               identityOutput.innerHTML = '<div class="loading">Authorizing rivet on blockchain...</div>';
