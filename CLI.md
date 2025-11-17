@@ -174,9 +174,12 @@ email=
 url=https://rootz.digital/api/v0
 
 [default.provider]
-chainId=420420422,
-name=polkadot-hub-testnet
-rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
+chainId=1
+name=Ethereum Mainnet
+rpc=https://eth.llamarpc.com
+nativeCurrencyName=Ether
+nativeCurrencySymbol=ETH
+nativeCurrencyDecimals=18
 
 [cli]
 default_domain=localhost
@@ -195,10 +198,52 @@ publicKey=0x04...
 privateKey=0x...
 
 [provider]
-chainId=420420422,
-name=polkadot-hub-testnet
-rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
+chainId=137
+name=Polygon Mainnet
+rpc=https://polygon-rpc.com
+nativeCurrencyName=POL
+nativeCurrencySymbol=POL
+nativeCurrencyDecimals=18
 ```
+
+## Supported Chains
+
+Epistery supports multiple blockchain networks. Configure your domain's provider to use any of these chains:
+
+### Ethereum Mainnet
+```ini
+[provider]
+chainId=1
+name=Ethereum Mainnet
+rpc=https://eth.llamarpc.com
+nativeCurrencyName=Ether
+nativeCurrencySymbol=ETH
+nativeCurrencyDecimals=18
+```
+
+### Polygon Mainnet (POL)
+```ini
+[provider]
+chainId=137
+name=Polygon Mainnet
+rpc=https://polygon-rpc.com
+nativeCurrencyName=POL
+nativeCurrencySymbol=POL
+nativeCurrencyDecimals=18
+```
+
+### Japan Open Chain (JOC)
+```ini
+[provider]
+chainId=81
+name=Japan Open Chain
+rpc=https://rpc-2.japanopenchain.org:8545
+nativeCurrencyName=Japan Open Chain Token
+nativeCurrencySymbol=JOC
+nativeCurrencyDecimals=18
+```
+
+To configure a specific chain for a domain, edit `~/.epistery/{domain}/config.ini` and update the `[provider]` section with the desired chain configuration.
 
 ## Security
 
