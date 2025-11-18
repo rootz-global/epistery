@@ -6,6 +6,7 @@
  */
 
 import { Wallet, Web3Wallet, BrowserWallet, RivetWallet } from './wallet.js?v=7';
+import NotabotTracker from './notabot.js';
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -40,6 +41,7 @@ export default class Witness {
     Witness.instance = this;
     this.wallet = null;
     this.server = null;
+    this.notabot = null; // Will be initialized when wallet is loaded
     return this;
   }
 
@@ -179,6 +181,12 @@ export default class Witness {
       // Perform key exchange (skip if skipKeyExchange option is true)
       if (!options.skipKeyExchange) {
         await witness.performKeyExchange();
+      }
+
+      // Initialize notabot tracker if wallet is a rivet
+      if (witness.wallet && witness.wallet.source === 'rivet') {
+        witness.notabot = new NotabotTracker(witness.wallet);
+        console.log('[epistery] Notabot tracker initialized');
       }
 
     } catch (e) {

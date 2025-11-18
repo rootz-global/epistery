@@ -48,6 +48,44 @@ class EpisteryAttach {
       next();
     });
 
+    // Middleware to enrich request with notabot score
+    app.use(async (req, res, next) => {
+      // Check if client info is available (from key exchange or authentication)
+      if (req.episteryClient && req.episteryClient.address) {
+        try {
+          // Get identity contract address if available
+          // For now, we'll try to get it from query params or headers
+          const identityContractAddress = req.query.identityContract || req.headers['x-identity-contract'];
+
+          // Retrieve notabot score
+          const notabotScore = await Epistery.getNotabotScore(
+            req.episteryClient.address,
+            identityContractAddress
+          );
+
+          // Enrich client info with notabot data
+          req.episteryClient.notabotPoints = notabotScore.points;
+          req.episteryClient.notabotLastUpdate = notabotScore.lastUpdate;
+          req.episteryClient.notabotVerified = notabotScore.verified;
+          req.episteryClient.notabotEventCount = notabotScore.eventCount;
+
+          // Also make it available at the documented location
+          if (!req.app.epistery.clientWallet) {
+            req.app.epistery.clientWallet = {};
+          }
+          req.app.epistery.clientWallet = Object.assign(
+            req.app.epistery.clientWallet,
+            req.episteryClient
+          );
+
+        } catch (error) {
+          // Log error but don't fail the request
+          console.error('[Epistery] Failed to retrieve notabot score:', error.message);
+        }
+      }
+      next();
+    });
+
     // Mount routes - RFC 8615 compliant well-known URI
     app.use('/.well-known/epistery', this.routes());
   }
@@ -114,6 +152,7 @@ class EpisteryAttach {
       "client.js": path.resolve(__dirname, "client/client.js"),
       "witness.js": path.resolve(__dirname, "client/witness.js"),
       "wallet.js": path.resolve(__dirname, "client/wallet.js"),
+      "notabot.js": path.resolve(__dirname, "client/notabot.js"),
       "export.js": path.resolve(__dirname, "client/export.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
@@ -675,6 +714,61 @@ class EpisteryAttach {
 
       } catch (error) {
         console.error('Domain initialization error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Notabot score endpoint - commit score to identity contract
+    router.post('/notabot/commit', async (req, res) => {
+      try {
+        const { commitment, eventChain, identityContractAddress } = req.body;
+
+        if (!commitment || !eventChain || !identityContractAddress) {
+          return res.status(400).json({
+            error: 'Missing required fields: commitment, eventChain, identityContractAddress'
+          });
+        }
+
+        // Get rivet information from session/auth
+        // For now, expect rivet info in request body
+        const { rivetAddress, rivetMnemonic } = req.body;
+
+        if (!rivetAddress || !rivetMnemonic) {
+          return res.status(400).json({
+            error: 'Missing rivet authentication: rivetAddress, rivetMnemonic'
+          });
+        }
+
+        const result = await Epistery.commitNotabotScore(
+          rivetAddress,
+          rivetMnemonic,
+          { commitment, eventChain },
+          identityContractAddress
+        );
+
+        res.json(result);
+
+      } catch (error) {
+        console.error('Commit notabot score error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get notabot score for a rivet
+    router.get('/notabot/score/:rivetAddress', async (req, res) => {
+      try {
+        const { rivetAddress } = req.params;
+        const { identityContractAddress } = req.query;
+
+        if (!rivetAddress) {
+          return res.status(400).json({ error: 'Missing rivet address' });
+        }
+
+        const score = await Epistery.getNotabotScore(rivetAddress, identityContractAddress);
+        res.json(score);
+
+      } catch (error) {
+        console.error('Get notabot score error:', error);
         res.status(500).json({ error: error.message });
       }
     });
