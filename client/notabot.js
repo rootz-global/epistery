@@ -28,10 +28,14 @@ export class NotabotTracker {
     this.EVENT_BUFFER_SIZE = 50;   // How many raw events to analyze
     this.COMMIT_INTERVAL = 50;     // Commit to chain every N events
 
+    // Time-gating (economic defense against bots)
+    this.MAX_POINTS_PER_MINUTE = 2;  // Can't earn faster than 2 points/minute
+    this.sessionStartTime = 0;
+    this.pendingCommit = null;       // Commit waiting for funding
+
     // Timers
     this.lastMouseTime = 0;
     this.lastScrollTime = 0;
-    this.sessionStartTime = 0;
 
     // Load existing chain from storage
     this._loadFromStorage();
@@ -434,6 +438,15 @@ export class NotabotTracker {
    * Add a notabot event to the chain
    */
   async _addNotabotEvent(type, entropy) {
+    // TIME-GATING: Prevent earning points faster than real time allows
+    const elapsedMinutes = (Date.now() - this.sessionStartTime) / 60000;
+    const maxPointsForTime = Math.floor(elapsedMinutes * this.MAX_POINTS_PER_MINUTE);
+
+    if (this.currentPoints >= maxPointsForTime) {
+      console.log(`[Notabot] Rate limited: ${this.currentPoints} points in ${elapsedMinutes.toFixed(1)} minutes (max ${maxPointsForTime})`);
+      return; // Can't earn faster than real time
+    }
+
     const previousHash = this.eventChain.length > 0
       ? this.eventChain[this.eventChain.length - 1].hash
       : '0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -462,7 +475,7 @@ export class NotabotTracker {
     const points = Math.floor(entropy * 10);
     this.currentPoints += points;
 
-    console.log(`[Notabot] +${points} points from ${type} (entropy: ${entropy.toFixed(3)})`);
+    console.log(`[Notabot] +${points} points from ${type} (entropy: ${entropy.toFixed(3)}, total: ${this.currentPoints})`);
 
     // Save to storage
     this._saveToStorage();
@@ -503,15 +516,44 @@ export class NotabotTracker {
     };
 
     try {
+      // Get identity contract address (will be set by witness.js)
+      const identityContractAddress = this.rivet.identityContract;
+
       // Send to server for blockchain commitment
       const response = await fetch('/.well-known/epistery/notabot/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           commitment: commitment,
-          eventChain: this.eventChain // For verification
+          eventChain: this.eventChain,
+          identityContractAddress: identityContractAddress,
+          requestFunding: true  // Ask server to fund if needed
         })
       });
+
+      if (response.status === 402) {
+        // Payment Required - need to wait for funding
+        const data = await response.json();
+        console.log('[Notabot] Commit requires funding. Next funding available in:', data.nextFundingIn);
+        console.log('[Notabot] Current points:', data.currentPoints, '(not yet on-chain)');
+
+        // Store pending commitment
+        this.pendingCommit = {
+          commitment: commitment,
+          eventChain: [...this.eventChain], // Clone
+          timestamp: Date.now()
+        };
+        this._saveToStorage();
+        return;
+      }
+
+      if (response.status === 403) {
+        // Forbidden - suspicious behavior detected
+        const data = await response.json();
+        console.error('[Notabot] Commit denied:', data.error);
+        console.error('[Notabot]', data.message);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Commit failed: ${response.status}`);
@@ -519,9 +561,54 @@ export class NotabotTracker {
 
       const result = await response.json();
       console.log('[Notabot] Committed to chain:', result.transactionHash);
+      console.log('[Notabot] Points now on-chain:', this.currentPoints);
+
+      // Clear pending commit
+      this.pendingCommit = null;
+      this._saveToStorage();
 
     } catch (error) {
       console.error('[Notabot] Failed to commit:', error);
+
+      // Store as pending if it was a network error
+      if (error.message.includes('fetch')) {
+        this.pendingCommit = {
+          commitment: commitment,
+          eventChain: [...this.eventChain],
+          timestamp: Date.now()
+        };
+        this._saveToStorage();
+      }
+    }
+  }
+
+  /**
+   * Retry pending commit (call after funding becomes available)
+   */
+  async retryPendingCommit() {
+    if (!this.pendingCommit) {
+      console.log('[Notabot] No pending commit to retry');
+      return;
+    }
+
+    console.log('[Notabot] Retrying pending commit...');
+
+    const temp = this.pendingCommit;
+    this.pendingCommit = null; // Clear to avoid recursion
+
+    // Temporarily swap in pending data
+    const currentChain = this.eventChain;
+    const currentPoints = this.currentPoints;
+
+    this.eventChain = temp.eventChain;
+    this.currentPoints = temp.commitment.totalPoints;
+
+    await this.commitToChain();
+
+    // Restore current data if commit failed
+    if (this.pendingCommit) {
+      this.eventChain = currentChain;
+      this.currentPoints = currentPoints;
     }
   }
 
@@ -552,7 +639,9 @@ export class NotabotTracker {
     try {
       localStorage.setItem('epistery_notabot_chain', JSON.stringify({
         eventChain: this.eventChain,
-        currentPoints: this.currentPoints
+        currentPoints: this.currentPoints,
+        sessionStartTime: this.sessionStartTime,
+        pendingCommit: this.pendingCommit
       }));
     } catch (error) {
       console.error('[Notabot] Failed to save to storage:', error);
@@ -569,7 +658,14 @@ export class NotabotTracker {
         const data = JSON.parse(stored);
         this.eventChain = data.eventChain || [];
         this.currentPoints = data.currentPoints || 0;
-        console.log(`[Notabot] Loaded ${this.eventChain.length} events, ${this.currentPoints} points`);
+        this.sessionStartTime = data.sessionStartTime || Date.now();
+        this.pendingCommit = data.pendingCommit || null;
+
+        if (this.pendingCommit) {
+          console.log(`[Notabot] Loaded ${this.eventChain.length} events, ${this.currentPoints} points (pending commit)`);
+        } else {
+          console.log(`[Notabot] Loaded ${this.eventChain.length} events, ${this.currentPoints} points`);
+        }
       }
     } catch (error) {
       console.error('[Notabot] Failed to load from storage:', error);

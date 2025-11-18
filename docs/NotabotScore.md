@@ -393,6 +393,199 @@ The score is a **portable reputation** without revealing browsing history.
 - Events with timestamps far from commitment time are rejected
 - Score decay based on last update time
 
+## Economic Defense Model
+
+The most sophisticated attack is a **bot farm**: thousands of automated browsers running in parallel to build up fake notabot scores. Traditional entropy analysis alone cannot stop a well-programmed bot simulator. The solution is **economic game theory**: make bot farming so expensive or slow that it's not worthwhile.
+
+### Time-Gating: The Core Defense
+
+**Problem**: A bot could simulate months of human browsing in minutes by running at 100x speed.
+
+**Solution**: Rate-limit point accumulation to **real wall-clock time**.
+
+```javascript
+MAX_POINTS_PER_MINUTE = 2  // Maximum 2 points per minute
+
+elapsedMinutes = (Date.now() - sessionStartTime) / 60000
+maxPointsForTime = Math.floor(elapsedMinutes * MAX_POINTS_PER_MINUTE)
+
+if (currentPoints >= maxPointsForTime) {
+  // Rate limited - can't earn faster than 2 points/minute
+  return;
+}
+```
+
+**Result**:
+- Earning 100 points (checkout threshold) takes ~50 minutes minimum
+- Earning 200 points (premium tier) takes ~100 minutes minimum
+- **You cannot parallelize time** - 1000 bot browsers still take 50 minutes each
+
+This is the **critical** defense: time cannot be faked or accelerated in a datacenter.
+
+### Server-Funded Gas: The Economic Lever
+
+**Problem**: Most rivet wallets have zero gas balance. If users must pay gas fees for every commit, they won't participate.
+
+**Solution**: **Server funds legitimate users once per hour**.
+
+#### How Funding Works
+
+1. **User browses naturally** → Earns 50 points over 25 minutes
+2. **Client attempts commit** → Sends `requestFunding: true`
+3. **Server checks rate limit** → Last funded > 1 hour ago?
+4. **Server checks patterns** → Does behavior look human?
+5. **Server sends 0.02 native tokens** → Enough for ~2-3 commits
+6. **User commits score** → Using server-provided gas
+
+#### Funding Responses
+
+**200 OK** - Funded and committed successfully
+```json
+{
+  "success": true,
+  "txHash": "0xabc...",
+  "totalPoints": 50,
+  "nextEligible": 1704928131000
+}
+```
+
+**402 Payment Required** - Too soon, must wait
+```json
+{
+  "error": "Funding not available yet",
+  "reason": "cooldown_active",
+  "waitMinutes": 37,
+  "message": "Funding available once per hour. Please wait 37 more minutes."
+}
+```
+
+**403 Forbidden** - Suspicious activity detected
+```json
+{
+  "error": "Suspicious activity detected",
+  "reason": "uniform_timing",
+  "details": "Events too evenly spaced (stdDev: 42ms, avg: 5000ms)",
+  "message": "This rivet has been flagged for unusual behavior patterns"
+}
+```
+
+**503 Service Unavailable** - Server wallet low on funds
+```json
+{
+  "error": "Funding failed",
+  "reason": "insufficient_server_balance",
+  "message": "Server unable to provide funding. You may need to fund your own transaction."
+}
+```
+
+### The Economics
+
+#### For Legitimate Users
+- **Server cost**: ~$0.02 per hour per active user (on Polygon)
+- **User experience**: Zero friction - just browse naturally
+- **Participation rate**: High (users don't need crypto knowledge)
+
+#### For Bot Farmers
+
+**Option 1: Wait Real Time**
+- 1000 bot browsers × 50 minutes = **50,000 bot-minutes to reach checkout threshold**
+- Defeats purpose of automation - might as well hire real humans
+
+**Option 2: Pay Own Gas**
+- 1000 rivets × $0.02/hour × 4 hours to build reputation = **$80**
+- Plus ongoing commit costs
+- At scale: 100,000 rivets = **$8,000** for basic scores
+- **Detection risk**: Paying from same funding wallet = easy to block entire batch
+
+**Option 3: Request Server Funding Frequently**
+- Limited to once per hour per rivet
+- Suspicious pattern detection triggers 403 blocks
+- 1000 rivets × 50 points each = 1000 hours of server monitoring
+- **High detection probability** before reaching useful scores
+
+### Suspicious Pattern Detection
+
+The server analyzes behavior **before** providing funding:
+
+#### Excessive Funding Rate
+```javascript
+MAX_FUNDINGS_PER_DAY = 30  // ~2 per hour max average
+
+fundingsPerDay = fundingCount / daysSinceFirstFunding
+
+if (fundingsPerDay > 30) {
+  return 403; // Likely bot or runaway script
+}
+```
+
+#### Uniform Timing (Bot Signature)
+```javascript
+// Calculate standard deviation of event intervals
+intervals = [event[i].timestamp - event[i-1].timestamp for all events]
+stdDev = standardDeviation(intervals)
+avgInterval = mean(intervals)
+
+if (stdDev < avgInterval * 0.1) {
+  // Events are too evenly spaced - humans vary more
+  return 403;
+}
+```
+
+**Example**:
+- Human: [2.3s, 0.8s, 5.1s, 1.2s, 3.7s] → High variance ✓
+- Bot: [2.0s, 2.0s, 2.0s, 2.0s, 2.0s] → Suspiciously uniform ✗
+
+### Configuration
+
+Server-side settings in `index.mjs`:
+
+```javascript
+const notabotFunding = {
+  FUNDING_COOLDOWN: 60 * 60 * 1000,     // 1 hour
+  MAX_FUNDINGS_PER_DAY: 30,              // Catch runaway scripts
+  FUNDING_AMOUNT: '20000000000000000',   // 0.02 native token
+
+  // Polygon Mainnet: ~$0.02 per funding
+  // JOC: Even cheaper
+  // Ethereum: More expensive, may need adjustment
+}
+```
+
+Client-side settings in `client/notabot.js`:
+
+```javascript
+class NotabotTracker {
+  constructor(rivet) {
+    this.MAX_POINTS_PER_MINUTE = 2;    // Time-gating rate
+    this.COMMIT_THRESHOLD = 50;         // Auto-commit every 50 points
+  }
+}
+```
+
+### Why This Works
+
+1. **Time is unfakeable** - You can't parallelize 50 minutes into 5 seconds
+2. **Server controls funding** - Bots must either wait or pay
+3. **Detection before investment** - Server analyzes patterns before spending gas
+4. **Economics favor defense**:
+   - Legitimate user cost: $0.02/hour when active
+   - Bot farm cost at scale: $80-$8000 for basic coverage
+   - Legitimate users browse 1-2 sites/hour
+   - Bots need presence across many sites = multiplied costs
+
+5. **Legitimate users subsidized** - Sites that benefit from bot protection pay the trivial funding costs
+
+### Attack Cost Analysis
+
+| Attack Vector | Cost for 1000 Rivets | Time Required | Detection Risk |
+|--------------|---------------------|---------------|----------------|
+| Wait for funding | $0 | 50,000 bot-minutes | High (pattern analysis) |
+| Pay own gas | $80-$8000 | 50 minutes | Medium (wallet correlation) |
+| Steal credentials | N/A | N/A | Impossible (rivet = browser-locked) |
+| Simulate perfect behavior | $0-$80 | 50 minutes | Very High (entropy analysis) |
+
+**Conclusion**: There is no economically viable path to large-scale bot farming. Small-scale attacks (<10 rivets) are possible but not useful for real-world exploits (spam, scraping, fraud all require scale).
+
 ## Scoring Guidelines
 
 ### Point Ranges
