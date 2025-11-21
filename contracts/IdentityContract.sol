@@ -25,11 +25,27 @@ contract IdentityContract {
     // Mapping to store optional friendly names for rivets
     mapping(address => string) public rivetNames;
 
+    /**
+     * @dev Notabot Score System
+     * Based on US Patent 11,120,469 "Browser Proof of Work"
+     * Stores cryptographically-verified human behavior scores for each rivet
+     */
+    struct NotabotCommitment {
+        uint256 totalPoints;      // Total accumulated notabot points
+        bytes32 chainHead;        // Hash of most recent event in the chain
+        uint256 eventCount;       // Number of events in the chain
+        uint256 lastUpdate;       // Timestamp of last update
+    }
+
+    // Rivet address => notabot commitment
+    mapping(address => NotabotCommitment) public notabotScores;
+
     // Events
     event IdentityCreated(address indexed owner, address indexed firstRivet, uint256 timestamp);
     event RivetAdded(address indexed rivet, address indexed addedBy, string name, uint256 timestamp);
     event RivetRemoved(address indexed rivet, address indexed removedBy, uint256 timestamp);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner, uint256 timestamp);
+    event NotabotScoreUpdated(address indexed rivet, uint256 points, uint256 eventCount, uint256 timestamp);
 
     /**
      * @dev Constructor - initializes the identity contract with the deploying rivet
@@ -143,6 +159,72 @@ contract IdentityContract {
         owner = newOwner;
 
         emit OwnershipTransferred(previousOwner, newOwner, block.timestamp);
+    }
+
+    /**
+     * @dev Updates the notabot score for a rivet
+     * Can only be called by the rivet owner (onlyAuthorized)
+     * Server verifies the event chain before allowing this update
+     * @param points Total accumulated points
+     * @param chainHead Hash of the most recent event
+     * @param eventCount Number of events in the chain
+     */
+    function updateNotabotScore(
+        uint256 points,
+        bytes32 chainHead,
+        uint256 eventCount
+    ) external onlyAuthorized {
+        require(points >= notabotScores[msg.sender].totalPoints, "Points cannot decrease");
+        require(eventCount >= notabotScores[msg.sender].eventCount, "Event count cannot decrease");
+
+        notabotScores[msg.sender] = NotabotCommitment({
+            totalPoints: points,
+            chainHead: chainHead,
+            eventCount: eventCount,
+            lastUpdate: block.timestamp
+        });
+
+        emit NotabotScoreUpdated(msg.sender, points, eventCount, block.timestamp);
+    }
+
+    /**
+     * @dev Gets the notabot score for a specific rivet
+     * @param rivet The rivet address to query
+     * @return commitment The notabot commitment data
+     */
+    function getNotabotScore(address rivet)
+        external
+        view
+        returns (NotabotCommitment memory commitment)
+    {
+        return notabotScores[rivet];
+    }
+
+    /**
+     * @dev Gets the highest notabot score among all authorized rivets
+     * Useful for identity-level reputation (any rivet can represent the identity)
+     * @return maxPoints The highest point total
+     * @return maxRivet The rivet with the highest score
+     */
+    function getMaxNotabotScore()
+        external
+        view
+        returns (uint256 maxPoints, address maxRivet)
+    {
+        maxPoints = 0;
+        maxRivet = address(0);
+
+        for (uint256 i = 0; i < authorizedRivets.length; i++) {
+            address rivet = authorizedRivets[i];
+            uint256 points = notabotScores[rivet].totalPoints;
+
+            if (points > maxPoints) {
+                maxPoints = points;
+                maxRivet = rivet;
+            }
+        }
+
+        return (maxPoints, maxRivet);
     }
 
     /**
