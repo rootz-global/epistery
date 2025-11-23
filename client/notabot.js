@@ -519,8 +519,11 @@ export class NotabotTracker {
       // Get identity contract address (will be set by witness.js)
       const identityContractAddress = this.rivet.identityContract;
 
+      // Get rootPath from Witness singleton
+      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+
       // Send to server for blockchain commitment
-      const response = await fetch('/.well-known/epistery/notabot/commit', {
+      const response = await fetch(`${rootPath}/notabot/commit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

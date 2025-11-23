@@ -38,7 +38,8 @@ class EpisteryAttach {
     this.domain = getDomainConfig(domain);
   }
 
-  async attach(app) {
+  async attach(app,rootPath) {
+    this.rootPath = rootPath || '.well-known/epistery';
     app.locals.epistery = this;
 
     app.use(async (req, res, next) => {
@@ -87,7 +88,7 @@ class EpisteryAttach {
     });
 
     // Mount routes - RFC 8615 compliant well-known URI
-    app.use('/.well-known/epistery', this.routes());
+    app.use(this.rootPath, this.routes());
   }
 
   /**
@@ -144,8 +145,66 @@ class EpisteryAttach {
     );
   }
 
+  /**
+   * Build status JSON object
+   * @returns {Object} Status object with server, client, and ipfs info
+   */
+  buildStatus() {
+    const serverWallet = this.domain;
+
+    return {
+      server: {
+        walletAddress: serverWallet?.wallet?.address || null,
+        publicKey: serverWallet?.wallet?.publicKey || null,
+        provider: serverWallet?.provider?.name || 'Polygon Mainnet',
+        chainId: serverWallet?.provider?.chainId?.toString() || '137',
+        rpc: serverWallet?.provider?.rpc || 'https://polygon-rpc.com',
+        nativeCurrency: {
+          symbol: serverWallet?.provider?.nativeCurrency?.symbol || 'POL',
+          name: serverWallet?.provider?.nativeCurrency?.name || 'POL',
+          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18
+        }
+      },
+      client: {},
+      ipfs: {
+        url: process.env.IPFS_URL || 'https://rootz.digital/api/v0'
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
   routes() {
     const router = express.Router();
+
+    // Root endpoint - returns JSON for API clients, HTML for browsers
+    router.get('/', (req, res) => {
+      // Check if client wants JSON (API request)
+      const acceptsJson = req.accepts('json') && !req.accepts('html');
+
+      if (acceptsJson) {
+        return res.json(this.buildStatus());
+      }
+
+      // Return HTML for browsers
+      const domain = req.hostname;
+      const serverWallet = this.domain;
+
+      const templatePath = path.resolve(__dirname, 'client/status.html');
+      if (!fs.existsSync(templatePath)) {
+        return res.status(404).send('Status template not found');
+      }
+
+      let template = fs.readFileSync(templatePath, 'utf8');
+
+      // Template replacement
+      template = template.replace(/\{\{server\.domain\}\}/g, domain);
+      template = template.replace(/\{\{server\.walletAddress\}\}/g, serverWallet?.wallet?.address || '');
+      template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
+      template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
+      template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+
+      res.send(template);
+    });
 
     // Client library files
     const library = {
@@ -213,30 +272,6 @@ class EpisteryAttach {
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
 
       res.send(template);
-    });
-
-    // Main status endpoint (simplified path)
-    router.get('/', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
-    });
-
-    // API routes using the 'src/epistery.ts' defined functions
-    router.get('/api/status', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
     });
 
     // Key exchange endpoint - handles POST requests for key exchange
