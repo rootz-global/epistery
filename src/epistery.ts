@@ -11,7 +11,11 @@ import {
   PrepareTransactionRequest,
   PrepareTransactionResponse,
   SubmitSignedTransactionRequest,
-  SubmitSignedTransactionResponse
+  SubmitSignedTransactionResponse,
+  NotabotEvent,
+  NotabotCommitment,
+  NotabotScore,
+  NotabotCommitRequest
 } from './utils/index.js';
 import { ethers, Wallet } from 'ethers';
 import { AquaTree } from 'aqua-js-sdk';
@@ -1442,5 +1446,228 @@ export class Epistery {
       contractAddress: receipt.contractAddress,
       receipt: receipt
     };
+  }
+
+  /**
+   * Notabot Score System Methods
+   * Based on US Patent 11,120,469 "Browser Proof of Work"
+   */
+
+  /**
+   * Get notabot score for a rivet address
+   * Retrieves commitment from identity contract
+   *
+   * @param rivetAddress - Address of the rivet to query
+   * @param identityContractAddress - Optional identity contract address (if not using Agent)
+   * @returns Notabot score data
+   */
+  public static async getNotabotScore(
+    rivetAddress: string,
+    identityContractAddress?: string
+  ): Promise<NotabotScore> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Load IdentityContract artifact
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    const artifact = JSON.parse(artifactData);
+
+    if (!identityContractAddress) {
+      // If no identity contract specified, try to get it from Agent contract
+      // For now, return zero score if not found
+      return {
+        points: 0,
+        eventCount: 0,
+        lastUpdate: 0,
+        verified: false
+      };
+    }
+
+    // Create contract instance
+    const contract = new ethers.Contract(
+      identityContractAddress,
+      artifact.abi,
+      provider
+    );
+
+    try {
+      // Query notabot score
+      const commitment = await contract.getNotabotScore(rivetAddress);
+
+      return {
+        points: commitment.totalPoints.toNumber(),
+        eventCount: commitment.eventCount.toNumber(),
+        lastUpdate: commitment.lastUpdate.toNumber(),
+        verified: true,
+        commitment: {
+          totalPoints: commitment.totalPoints.toNumber(),
+          chainHead: commitment.chainHead,
+          eventCount: commitment.eventCount.toNumber(),
+          lastUpdate: commitment.lastUpdate.toNumber()
+        }
+      };
+    } catch (error) {
+      console.error('[Epistery] Failed to get notabot score:', error);
+      return {
+        points: 0,
+        eventCount: 0,
+        lastUpdate: 0,
+        verified: false
+      };
+    }
+  }
+
+  /**
+   * Verify integrity of a notabot event chain
+   *
+   * @param rivetAddress - Address that should have signed the events
+   * @param eventChain - Array of events to verify
+   * @returns True if chain is valid
+   */
+  public static async verifyNotabotChain(
+    rivetAddress: string,
+    eventChain: NotabotEvent[]
+  ): Promise<boolean> {
+    if (!eventChain || eventChain.length === 0) {
+      return false;
+    }
+
+    try {
+      // Verify each event's hash and signature
+      for (let i = 0; i < eventChain.length; i++) {
+        const event = eventChain[i];
+
+        // Verify hash chain
+        const expectedPreviousHash = i === 0
+          ? '0x0000000000000000000000000000000000000000000000000000000000000000'
+          : eventChain[i - 1].hash;
+
+        if (event.previousHash !== expectedPreviousHash) {
+          console.error(`[Epistery] Hash chain broken at event ${i}`);
+          return false;
+        }
+
+        // Recalculate hash
+        const data = `${event.previousHash}${event.timestamp}${event.eventType}${event.entropyScore}`;
+        const calculatedHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(data));
+
+        if (calculatedHash !== event.hash) {
+          console.error(`[Epistery] Hash mismatch at event ${i}`);
+          return false;
+        }
+
+        // Verify signature
+        const recoveredAddress = ethers.utils.verifyMessage(event.hash, event.signature);
+
+        if (recoveredAddress.toLowerCase() !== rivetAddress.toLowerCase()) {
+          console.error(`[Epistery] Signature verification failed at event ${i}`);
+          console.error(`  Expected: ${rivetAddress}`);
+          console.error(`  Got: ${recoveredAddress}`);
+          return false;
+        }
+
+        // Verify entropy score is reasonable (0.0 - 1.0)
+        if (event.entropyScore < 0 || event.entropyScore > 1.0) {
+          console.error(`[Epistery] Invalid entropy score at event ${i}: ${event.entropyScore}`);
+          return false;
+        }
+      }
+
+      console.log(`[Epistery] Verified ${eventChain.length} notabot events`);
+      return true;
+
+    } catch (error) {
+      console.error('[Epistery] Chain verification failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Commit notabot score to identity contract
+   * Server-side method called from /.well-known/epistery/notabot/commit endpoint
+   *
+   * @param rivetAddress - Rivet making the commitment
+   * @param rivetMnemonic - Rivet mnemonic for signing transaction
+   * @param request - Commitment request with event chain for verification
+   * @param identityContractAddress - Address of the identity contract
+   * @returns Transaction receipt
+   */
+  public static async commitNotabotScore(
+    rivetAddress: string,
+    rivetMnemonic: string,
+    request: NotabotCommitRequest,
+    identityContractAddress: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // First verify the event chain
+    const isValid = await Epistery.verifyNotabotChain(rivetAddress, request.eventChain);
+    if (!isValid) {
+      throw new Error('Invalid event chain');
+    }
+
+    // Verify commitment matches chain
+    const lastEvent = request.eventChain[request.eventChain.length - 1];
+    if (request.commitment.chainHead !== lastEvent.hash) {
+      throw new Error('Commitment chainHead does not match last event hash');
+    }
+
+    if (request.commitment.eventCount !== request.eventChain.length) {
+      throw new Error('Commitment eventCount does not match chain length');
+    }
+
+    // Calculate total points from chain
+    let calculatedPoints = 0;
+    request.eventChain.forEach(event => {
+      calculatedPoints += Math.floor(event.entropyScore * 10);
+    });
+
+    if (request.commitment.totalPoints !== calculatedPoints) {
+      throw new Error(`Point mismatch: claimed ${request.commitment.totalPoints}, calculated ${calculatedPoints}`);
+    }
+
+    // Load IdentityContract artifact
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    const artifact = JSON.parse(artifactData);
+
+    // Create wallet from mnemonic
+    const rivetWallet = ethers.Wallet.fromMnemonic(rivetMnemonic).connect(provider);
+
+    // Create contract instance
+    const contract = new ethers.Contract(
+      identityContractAddress,
+      artifact.abi,
+      rivetWallet
+    );
+
+    try {
+      // Call updateNotabotScore
+      const tx = await contract.updateNotabotScore(
+        request.commitment.totalPoints,
+        request.commitment.chainHead,
+        request.commitment.eventCount
+      );
+
+      console.log(`[Epistery] Notabot commitment transaction: ${tx.hash}`);
+
+      const receipt = await tx.wait();
+      console.log(`[Epistery] Notabot score committed: ${request.commitment.totalPoints} points`);
+
+      return {
+        transactionHash: receipt.transactionHash,
+        blockNumber: receipt.blockNumber,
+        points: request.commitment.totalPoints,
+        eventCount: request.commitment.eventCount
+      };
+
+    } catch (error) {
+      console.error('[Epistery] Failed to commit notabot score:', error);
+      throw error;
+    }
   }
 }

@@ -38,7 +38,8 @@ class EpisteryAttach {
     this.domain = getDomainConfig(domain);
   }
 
-  async attach(app) {
+  async attach(app,rootPath) {
+    this.rootPath = rootPath || '.well-known/epistery';
     app.locals.epistery = this;
 
     app.use(async (req, res, next) => {
@@ -48,8 +49,46 @@ class EpisteryAttach {
       next();
     });
 
+    // Middleware to enrich request with notabot score
+    app.use(async (req, res, next) => {
+      // Check if client info is available (from key exchange or authentication)
+      if (req.episteryClient && req.episteryClient.address) {
+        try {
+          // Get identity contract address if available
+          // For now, we'll try to get it from query params or headers
+          const identityContractAddress = req.query.identityContract || req.headers['x-identity-contract'];
+
+          // Retrieve notabot score
+          const notabotScore = await Epistery.getNotabotScore(
+            req.episteryClient.address,
+            identityContractAddress
+          );
+
+          // Enrich client info with notabot data
+          req.episteryClient.notabotPoints = notabotScore.points;
+          req.episteryClient.notabotLastUpdate = notabotScore.lastUpdate;
+          req.episteryClient.notabotVerified = notabotScore.verified;
+          req.episteryClient.notabotEventCount = notabotScore.eventCount;
+
+          // Also make it available at the documented location
+          if (!req.app.epistery.clientWallet) {
+            req.app.epistery.clientWallet = {};
+          }
+          req.app.epistery.clientWallet = Object.assign(
+            req.app.epistery.clientWallet,
+            req.episteryClient
+          );
+
+        } catch (error) {
+          // Log error but don't fail the request
+          console.error('[Epistery] Failed to retrieve notabot score:', error.message);
+        }
+      }
+      next();
+    });
+
     // Mount routes - RFC 8615 compliant well-known URI
-    app.use('/.well-known/epistery', this.routes());
+    app.use(this.rootPath, this.routes());
   }
 
   /**
@@ -106,14 +145,78 @@ class EpisteryAttach {
     );
   }
 
+  /**
+   * Build status JSON object
+   * @returns {Object} Status object with server, client, and ipfs info
+   */
+  buildStatus() {
+    const serverWallet = this.domain;
+
+    return {
+      server: {
+        walletAddress: serverWallet?.wallet?.address || null,
+        publicKey: serverWallet?.wallet?.publicKey || null,
+        provider: serverWallet?.provider?.name || 'Polygon Mainnet',
+        chainId: serverWallet?.provider?.chainId?.toString() || '137',
+        rpc: serverWallet?.provider?.rpc || 'https://polygon-rpc.com',
+        nativeCurrency: {
+          symbol: serverWallet?.provider?.nativeCurrency?.symbol || 'POL',
+          name: serverWallet?.provider?.nativeCurrency?.name || 'POL',
+          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18
+        }
+      },
+      client: {},
+      ipfs: {
+        url: process.env.IPFS_URL || 'https://rootz.digital/api/v0'
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
   routes() {
     const router = express.Router();
+
+    // Root endpoint - returns JSON for API clients, HTML for browsers
+    router.get('/', (req, res) => {
+      // Check if client wants JSON (API request)
+      const acceptsJson = req.accepts('json') && !req.accepts('html');
+
+      if (acceptsJson) {
+        return res.json(this.buildStatus());
+      }
+
+      // Return HTML for browsers
+      const domain = req.hostname;
+      const serverWallet = this.domain;
+
+      // Determine the root path from the request's base URL
+      // baseUrl will be '/' or '/.well-known/epistery' depending on mount point
+      const rootPath = req.baseUrl || '/';
+
+      const templatePath = path.resolve(__dirname, 'client/status.html');
+      if (!fs.existsSync(templatePath)) {
+        return res.status(404).send('Status template not found');
+      }
+
+      let template = fs.readFileSync(templatePath, 'utf8');
+
+      // Template replacement
+      template = template.replace(/\{\{server\.domain\}\}/g, domain);
+      template = template.replace(/\{\{server\.walletAddress\}\}/g, serverWallet?.wallet?.address || '');
+      template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
+      template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
+      template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
+
+      res.send(template);
+    });
 
     // Client library files
     const library = {
       "client.js": path.resolve(__dirname, "client/client.js"),
       "witness.js": path.resolve(__dirname, "client/witness.js"),
       "wallet.js": path.resolve(__dirname, "client/wallet.js"),
+      "notabot.js": path.resolve(__dirname, "client/notabot.js"),
       "export.js": path.resolve(__dirname, "client/export.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
@@ -159,6 +262,9 @@ class EpisteryAttach {
       const domain = req.hostname;
       const serverWallet = this.domain;
 
+      // Determine the root path from the request's base URL
+      const rootPath = req.baseUrl || '/';
+
       const templatePath = path.resolve(__dirname, 'client/status.html');
       if (!fs.existsSync(templatePath)) {
         return res.status(404).send('Status template not found');
@@ -172,32 +278,9 @@ class EpisteryAttach {
       template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
       template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
 
       res.send(template);
-    });
-
-    // Main status endpoint (simplified path)
-    router.get('/', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
-    });
-
-    // API routes using the 'src/epistery.ts' defined functions
-    router.get('/api/status', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
     });
 
     // Key exchange endpoint - handles POST requests for key exchange
@@ -675,6 +758,229 @@ class EpisteryAttach {
 
       } catch (error) {
         console.error('Domain initialization error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // ============================================================================
+    // NOTABOT SCORE ENDPOINTS
+    //
+    // Funding economics: Server funds legitimate rivets once per hour to enable
+    // notabot score commits. Bot farms must either pay their own gas (expensive
+    // at scale) or wait real time (defeating purpose).
+    // ============================================================================
+
+    // Funding tracking for notabot commits
+    const notabotFunding = {
+      // rivetAddress => { lastFunded: timestamp, fundingCount: number, firstFunded: timestamp }
+      ledger: new Map(),
+
+      // Configuration
+      FUNDING_COOLDOWN: 60 * 60 * 1000,  // 1 hour
+      MAX_FUNDINGS_PER_DAY: 30,           // Catch runaway scripts
+      FUNDING_AMOUNT: '20000000000000000', // 0.02 native token (enough for ~2-3 commits on Polygon)
+
+      getLastFundingTime(rivetAddress) {
+        const entry = this.ledger.get(rivetAddress);
+        return entry ? entry.lastFunded : 0;
+      },
+
+      recordFunding(rivetAddress) {
+        const now = Date.now();
+        const entry = this.ledger.get(rivetAddress);
+
+        if (!entry) {
+          this.ledger.set(rivetAddress, {
+            lastFunded: now,
+            fundingCount: 1,
+            firstFunded: now
+          });
+        } else {
+          entry.lastFunded = now;
+          entry.fundingCount++;
+        }
+      },
+
+      async fundForSingleCommit(rivetAddress, serverWallet) {
+        try {
+          // Check if server wallet has sufficient balance
+          const balance = await serverWallet.wallet.provider.getBalance(serverWallet.wallet.address);
+          const fundingAmount = this.FUNDING_AMOUNT;
+
+          if (balance.lt(fundingAmount)) {
+            console.error('[Notabot] Server wallet insufficient balance for funding');
+            return { success: false, reason: 'insufficient_server_balance' };
+          }
+
+          // Send funding transaction
+          const tx = await serverWallet.wallet.sendTransaction({
+            to: rivetAddress,
+            value: fundingAmount,
+            maxFeePerGas: 50000000000, // 50 gwei
+            maxPriorityFeePerGas: 30000000000 // 30 gwei
+          });
+
+          await tx.wait();
+
+          console.log(`[Notabot] Funded ${rivetAddress} with ${fundingAmount} wei`);
+          this.recordFunding(rivetAddress);
+
+          return {
+            success: true,
+            txHash: tx.hash,
+            amount: fundingAmount,
+            nextEligible: Date.now() + this.FUNDING_COOLDOWN
+          };
+
+        } catch (error) {
+          console.error('[Notabot] Funding transaction failed:', error);
+          return { success: false, reason: 'tx_failed', error: error.message };
+        }
+      },
+
+      detectSuspiciousPattern(rivetAddress, eventChain) {
+        const entry = this.ledger.get(rivetAddress);
+
+        if (!entry) return { suspicious: false };
+
+        // Check for excessive funding requests
+        const daysSinceFirst = (Date.now() - entry.firstFunded) / (1000 * 60 * 60 * 24);
+        const fundingsPerDay = daysSinceFirst > 0 ? entry.fundingCount / daysSinceFirst : entry.fundingCount;
+
+        if (fundingsPerDay > this.MAX_FUNDINGS_PER_DAY) {
+          return {
+            suspicious: true,
+            reason: 'excessive_funding_rate',
+            details: `${fundingsPerDay.toFixed(1)} fundings/day (max: ${this.MAX_FUNDINGS_PER_DAY})`
+          };
+        }
+
+        // Check for synthetic event patterns (all events at exactly same interval)
+        if (eventChain && eventChain.length > 5) {
+          const intervals = [];
+          for (let i = 1; i < eventChain.length; i++) {
+            intervals.push(eventChain[i].timestamp - eventChain[i-1].timestamp);
+          }
+
+          const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+          const variance = intervals.reduce((sum, interval) => {
+            return sum + Math.pow(interval - avgInterval, 2);
+          }, 0) / intervals.length;
+
+          const stdDev = Math.sqrt(variance);
+
+          // If standard deviation is very low, timing is too uniform (bot-like)
+          if (stdDev < avgInterval * 0.1) {
+            return {
+              suspicious: true,
+              reason: 'uniform_timing',
+              details: `Events too evenly spaced (stdDev: ${stdDev.toFixed(0)}ms, avg: ${avgInterval.toFixed(0)}ms)`
+            };
+          }
+        }
+
+        return { suspicious: false };
+      }
+    };
+
+    // Notabot score endpoint - commit score to identity contract
+    router.post('/notabot/commit', async (req, res) => {
+      try {
+        const { commitment, eventChain, identityContractAddress, requestFunding } = req.body;
+
+        if (!commitment || !eventChain || !identityContractAddress) {
+          return res.status(400).json({
+            error: 'Missing required fields: commitment, eventChain, identityContractAddress'
+          });
+        }
+
+        // Get rivet information from session/auth
+        // For now, expect rivet info in request body
+        const { rivetAddress, rivetMnemonic } = req.body;
+
+        if (!rivetAddress || !rivetMnemonic) {
+          return res.status(400).json({
+            error: 'Missing rivet authentication: rivetAddress, rivetMnemonic'
+          });
+        }
+
+        // Check for suspicious patterns BEFORE funding
+        const suspiciousCheck = notabotFunding.detectSuspiciousPattern(rivetAddress, eventChain);
+        if (suspiciousCheck.suspicious) {
+          console.log(`[Notabot] Suspicious pattern detected for ${rivetAddress}: ${suspiciousCheck.reason}`);
+          return res.status(403).json({
+            error: 'Suspicious activity detected',
+            reason: suspiciousCheck.reason,
+            details: suspiciousCheck.details,
+            message: 'This rivet has been flagged for unusual behavior patterns'
+          });
+        }
+
+        // Handle funding request
+        if (requestFunding) {
+          const lastFunded = notabotFunding.getLastFundingTime(rivetAddress);
+          const timeSinceLastFunding = Date.now() - lastFunded;
+
+          // Check if funding cooldown has elapsed
+          if (timeSinceLastFunding < notabotFunding.FUNDING_COOLDOWN) {
+            const waitMinutes = Math.ceil((notabotFunding.FUNDING_COOLDOWN - timeSinceLastFunding) / 60000);
+            return res.status(402).json({
+              error: 'Funding not available yet',
+              reason: 'cooldown_active',
+              lastFunded: lastFunded,
+              nextEligible: lastFunded + notabotFunding.FUNDING_COOLDOWN,
+              waitMinutes: waitMinutes,
+              message: `Funding available once per hour. Please wait ${waitMinutes} more minutes.`
+            });
+          }
+
+          // Fund the rivet
+          const serverWallet = this.domain;
+          const fundingResult = await notabotFunding.fundForSingleCommit(rivetAddress, serverWallet);
+
+          if (!fundingResult.success) {
+            return res.status(503).json({
+              error: 'Funding failed',
+              reason: fundingResult.reason,
+              details: fundingResult.error,
+              message: 'Server unable to provide funding. You may need to fund your own transaction.'
+            });
+          }
+
+          console.log(`[Notabot] Funded ${rivetAddress}, next eligible: ${new Date(fundingResult.nextEligible).toISOString()}`);
+        }
+
+        // Commit the score to the identity contract
+        const result = await Epistery.commitNotabotScore(
+          rivetAddress,
+          rivetMnemonic,
+          { commitment, eventChain },
+          identityContractAddress
+        );
+
+        res.json(result);
+
+      } catch (error) {
+        console.error('Commit notabot score error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get notabot score for a rivet
+    router.get('/notabot/score/:rivetAddress', async (req, res) => {
+      try {
+        const { rivetAddress } = req.params;
+        const { identityContractAddress } = req.query;
+
+        if (!rivetAddress) {
+          return res.status(400).json({ error: 'Missing rivet address' });
+        }
+
+        const score = await Epistery.getNotabotScore(rivetAddress, identityContractAddress);
+        res.json(score);
+
+      } catch (error) {
+        console.error('Get notabot score error:', error);
         res.status(500).json({ error: error.message });
       }
     });

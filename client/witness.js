@@ -6,6 +6,7 @@
  */
 
 import { Wallet, Web3Wallet, BrowserWallet, RivetWallet } from './wallet.js?v=7';
+import NotabotTracker from './notabot.js';
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -19,9 +20,12 @@ async function ensureEthers() {
     return ethers;
   }
 
+  // Get rootPath from Witness instance if available, otherwise use default
+  const rootPath = Witness.instance?.rootPath || '..';
+
   // Dynamically import ethers from the epistery lib endpoint
   try {
-    const ethersModule = await import('/.well-known/epistery/lib/ethers.js');
+    const ethersModule = await import(`${rootPath}/lib/ethers.js`);
     ethers = ethersModule.ethers || ethersModule.default || ethersModule;
     // Make it available globally for future use
     if (typeof window !== 'undefined') {
@@ -35,11 +39,14 @@ async function ensureEthers() {
 }
 
 export default class Witness {
-  constructor() {
+  constructor(rootPath) {
     if (Witness.instance) return Witness.instance;
     Witness.instance = this;
     this.wallet = null;
     this.server = null;
+    this.notabot = null; // Will be initialized when wallet is loaded
+    // Normalize rootPath - remove trailing slash, default to '..'
+    this.rootPath = (rootPath || '..').replace(/\/$/, '');
     return this;
   }
 
@@ -156,7 +163,7 @@ export default class Witness {
   }
 
   static async connect(options = {}) {
-    let witness = new Witness();
+    let witness = new Witness(options.rootPath);
 
     try {
       // Ensure ethers is loaded first
@@ -179,6 +186,12 @@ export default class Witness {
       // Perform key exchange (skip if skipKeyExchange option is true)
       if (!options.skipKeyExchange) {
         await witness.performKeyExchange();
+      }
+
+      // Initialize notabot tracker if wallet is a rivet
+      if (witness.wallet && witness.wallet.source === 'rivet') {
+        witness.notabot = new NotabotTracker(witness.wallet);
+        console.log('[epistery] Notabot tracker initialized');
       }
 
     } catch (e) {
@@ -213,7 +226,9 @@ export default class Witness {
 
   async fetchServerInfo() {
     try {
-      const response = await fetch('/.well-known/epistery');
+      const response = await fetch(this.rootPath, {
+        headers: { 'Accept': 'application/json' }
+      });
       if (response.ok) {
         const serverInfo = await response.json();
         this.serverInfo = serverInfo.server;
@@ -337,7 +352,7 @@ export default class Witness {
         contractAddress: this.wallet.contractAddress
       };
 
-      const response = await fetch('/.well-known/epistery/connect', {
+      const response = await fetch(`${this.rootPath}/connect`, {
         method: 'POST',
         credentials: 'include',
         headers: {'Content-Type': 'application/json'},
@@ -410,7 +425,7 @@ export default class Witness {
 
       try {
         // STEP 1: Prepare
-        const prepareResponse = await fetch('/.well-known/epistery/data/prepare-transfer-ownership', {
+        const prepareResponse = await fetch(`${this.rootPath}/data/prepare-transfer-ownership`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -432,7 +447,7 @@ export default class Witness {
         console.log('Transaction signed');
 
         // STEP 3: Submit
-        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        const submitResponse = await fetch(`${this.rootPath}/data/submit-signed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -464,7 +479,7 @@ export default class Witness {
         walletType: this.wallet.source
       };
 
-      const result = await fetch('/.well-known/epistery/data/ownership', {
+      const result = await fetch(`${this.rootPath}/data/ownership`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientWalletInfo, futureOwnerWalletAddress })
@@ -496,7 +511,7 @@ export default class Witness {
     if (this.wallet.source === 'rivet') {
       try {
         // STEP 1: Prepare
-        const prepareResponse = await fetch('/.well-known/epistery/approval/prepare-create', {
+        const prepareResponse = await fetch(`${this.rootPath}/approval/prepare-create`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -520,7 +535,7 @@ export default class Witness {
         const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
 
         // STEP 3: Submit
-        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        const submitResponse = await fetch(`${this.rootPath}/data/submit-signed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -552,7 +567,7 @@ export default class Witness {
         walletType: this.wallet.source
       };
 
-      const result = await fetch('/.well-known/epistery/approval/create', {
+      const result = await fetch(`${this.rootPath}/approval/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientWalletInfo, approverAddress, fileName, fileHash, domain })
@@ -591,7 +606,7 @@ export default class Witness {
         requestorAddress: requestorAddress
       });
 
-      let result = await fetch('/.well-known/epistery/approval/get', options);
+      let result = await fetch(`${this.rootPath}/approval/get`, options);
 
       if (result.ok) {
         return await result.json();
@@ -628,7 +643,7 @@ export default class Witness {
         approverAddress: approverAddress
       });
 
-      let result = await fetch('/.well-known/epistery/approval/get-all', options);
+      let result = await fetch(`${this.rootPath}/approval/get-all`, options);
 
       if (result.ok) {
         return await result.json();
@@ -665,7 +680,7 @@ export default class Witness {
         requestorAddress: requestorAddress
       });
 
-      let result = await fetch('/.well-known/epistery/approval/get-all-requestor', options);
+      let result = await fetch(`${this.rootPath}/approval/get-all-requestor`, options);
 
       if (result.ok) {
         return await result.json();
@@ -695,7 +710,7 @@ export default class Witness {
     if (this.wallet.source === 'rivet') {
       try {
         // STEP 1: Prepare
-        const prepareResponse = await fetch('/.well-known/epistery/approval/prepare-handle', {
+        const prepareResponse = await fetch(`${this.rootPath}/approval/prepare-handle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -719,7 +734,7 @@ export default class Witness {
         const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
 
         // STEP 3: Submit
-        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        const submitResponse = await fetch(`${this.rootPath}/data/submit-signed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -751,7 +766,7 @@ export default class Witness {
         walletType: this.wallet.source
       };
 
-      const result = await fetch('/.well-known/epistery/approval/handle', {
+      const result = await fetch(`${this.rootPath}/approval/handle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientWalletInfo, requestorAddress, fileName, approved })
@@ -788,7 +803,7 @@ export default class Witness {
         clientWalletInfo: clientWalletInfo,
       });
 
-      let result = await fetch('/.well-known/epistery/data/read', options);
+      let result = await fetch(`${this.rootPath}/data/read`, options);
       if (result.status === 204) {
         return null;
       }
@@ -824,7 +839,7 @@ export default class Witness {
 
     if (this.wallet.source === 'rivet') {
       try {
-        const prepareResponse = await fetch('/.well-known/epistery/data/prepare-write', {
+        const prepareResponse = await fetch(`${this.rootPath}/data/prepare-write`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -843,7 +858,7 @@ export default class Witness {
 
         await ensureEthers();
         const signedTx = await this.wallet.signTransaction(unsignedTransaction, ethers);
-        const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+        const submitResponse = await fetch(`${this.rootPath}/data/submit-signed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -884,7 +899,7 @@ export default class Witness {
         walletType: this.wallet.source  // 'browser' or 'web3'
       };
 
-      const result = await fetch('/.well-known/epistery/data/write', {
+      const result = await fetch(`${this.rootPath}/data/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientWalletInfo, data })

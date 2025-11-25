@@ -506,8 +506,11 @@ export class RivetWallet extends Wallet {
    */
   async deployIdentityContract(ethers, providerConfig, domain = 'localhost') {
     try {
+      // Get rootPath from Witness singleton
+      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+
       // Step 1: Prepare unsigned deployment transaction (server funds the wallet)
-      const prepareResponse = await fetch('/.well-known/epistery/identity/prepare-deploy', {
+      const prepareResponse = await fetch(`${rootPath}/identity/prepare-deploy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -527,7 +530,7 @@ export class RivetWallet extends Wallet {
       const signedTx = await this.signTransaction(unsignedTransaction, ethers);
 
       // Step 3: Submit signed transaction to blockchain
-      const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+      const submitResponse = await fetch(`${rootPath}/data/submit-signed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -738,11 +741,14 @@ export class RivetWallet extends Wallet {
         throw new Error('This rivet is not part of an identity contract');
       }
 
+      // Get rootPath from Witness singleton
+      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+
       // Generate name if not provided (empty string is considered "not provided")
       const finalRivetName = rivetName || RivetWallet.generateRivetName();
 
       // Step 1: Prepare unsigned transaction (server funds the wallet)
-      const prepareResponse = await fetch('/.well-known/epistery/identity/prepare-add-rivet', {
+      const prepareResponse = await fetch(`${rootPath}/identity/prepare-add-rivet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -765,7 +771,7 @@ export class RivetWallet extends Wallet {
       const signedTx = await this.signTransaction(unsignedTransaction, ethers);
 
       // Step 3: Submit signed transaction to blockchain
-      const submitResponse = await fetch('/.well-known/epistery/data/submit-signed', {
+      const submitResponse = await fetch(`${rootPath}/data/submit-signed`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -803,10 +809,13 @@ export class RivetWallet extends Wallet {
         throw new Error('This rivet is not part of an identity contract');
       }
 
+      // Get rootPath from Witness singleton
+      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+
       const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
 
       // Load contract artifact
-      const response = await fetch('/.well-known/epistery/artifacts/IdentityContract.json');
+      const response = await fetch(`${rootPath}/artifacts/IdentityContract.json`);
       const artifact = await response.json();
 
       // Connect to the identity contract (read-only, no signer needed)
