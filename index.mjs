@@ -218,6 +218,7 @@ class EpisteryAttach {
       "wallet.js": path.resolve(__dirname, "client/wallet.js"),
       "notabot.js": path.resolve(__dirname, "client/notabot.js"),
       "export.js": path.resolve(__dirname, "client/export.js"),
+      "delegation.js": path.resolve(__dirname, "client/delegation.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
     };
@@ -278,6 +279,21 @@ class EpisteryAttach {
       template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
       template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
+
+      res.send(template);
+    });
+
+    // Delegation approval UI
+    router.get('/delegate', (req, res) => {
+      const rootPath = req.baseUrl || '/';
+      const templatePath = path.resolve(__dirname, 'client/delegate.html');
+
+      if (!fs.existsSync(templatePath)) {
+        return res.status(404).send('Delegation template not found');
+      }
+
+      let template = fs.readFileSync(templatePath, 'utf8');
       template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
 
       res.send(template);
