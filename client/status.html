@@ -4,18 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <link rel="icon" href="/.well-known/epistery/favicon.ico">
+  <link rel="icon" href="{{epistery.rootPath}}/favicon.ico">
   <title>Epistery Status - {{server.domain}}</title>
   <script type="module">
-    import Witness from '/.well-known/epistery/lib/witness.js';
-    import Export from '/.well-known/epistery/lib/export.js';
+    import Witness from '{{epistery.rootPath}}/lib/witness.js';
+    import Export from '{{epistery.rootPath}}/lib/export.js';
 
     let witness = null;
     
     window.addEventListener('DOMContentLoaded', async () => {
       try {
         // Connect to Epistery and get/create client wallet
-        witness = await Witness.connect();
+        // Determine rootPath from the current page URL
+        const rootPath = '{{epistery.rootPath}}';
+        witness = await Witness.connect({ rootPath });
         
         const status = witness.getStatus();
         

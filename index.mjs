@@ -189,6 +189,10 @@ class EpisteryAttach {
       const domain = req.hostname;
       const serverWallet = this.domain;
 
+      // Determine the root path from the request's base URL
+      // baseUrl will be '/' or '/.well-known/epistery' depending on mount point
+      const rootPath = req.baseUrl || '/';
+
       const templatePath = path.resolve(__dirname, 'client/status.html');
       if (!fs.existsSync(templatePath)) {
         return res.status(404).send('Status template not found');
@@ -202,6 +206,7 @@ class EpisteryAttach {
       template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
       template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
 
       res.send(template);
     });
@@ -257,6 +262,9 @@ class EpisteryAttach {
       const domain = req.hostname;
       const serverWallet = this.domain;
 
+      // Determine the root path from the request's base URL
+      const rootPath = req.baseUrl || '/';
+
       const templatePath = path.resolve(__dirname, 'client/status.html');
       if (!fs.existsSync(templatePath)) {
         return res.status(404).send('Status template not found');
@@ -270,6 +278,7 @@ class EpisteryAttach {
       template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
       template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
       template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
 
       res.send(template);
     });
