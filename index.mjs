@@ -112,8 +112,7 @@ class EpisteryAttach {
 
     return await Utils.GetWhitelist(
       serverWallet,
-      this.domain.wallet.address,
-      this.domainName
+      this.domain.wallet.address
     );
   }
 
@@ -140,7 +139,6 @@ class EpisteryAttach {
     return await Utils.IsWhitelisted(
       serverWallet,
       this.domain.wallet.address,
-      this.domainName,
       address
     );
   }

@@ -380,7 +380,6 @@ export default class Witness {
           this.save();
           console.log('Key exchange completed successfully');
           console.log('Server address:', this.server.address);
-          console.log('Available services:', this.server.services);
         } else {
           throw new Error('Server identity verification failed');
         }

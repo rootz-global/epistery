@@ -2,15 +2,41 @@
 pragma solidity ^0.8.0;
 
 contract Agent {
+  // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
+  string public domain;
+
+  // Immutable sponsor address - the address that paid for deployment
+  address public immutable sponsor;
+
   // Mapping from wallet address to array of data (IPFS hashes)
   mapping(address => string[]) private addressData;
 
   // Mapping from wallet address to array of public keys
   mapping(address => string[]) private addressPublicKeys;
 
-  // Mapping from wallet address to map of domain to array of white-listed addresses
-  // Ex: ["0x1000"] --> ["localhost"]["0x2000", "0x3000", "0x4000", ...]
-  mapping(address => mapping(string => address[])) private domainWhitelist;
+  // Struct for whitelist entry with metadata
+  struct WhitelistEntry {
+    address addr;
+    string name;
+    uint8 role; // 0=none, 1=read, 2=edit, 3=admin, 4=owner
+    string meta; // JSON or stringified JSON for arbitrary extension data
+  }
+
+  // Mapping from wallet address to array of whitelist entries (no domain key needed - contract is per domain)
+  // Ex: ["0x1000"] --> [WhitelistEntry, WhitelistEntry, ...]
+  mapping(address => WhitelistEntry[]) private whitelist;
+
+  /**
+   * @dev Constructor sets the immutable domain name and sponsor
+   * @param _domain The domain name this contract is deployed for
+   * @param _sponsor The address that paid for the deployment
+   */
+  constructor(string memory _domain, address _sponsor) {
+    require(bytes(_domain).length > 0, "Domain cannot be empty");
+    require(_sponsor != address(0), "Sponsor cannot be zero address");
+    domain = _domain;
+    sponsor = _sponsor;
+  }
 
   // Event emitted when data is written
   event DataWritten(address indexed owner, string publicKey, string data, uint256 timestamp);
@@ -167,33 +193,99 @@ contract Agent {
     emit OwnershipTransferred(msg.sender, newOwner, block.timestamp);
   }
 
-  function addToWhitelist(address addressToAdd, string memory domain) external {
-    domainWhitelist[msg.sender][domain].push(addressToAdd);
+  /**
+   * @dev Adds an address to the whitelist with metadata
+   * @param addressToAdd The address to add
+   * @param name The name for the address (empty string for default empty)
+   * @param role The role (0-4). 255 = don't set (use default 0)
+   * @param meta The metadata JSON string (empty string for default empty)
+   */
+  function addToWhitelist(
+    address addressToAdd,
+    string memory name,
+    uint8 role,
+    string memory meta
+  ) external {
+    require(role <= 4 || role == 255, "Invalid role: must be 0-4 or 255 (unset)");
+
+    WhitelistEntry memory entry = WhitelistEntry({
+      addr: addressToAdd,
+      name: name,
+      role: role == 255 ? 0 : role, // Default to 0 if unset
+      meta: meta
+    });
+
+    whitelist[msg.sender].push(entry);
   }
 
-  function removeFromWhitelist(address addressToRemove, string memory domain) external {
-    address[] storage whitelist = domainWhitelist[msg.sender][domain];
-    for (uint256 i = 0; i < whitelist.length; i++) {
-      if (whitelist[i] == addressToRemove) {
-          whitelist[i] = whitelist[whitelist.length - 1];
-          whitelist.pop();
+  function removeFromWhitelist(address addressToRemove) external {
+    WhitelistEntry[] storage wl = whitelist[msg.sender];
+    for (uint256 i = 0; i < wl.length; i++) {
+      if (wl[i].addr == addressToRemove) {
+          wl[i] = wl[wl.length - 1];
+          wl.pop();
           break;
       }
     }
   }
 
-  function getWhitelist(address wallet, string memory domain) external view returns (address[] memory) {
-    return domainWhitelist[wallet][domain];
+  /**
+   * @dev Updates an existing whitelist entry
+   * Uses sentinel values to indicate "don't update":
+   * - For name and meta: "\x00KEEP" means don't update
+   * - For role: 255 means don't update
+   * Empty strings or 0 for role will set those values explicitly
+   */
+  function updateWhitelistEntry(
+    address addressToUpdate,
+    string memory name,
+    uint8 role,
+    string memory meta
+  ) external {
+    require(role <= 4 || role == 255, "Invalid role: must be 0-4 or 255 (keep existing)");
+
+    WhitelistEntry[] storage wl = whitelist[msg.sender];
+    for (uint256 i = 0; i < wl.length; i++) {
+      if (wl[i].addr == addressToUpdate) {
+          // Update name only if not the sentinel value
+          if (keccak256(bytes(name)) != keccak256(bytes("\x00KEEP"))) {
+            wl[i].name = name;
+          }
+          // Update role only if not 255
+          if (role != 255) {
+            wl[i].role = role;
+          }
+          // Update meta only if not the sentinel value
+          if (keccak256(bytes(meta)) != keccak256(bytes("\x00KEEP"))) {
+            wl[i].meta = meta;
+          }
+          break;
+      }
+    }
   }
 
-  function isWhitelisted(address wallet, string memory domain, address addressToCheck) external view returns (bool) {
-    address[] memory whitelist = domainWhitelist[wallet][domain];
-    for (uint256 i = 0; i < whitelist.length; i++) {
-      if (whitelist[i] == addressToCheck) {
+  function getWhitelist(address wallet) external view returns (WhitelistEntry[] memory) {
+    return whitelist[wallet];
+  }
+
+  function isWhitelisted(address wallet, address addressToCheck) external view returns (bool) {
+    WhitelistEntry[] memory wl = whitelist[wallet];
+    for (uint256 i = 0; i < wl.length; i++) {
+      if (wl[i].addr == addressToCheck) {
           return true;
       }
     }
     return false;
+  }
+
+  function getWhitelistEntry(address wallet, address addressToCheck) external view returns (WhitelistEntry memory) {
+    WhitelistEntry[] memory wl = whitelist[wallet];
+    for (uint256 i = 0; i < wl.length; i++) {
+      if (wl[i].addr == addressToCheck) {
+          return wl[i];
+      }
+    }
+    revert("Address not in whitelist");
   }
 
   /**
@@ -201,9 +293,9 @@ contract Agent {
    * @param approverAddress The address that will approve/deny the request
    * @param fileName The name of the file being requested
    * @param fileHash The hash of the file being requested
-   * @param domain The domain context for the request
+   * @param requestDomain The domain context for the request
    */
-  function createApproval(address approverAddress, string memory fileName, string memory fileHash, string memory domain) external {
+  function createApproval(address approverAddress, string memory fileName, string memory fileHash, string memory requestDomain) external {
     require(approverAddress != address(0), "Approver cannot be zero address");
     require(bytes(fileName).length > 0, "File name cannot be empty");
     require(bytes(fileHash).length > 0, "File hash cannot be empty");
