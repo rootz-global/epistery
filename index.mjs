@@ -264,7 +264,7 @@ class EpisteryAttach {
       const serverWallet = this.domain;
 
       // Determine the root path from the request's base URL
-      const rootPath = req.baseUrl || '/';
+      const rootPath = req.baseUrl;
 
       const templatePath = path.resolve(__dirname, 'client/status.html');
       if (!fs.existsSync(templatePath)) {
