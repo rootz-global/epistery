@@ -2,6 +2,9 @@
 pragma solidity ^0.8.0;
 
 contract Agent {
+  // Contract version - increment when ABI or functionality changes
+  string public constant VERSION = "2.0.0";
+
   // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
   string public domain;
 
@@ -22,9 +25,12 @@ contract Agent {
     string meta; // JSON or stringified JSON for arbitrary extension data
   }
 
-  // Mapping from wallet address to array of whitelist entries (no domain key needed - contract is per domain)
-  // Ex: ["0x1000"] --> [WhitelistEntry, WhitelistEntry, ...]
-  mapping(address => WhitelistEntry[]) private whitelist;
+  // Named whitelists: owner => listName => WhitelistEntry[]
+  // List names follow format: "type::resource" (e.g., "domain::wiki.rootz.global", "channel::general")
+  mapping(address => mapping(string => WhitelistEntry[])) private namedWhitelists;
+
+  // Track which list names an owner has created (for enumeration)
+  mapping(address => string[]) private ownerListNames;
 
   /**
    * @dev Constructor sets the immutable domain name and sponsor
@@ -49,6 +55,9 @@ contract Agent {
 
   // Event emitted when approval is handled
   event ApprovalHandled(address indexed approver, address indexed requestor, string fileName, bool approved, uint256 timestamp);
+
+  // Event emitted when whitelist is modified
+  event WhitelistModified(address indexed owner, string listName, address indexed addr, string action, uint256 timestamp);
 
   // Struct for requests
   struct ApprovalRequest {
@@ -77,6 +86,23 @@ contract Agent {
 
   // Mapping from requestor address to array of approver addresses
   mapping(address => address[]) private requestorApprovers;
+
+  // Generic attribute storage
+  // Public attributes - readable by anyone
+  mapping(string => string) public publicAttributes;
+
+  // Private attributes - only readable by owner and admins
+  mapping(string => string) private privateAttributes;
+
+  // Track attribute keys for enumeration
+  string[] private publicAttributeKeys;
+  string[] private privateAttributeKeys;
+
+  // Admin addresses who can read/write private attributes
+  mapping(address => bool) private administrators;
+
+  // Event emitted when an attribute is set
+  event AttributeSet(string indexed key, bool isPublic, uint256 timestamp);
 
   /**
    * @dev Writes data for the caller's address
@@ -131,7 +157,6 @@ contract Agent {
     }
 
     // Transfer all approval requests where msg.sender is the requestor
-    // These are requests that msg.sender made TO other approvers
     address[] memory approvers = requestorApprovers[msg.sender];
     for (uint256 i = 0; i < approvers.length; i++) {
       address approver = approvers[i];
@@ -143,7 +168,6 @@ contract Agent {
       }
 
       // Update the approver's requestor list
-      // Remove msg.sender and add newOwner if not already present
       address[] storage requestors = approverRequestors[approver];
       bool newOwnerExists = false;
 
@@ -163,12 +187,12 @@ contract Agent {
         }
       }
 
-      // Add newOwner to requestors list if not already present
+      // Add newOwner if not present
       if (!newOwnerExists) {
         approverRequestors[approver].push(newOwner);
       }
 
-      // Add approver to newOwner's approver list if not already present
+      // Add approver to newOwner's approver list
       bool approverExistsForNewOwner = false;
       address[] storage newOwnerApprovers = requestorApprovers[newOwner];
       for (uint256 k = 0; k < newOwnerApprovers.length; k++) {
@@ -181,7 +205,6 @@ contract Agent {
         requestorApprovers[newOwner].push(approver);
       }
 
-      // Clear old requests
       delete approvalRequests[approver][msg.sender];
     }
 
@@ -194,95 +217,146 @@ contract Agent {
   }
 
   /**
-   * @dev Adds an address to the whitelist with metadata
+   * @dev Adds an address to a named whitelist
+   * @param listName The name of the list (e.g., "domain::wiki.rootz.global")
    * @param addressToAdd The address to add
-   * @param name The name for the address (empty string for default empty)
+   * @param name The display name for the address
    * @param role The role (0-4). 255 = don't set (use default 0)
-   * @param meta The metadata JSON string (empty string for default empty)
+   * @param meta The metadata JSON string
    */
   function addToWhitelist(
+    string memory listName,
     address addressToAdd,
     string memory name,
     uint8 role,
     string memory meta
   ) external {
+    require(bytes(listName).length > 0, "List name cannot be empty");
+    require(addressToAdd != address(0), "Address cannot be zero");
     require(role <= 4 || role == 255, "Invalid role: must be 0-4 or 255 (unset)");
+
+    // Track list name for this owner if not already tracked
+    if (namedWhitelists[msg.sender][listName].length == 0) {
+      ownerListNames[msg.sender].push(listName);
+    }
 
     WhitelistEntry memory entry = WhitelistEntry({
       addr: addressToAdd,
       name: name,
-      role: role == 255 ? 0 : role, // Default to 0 if unset
+      role: role == 255 ? 0 : role,
       meta: meta
     });
 
-    whitelist[msg.sender].push(entry);
+    namedWhitelists[msg.sender][listName].push(entry);
+
+    emit WhitelistModified(msg.sender, listName, addressToAdd, "add", block.timestamp);
   }
 
-  function removeFromWhitelist(address addressToRemove) external {
-    WhitelistEntry[] storage wl = whitelist[msg.sender];
+  /**
+   * @dev Removes an address from a named whitelist
+   * @param listName The name of the list
+   * @param addressToRemove The address to remove
+   */
+  function removeFromWhitelist(string memory listName, address addressToRemove) external {
+    require(bytes(listName).length > 0, "List name cannot be empty");
+
+    WhitelistEntry[] storage wl = namedWhitelists[msg.sender][listName];
     for (uint256 i = 0; i < wl.length; i++) {
       if (wl[i].addr == addressToRemove) {
-          wl[i] = wl[wl.length - 1];
-          wl.pop();
-          break;
+        wl[i] = wl[wl.length - 1];
+        wl.pop();
+
+        emit WhitelistModified(msg.sender, listName, addressToRemove, "remove", block.timestamp);
+        break;
       }
     }
   }
 
   /**
    * @dev Updates an existing whitelist entry
-   * Uses sentinel values to indicate "don't update":
-   * - For name and meta: "\x00KEEP" means don't update
-   * - For role: 255 means don't update
-   * Empty strings or 0 for role will set those values explicitly
+   * @param listName The name of the list
+   * @param addressToUpdate The address to update
+   * @param name New name (use "\x00KEEP" to keep existing)
+   * @param role New role (use 255 to keep existing)
+   * @param meta New metadata (use "\x00KEEP" to keep existing)
    */
   function updateWhitelistEntry(
+    string memory listName,
     address addressToUpdate,
     string memory name,
     uint8 role,
     string memory meta
   ) external {
+    require(bytes(listName).length > 0, "List name cannot be empty");
     require(role <= 4 || role == 255, "Invalid role: must be 0-4 or 255 (keep existing)");
 
-    WhitelistEntry[] storage wl = whitelist[msg.sender];
+    WhitelistEntry[] storage wl = namedWhitelists[msg.sender][listName];
     for (uint256 i = 0; i < wl.length; i++) {
       if (wl[i].addr == addressToUpdate) {
-          // Update name only if not the sentinel value
-          if (keccak256(bytes(name)) != keccak256(bytes("\x00KEEP"))) {
-            wl[i].name = name;
-          }
-          // Update role only if not 255
-          if (role != 255) {
-            wl[i].role = role;
-          }
-          // Update meta only if not the sentinel value
-          if (keccak256(bytes(meta)) != keccak256(bytes("\x00KEEP"))) {
-            wl[i].meta = meta;
-          }
-          break;
+        if (keccak256(bytes(name)) != keccak256(bytes("\x00KEEP"))) {
+          wl[i].name = name;
+        }
+        if (role != 255) {
+          wl[i].role = role;
+        }
+        if (keccak256(bytes(meta)) != keccak256(bytes("\x00KEEP"))) {
+          wl[i].meta = meta;
+        }
+
+        emit WhitelistModified(msg.sender, listName, addressToUpdate, "update", block.timestamp);
+        break;
       }
     }
   }
 
-  function getWhitelist(address wallet) external view returns (WhitelistEntry[] memory) {
-    return whitelist[wallet];
+  /**
+   * @dev Gets all entries from a named whitelist
+   * @param wallet The owner of the list
+   * @param listName The name of the list
+   * @return Array of whitelist entries
+   */
+  function getWhitelist(address wallet, string memory listName) external view returns (WhitelistEntry[] memory) {
+    return namedWhitelists[wallet][listName];
   }
 
-  function isWhitelisted(address wallet, address addressToCheck) external view returns (bool) {
-    WhitelistEntry[] memory wl = whitelist[wallet];
+  /**
+   * @dev Gets all list names for an owner
+   * @param wallet The owner address
+   * @return Array of list names
+   */
+  function getListNames(address wallet) external view returns (string[] memory) {
+    return ownerListNames[wallet];
+  }
+
+  /**
+   * @dev Checks if an address is in a named whitelist
+   * @param wallet The owner of the list
+   * @param listName The name of the list
+   * @param addressToCheck The address to check
+   * @return True if address is in the list
+   */
+  function isWhitelisted(address wallet, string memory listName, address addressToCheck) external view returns (bool) {
+    WhitelistEntry[] memory wl = namedWhitelists[wallet][listName];
     for (uint256 i = 0; i < wl.length; i++) {
       if (wl[i].addr == addressToCheck) {
-          return true;
+        return true;
       }
     }
     return false;
   }
 
-  function getWhitelistEntry(address wallet, address addressToCheck) external view returns (WhitelistEntry memory) {
-    WhitelistEntry[] memory wl = whitelist[wallet];
+  /**
+   * @dev Gets a specific whitelist entry
+   * @param wallet The owner of the list
+   * @param listName The name of the list
+   * @param addressToCheck The address to look up
+   * @return The whitelist entry
+   */
+  function getWhitelistEntry(address wallet, string memory listName, address addressToCheck) external view returns (WhitelistEntry memory) {
+    WhitelistEntry[] memory wl = namedWhitelists[wallet][listName];
     for (uint256 i = 0; i < wl.length; i++) {
       if (wl[i].addr == addressToCheck) {
-          return wl[i];
+        return wl[i];
       }
     }
     revert("Address not in whitelist");
@@ -414,7 +488,7 @@ contract Agent {
 
       for (uint256 j = 0; j < requests.length; j++) {
         allRequests[currentIndex] = ApprovalWithRequestor({
-          requestor: approver, // Store the approver address in the requestor field
+          requestor: approver,
           approved: requests[j].approved,
           fileName: requests[j].fileName,
           fileHash: requests[j].fileHash,
@@ -431,7 +505,6 @@ contract Agent {
   /**
    * @dev Handles a request (approve or deny)
    * Only the approver can handle their requests
-   * Automatically finds and processes the first unprocessed request from the requestor
    * @param requestorAddress The address that requested the approval
    * @param fileName The name of the file to approve/deny
    * @param approved Whether to approve or deny the request
@@ -458,5 +531,156 @@ contract Agent {
     }
 
     require(found, "No unprocessed request found with this file name");
+  }
+
+  // ============================================================================
+  // ATTRIBUTE MANAGEMENT
+  //
+  // Generic key-value storage with public and private namespaces
+  // ============================================================================
+
+  /**
+   * @dev Add or update an administrator
+   * Only the contract sponsor can add administrators
+   * @param admin The address to grant admin privileges
+   */
+  function addAdministrator(address admin) external {
+    require(msg.sender == sponsor, "Only sponsor can add administrators");
+    require(admin != address(0), "Admin cannot be zero address");
+    administrators[admin] = true;
+  }
+
+  /**
+   * @dev Remove an administrator
+   * Only the contract sponsor can remove administrators
+   * @param admin The address to revoke admin privileges from
+   */
+  function removeAdministrator(address admin) external {
+    require(msg.sender == sponsor, "Only sponsor can remove administrators");
+    administrators[admin] = false;
+  }
+
+  /**
+   * @dev Check if an address is an administrator
+   * @param addr The address to check
+   * @return True if the address is an administrator
+   */
+  function isAdministrator(address addr) external view returns (bool) {
+    return addr == sponsor || administrators[addr];
+  }
+
+  /**
+   * @dev Set a public attribute (readable by anyone)
+   * Only sponsor and administrators can set public attributes
+   * @param key The attribute key
+   * @param value The attribute value
+   */
+  function setPublicAttribute(string memory key, string memory value) external {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can set public attributes");
+    require(bytes(key).length > 0, "Key cannot be empty");
+
+    // Track key for enumeration if it's new
+    if (bytes(publicAttributes[key]).length == 0) {
+      publicAttributeKeys.push(key);
+    }
+
+    publicAttributes[key] = value;
+    emit AttributeSet(key, true, block.timestamp);
+  }
+
+  /**
+   * @dev Get a public attribute
+   * Anyone can read public attributes
+   * @param key The attribute key
+   * @return The attribute value
+   */
+  function getPublicAttribute(string memory key) external view returns (string memory) {
+    return publicAttributes[key];
+  }
+
+  /**
+   * @dev Get all public attribute keys
+   * @return Array of all public attribute keys
+   */
+  function getPublicAttributeKeys() external view returns (string[] memory) {
+    return publicAttributeKeys;
+  }
+
+  /**
+   * @dev Set a private attribute (readable only by sponsor and administrators)
+   * Only sponsor and administrators can set private attributes
+   * @param key The attribute key
+   * @param value The attribute value
+   */
+  function setPrivateAttribute(string memory key, string memory value) external {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can set private attributes");
+    require(bytes(key).length > 0, "Key cannot be empty");
+
+    // Track key for enumeration if it's new
+    if (bytes(privateAttributes[key]).length == 0) {
+      privateAttributeKeys.push(key);
+    }
+
+    privateAttributes[key] = value;
+    emit AttributeSet(key, false, block.timestamp);
+  }
+
+  /**
+   * @dev Get a private attribute
+   * Only sponsor and administrators can read private attributes
+   * @param key The attribute key
+   * @return The attribute value
+   */
+  function getPrivateAttribute(string memory key) external view returns (string memory) {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can read private attributes");
+    return privateAttributes[key];
+  }
+
+  /**
+   * @dev Get all private attribute keys
+   * Only sponsor and administrators can see private attribute keys
+   * @return Array of all private attribute keys
+   */
+  function getPrivateAttributeKeys() external view returns (string[] memory) {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can read private attribute keys");
+    return privateAttributeKeys;
+  }
+
+  /**
+   * @dev Delete a public attribute
+   * Only sponsor and administrators can delete public attributes
+   * @param key The attribute key to delete
+   */
+  function deletePublicAttribute(string memory key) external {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can delete public attributes");
+    delete publicAttributes[key];
+
+    // Remove from keys array
+    for (uint256 i = 0; i < publicAttributeKeys.length; i++) {
+      if (keccak256(bytes(publicAttributeKeys[i])) == keccak256(bytes(key))) {
+        publicAttributeKeys[i] = publicAttributeKeys[publicAttributeKeys.length - 1];
+        publicAttributeKeys.pop();
+        break;
+      }
+    }
+  }
+
+  /**
+   * @dev Delete a private attribute
+   * Only sponsor and administrators can delete private attributes
+   * @param key The attribute key to delete
+   */
+  function deletePrivateAttribute(string memory key) external {
+    require(msg.sender == sponsor || administrators[msg.sender], "Only sponsor or administrators can delete private attributes");
+    delete privateAttributes[key];
+
+    // Remove from keys array
+    for (uint256 i = 0; i < privateAttributeKeys.length; i++) {
+      if (keccak256(bytes(privateAttributeKeys[i])) == keccak256(bytes(key))) {
+        privateAttributeKeys[i] = privateAttributeKeys[privateAttributeKeys.length - 1];
+        privateAttributeKeys.pop();
+        break;
+      }
+    }
   }
 }

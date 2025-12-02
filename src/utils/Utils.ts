@@ -611,13 +611,15 @@ export class Utils {
 
   public static async AddToWhitelist(
     ownerWallet: Wallet,
+    listName: string,
     addressToAdd: string,
     name: string = '',
     role: number = 0,
-    meta: string = ''
+    meta: string = '',
+    contractAddress?: string
   ): Promise<any> {
     try {
-      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Agent contract address not configured');
       }
@@ -634,7 +636,7 @@ export class Utils {
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
-        const estimatedGas = await agentContract.estimateGas.addToWhitelist(addressToAdd, name, role, meta);
+        const estimatedGas = await agentContract.estimateGas.addToWhitelist(listName, addressToAdd, name, role, meta);
         gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract addToWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
@@ -643,12 +645,12 @@ export class Utils {
         gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
 
-      const tx = await agentContract.addToWhitelist(addressToAdd, name, role, meta, {
+      const tx = await agentContract.addToWhitelist(listName, addressToAdd, name, role, meta, {
         gasLimit: gasLimit,
         gasPrice: gasPrice
       });
 
-      console.log(`Added ${addressToAdd} to whitelist (name: ${name}, role: ${role}). Tx: ${tx.hash}`);
+      console.log(`Added ${addressToAdd} to whitelist ${listName} (name: ${name}, role: ${role}). Tx: ${tx.hash}`);
       console.log(`Waiting for confirmation...`);
 
       const receipt = await tx.wait();
@@ -663,9 +665,9 @@ export class Utils {
     }
   }
 
-  public static async RemoveFromWhitelist(ownerWallet: Wallet, addressToRemove: string): Promise<any> {
+  public static async RemoveFromWhitelist(ownerWallet: Wallet, listName: string, addressToRemove: string, contractAddress?: string): Promise<any> {
     try {
-      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Agent contract address not configured');
       }
@@ -682,7 +684,7 @@ export class Utils {
       // Estimate gas for the contract write
       let gasLimit: ethers.BigNumber;
       try {
-        const estimatedGas = await agentContract.estimateGas.removeFromWhitelist(addressToRemove);
+        const estimatedGas = await agentContract.estimateGas.removeFromWhitelist(listName, addressToRemove);
         gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract removeFromWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
@@ -692,12 +694,12 @@ export class Utils {
       }
 
       // Call the removeFromWhitelist function
-      const tx = await agentContract.removeFromWhitelist(addressToRemove, {
+      const tx = await agentContract.removeFromWhitelist(listName, addressToRemove, {
         gasLimit: gasLimit,
         gasPrice: gasPrice
       });
 
-      console.log(`Removed ${addressToRemove} from whitelist. Tx: ${tx.hash}`);
+      console.log(`Removed ${addressToRemove} from whitelist ${listName}. Tx: ${tx.hash}`);
       console.log(`Waiting for confirmation...`);
 
       const receipt = await tx.wait();
@@ -712,9 +714,9 @@ export class Utils {
     }
   }
 
-  public static async GetWhitelist(wallet: Wallet, ownerAddress: string): Promise<any[]> {
+  public static async GetWhitelist(wallet: Wallet, ownerAddress: string, listName: string, contractAddress?: string): Promise<any[]> {
     try {
-      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Agent contract address not configured');
       }
@@ -725,9 +727,9 @@ export class Utils {
         wallet
       );
 
-      const whitelist = await agentContract.getWhitelist(ownerAddress);
+      const whitelist = await agentContract.getWhitelist(ownerAddress, listName);
 
-      console.log(`Whitelist for ${ownerAddress}: ${whitelist.length} entry/entries`);
+      console.log(`Whitelist ${listName} for ${ownerAddress}: ${whitelist.length} entry/entries`);
 
       // Convert to plain objects
       const plainWhitelist = whitelist.map((entry: any) => ({
@@ -745,9 +747,9 @@ export class Utils {
     }
   }
 
-  public static async IsWhitelisted(wallet: Wallet, ownerAddress: string, addressToCheck: string): Promise<boolean> {
+  public static async IsWhitelisted(wallet: Wallet, ownerAddress: string, listName: string, addressToCheck: string, contractAddress?: string): Promise<boolean> {
     try {
-      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Agent contract address not configured');
       }
@@ -758,7 +760,7 @@ export class Utils {
         wallet
       );
 
-      const isWhitelisted = await agentContract.isWhitelisted(ownerAddress, addressToCheck);
+      const isWhitelisted = await agentContract.isWhitelisted(ownerAddress, listName, addressToCheck);
 
       return isWhitelisted;
     }

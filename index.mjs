@@ -9,6 +9,9 @@ import { Config } from './dist/utils/Config.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Expected Agent contract version - must match contract VERSION constant
+export const EXPECTED_CONTRACT_VERSION = '2.0.0';
+
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
   let domainConfig = Utils.GetDomainInfo(domain);
@@ -92,10 +95,11 @@ class EpisteryAttach {
   }
 
   /**
-   * Get the whitelist for the current server domain
-   * @returns {Promise<string[]>} Array of whitelisted addresses
+   * Get a list for the current server domain
+   * @param {string} listName - Name of the list (e.g., "domain::example.com")
+   * @returns {Promise<Array>} Array of list entries
    */
-  async getWhitelist() {
+  async getList(listName) {
     if (!this.domain?.wallet) {
       throw new Error('Server wallet not initialized for domain');
     }
@@ -104,24 +108,38 @@ class EpisteryAttach {
       throw new Error('Domain name not set');
     }
 
+    if (!listName) {
+      throw new Error('List name is required');
+    }
+
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
       throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error('Agent contract address not configured for domain');
     }
 
     return await Utils.GetWhitelist(
       serverWallet,
-      this.domain.wallet.address
+      this.domain.wallet.address,
+      listName,
+      contractAddress
     );
   }
 
   /**
-   * Check if an address is whitelisted for the current server domain
+   * Check if an address is on a list for the current server domain
    * @param {string} address - The address to check
-   * @returns {Promise<boolean>} True if address is whitelisted
+   * @param {string} listName - Name of the list to check
+   * @returns {Promise<boolean>} True if address is on the list
    */
-  async isWhitelisted(address) {
+  async isListed(address, listName) {
     if (!this.domain?.wallet) {
       throw new Error('Server wallet not initialized for domain');
     }
@@ -130,17 +148,246 @@ class EpisteryAttach {
       throw new Error('Domain name not set');
     }
 
+    if (!listName) {
+      throw new Error('List name is required');
+    }
+
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
       throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error('Agent contract address not configured for domain');
     }
 
     return await Utils.IsWhitelisted(
       serverWallet,
       this.domain.wallet.address,
-      address
+      listName,
+      address,
+      contractAddress
     );
+  }
+
+  /**
+   * Add an address to a named list
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address to add
+   * @param {string} name - Display name
+   * @param {number} role - Role (0-4)
+   * @param {string} meta - Metadata JSON string
+   */
+  async addToList(listName, address, name = '', role = 0, meta = '') {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    if (!listName) {
+      throw new Error('List name is required');
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error('Agent contract address not configured for domain');
+    }
+
+    return await Utils.AddToWhitelist(
+      serverWallet,
+      listName,
+      address,
+      name,
+      role,
+      meta,
+      contractAddress
+    );
+  }
+
+  /**
+   * Remove an address from a named list
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address to remove
+   */
+  async removeFromList(listName, address) {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    if (!listName) {
+      throw new Error('List name is required');
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error('Agent contract address not configured for domain');
+    }
+
+    return await Utils.RemoveFromWhitelist(
+      serverWallet,
+      listName,
+      address,
+      contractAddress
+    );
+  }
+
+  /**
+   * Check if the deployed contract needs upgrade
+   * @returns {Promise<Object>} Version comparison result
+   */
+  async checkContractVersion() {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    // Get contract address from domain config - reload from disk to get latest
+    this.config.setPath(`/${this.domainName}`);
+    this.config.load(); // Force reload from disk
+    const agentContractAddress = this.config.data?.agent_contract_address;
+    const upgradeNotes = this.config.data?.contract_upgrade_notes;
+
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      return {
+        needsUpgrade: true,
+        reason: 'no_contract',
+        deployedVersion: null,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: null,
+        notes: upgradeNotes
+      };
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    try {
+      // Load contract ABI - use readFileSync since dynamic import with assertions is problematic
+      const AgentArtifact = JSON.parse(
+        fs.readFileSync(path.join(__dirname, 'artifacts/contracts/agent.sol/Agent.json'), 'utf8')
+      );
+
+      const { ethers } = await import('ethers');
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        serverWallet
+      );
+
+      // Try to get VERSION from contract
+      let deployedVersion = null;
+      try {
+        deployedVersion = await agentContract.VERSION();
+      } catch (error) {
+        // Contract doesn't have VERSION field (old version)
+        deployedVersion = '1.0.0'; // Assume old version
+      }
+
+      const needsUpgrade = deployedVersion !== EXPECTED_CONTRACT_VERSION;
+
+      return {
+        needsUpgrade,
+        reason: needsUpgrade ? 'version_mismatch' : 'up_to_date',
+        deployedVersion,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: agentContractAddress,
+        notes: upgradeNotes
+      };
+    } catch (error) {
+      return {
+        needsUpgrade: true,
+        reason: 'check_failed',
+        error: error.message,
+        deployedVersion: null,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: agentContractAddress,
+        notes: upgradeNotes
+      };
+    }
+  }
+
+  /**
+   * Get all list names for the current domain
+   * @returns {Promise<string[]>} Array of list names
+   */
+  async getLists() {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const agentContractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured for domain');
+    }
+
+    const AgentArtifact = JSON.parse(
+      fs.readFileSync(path.join(__dirname, 'artifacts/contracts/agent.sol/Agent.json'), 'utf8')
+    );
+
+    const { ethers } = await import('ethers');
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      serverWallet
+    );
+
+    const listNames = await agentContract.getListNames(this.domain.wallet.address);
+    return listNames;
+  }
+
+  /**
+   * Update a list entry
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address
+   * @param {string} name - Display name
+   * @param {number} role - Role (0-4)
+   * @param {string} meta - Metadata JSON string
+   */
+  async updateEntry(listName, address, name, role, meta) {
+    // For now, update is done by removing and re-adding
+    await this.removeFromList(listName, address);
+    await this.addToList(listName, address, name, role, meta);
   }
 
   /**
@@ -284,7 +531,10 @@ class EpisteryAttach {
 
     // Delegation approval UI
     router.get('/delegate', (req, res) => {
-      const rootPath = req.baseUrl || '/';
+      // Normalize rootPath to ensure it doesn't have trailing slash
+      let rootPath = req.baseUrl || '';
+      if (rootPath === '/') rootPath = '';
+
       const templatePath = path.resolve(__dirname, 'client/delegate.html');
 
       if (!fs.existsSync(templatePath)) {
@@ -999,35 +1249,78 @@ class EpisteryAttach {
       }
     });
 
-    // Whitelist endpoints
-    router.get('/whitelist', async (req, res) => {
+    // List endpoints - with named list support
+    // Get all lists for the domain
+    router.get('/lists', async (req, res) => {
       try {
-        const whitelist = await this.getWhitelist();
+        const lists = await this.getLists();
         res.json({
           domain: this.domainName,
           owner: this.domain.wallet.address,
-          whitelist: whitelist,
-          count: whitelist.length
+          lists: lists,
+          count: lists.length
         });
       }
       catch (error) {
-        console.error('Get whitelist error:', error);
+        console.error('Get lists error:', error);
         res.status(500).json({ error: error.message });
       }
     });
 
-    router.get('/whitelist/check/:address', async (req, res) => {
+    // Get a specific list by name (query param: ?list=domain::example.com)
+    router.get('/list', async (req, res) => {
+      try {
+        const listName = req.query.list;
+        if (!listName) {
+          return res.status(400).json({ error: 'List name is required (use ?list=name)' });
+        }
+
+        const list = await this.getList(listName);
+        res.json({
+          domain: this.domainName,
+          owner: this.domain.wallet.address,
+          listName: listName,
+          list: list,
+          count: list.length
+        });
+      }
+      catch (error) {
+        console.error('Get list error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Check if address is on a specific list (query param: ?list=domain::example.com)
+    router.get('/list/check/:address', async (req, res) => {
       try {
         const { address } = req.params;
-        const isWhitelisted = await this.isWhitelisted(address);
+        const listName = req.query.list;
+        if (!listName) {
+          return res.status(400).json({ error: 'List name is required (use ?list=name)' });
+        }
+
+        const isListed = await this.isListed(address, listName);
         res.json({
           address: address,
-          isWhitelisted: isWhitelisted,
+          listName: listName,
+          isListed: isListed,
           domain: this.domainName
         });
       }
       catch (error) {
-        console.error('Check whitelist error:', error);
+        console.error('Check list error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Contract version check endpoint
+    router.get('/contract/version', async (req, res) => {
+      try {
+        const versionInfo = await this.checkContractVersion();
+        res.json(versionInfo);
+      }
+      catch (error) {
+        console.error('Check contract version error:', error);
         res.status(500).json({ error: error.message });
       }
     });

@@ -51,8 +51,11 @@ export async function createDelegationToken(options, wallet) {
 
   let signature;
 
-  if (wallet.source === 'rivet' && wallet.keyPair) {
-    // Sign with non-extractable rivet key
+  if (wallet.source === 'rivet' && typeof wallet.sign === 'function') {
+    // RivetWallet with sign() method
+    signature = await wallet.sign(delegationString, ethers);
+  } else if (wallet.source === 'rivet' && wallet.keyPair) {
+    // Legacy rivet key with keyPair
     const signatureBuffer = await crypto.subtle.sign(
       {
         name: 'ECDSA',

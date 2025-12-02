@@ -10,8 +10,17 @@ pragma solidity ^0.8.0;
  * Each rivet is a non-extractable browser wallet, and this contract binds them together.
  */
 contract IdentityContract {
+    // Contract version
+    string public constant VERSION = "2.0.0";
+
     // Contract owner (original deployer)
     address public owner;
+
+    // Identity name (optional, attached to epistery domain where minted)
+    string public identityName;
+
+    // Domain where this identity was minted
+    string public domain;
 
     // Array of authorized rivet addresses
     address[] private authorizedRivets;
@@ -40,24 +49,42 @@ contract IdentityContract {
     // Rivet address => notabot commitment
     mapping(address => NotabotCommitment) public notabotScores;
 
+    // Generic attribute storage
+    // Public attributes - readable by anyone
+    mapping(string => string) public publicAttributes;
+
+    // Private attributes - only readable/writable by authorized rivets
+    mapping(string => string) private privateAttributes;
+
+    // Track attribute keys for enumeration
+    string[] private publicAttributeKeys;
+    string[] private privateAttributeKeys;
+
     // Events
-    event IdentityCreated(address indexed owner, address indexed firstRivet, uint256 timestamp);
+    event IdentityCreated(address indexed owner, address indexed firstRivet, string name, string domain, uint256 timestamp);
+    event IdentityNameUpdated(string oldName, string newName, uint256 timestamp);
     event RivetAdded(address indexed rivet, address indexed addedBy, string name, uint256 timestamp);
     event RivetRemoved(address indexed rivet, address indexed removedBy, uint256 timestamp);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner, uint256 timestamp);
     event NotabotScoreUpdated(address indexed rivet, uint256 points, uint256 eventCount, uint256 timestamp);
+    event AttributeSet(string indexed key, bool isPublic, uint256 timestamp);
 
     /**
      * @dev Constructor - initializes the identity contract with the deploying rivet
      * The deploying rivet automatically becomes the owner and first authorized rivet
+     * @param _name Optional identity name (e.g., "alice" for alice.epistery or alice.domain.com)
+     * @param _domain Domain where identity is minted (defaults to "epistery" if empty)
      */
-    constructor() {
+    constructor(string memory _name, string memory _domain) {
         owner = msg.sender;
         authorizedRivets.push(msg.sender);
         isAuthorized[msg.sender] = true;
         rivetAddedAt[msg.sender] = block.timestamp;
 
-        emit IdentityCreated(owner, msg.sender, block.timestamp);
+        identityName = _name;
+        domain = bytes(_domain).length > 0 ? _domain : "epistery";
+
+        emit IdentityCreated(owner, msg.sender, _name, domain, block.timestamp);
     }
 
     /**
@@ -249,5 +276,146 @@ contract IdentityContract {
      */
     function getBalance() external view returns (uint256) {
         return address(this).balance;
+    }
+
+    // ============================================================================
+    // IDENTITY NAME MANAGEMENT
+    // ============================================================================
+
+    /**
+     * @dev Updates the identity name
+     * Can only be called by authorized rivets
+     * @param newName The new name for the identity
+     */
+    function updateIdentityName(string memory newName) external onlyAuthorized {
+        string memory oldName = identityName;
+        identityName = newName;
+        emit IdentityNameUpdated(oldName, newName, block.timestamp);
+    }
+
+    /**
+     * @dev Returns the full qualified identity name (name.domain)
+     * @return The full identity name (e.g., "alice.epistery" or "bob.example.com")
+     */
+    function getFullName() external view returns (string memory) {
+        if (bytes(identityName).length == 0) {
+            return "";
+        }
+        return string(abi.encodePacked(identityName, ".", domain));
+    }
+
+    // ============================================================================
+    // ATTRIBUTE MANAGEMENT
+    //
+    // Generic key-value storage with public and private namespaces
+    // ============================================================================
+
+    /**
+     * @dev Set a public attribute (readable by anyone)
+     * Only authorized rivets can set public attributes
+     * @param key The attribute key
+     * @param value The attribute value
+     */
+    function setPublicAttribute(string memory key, string memory value) external onlyAuthorized {
+        require(bytes(key).length > 0, "Key cannot be empty");
+
+        // Track key for enumeration if it's new
+        if (bytes(publicAttributes[key]).length == 0) {
+            publicAttributeKeys.push(key);
+        }
+
+        publicAttributes[key] = value;
+        emit AttributeSet(key, true, block.timestamp);
+    }
+
+    /**
+     * @dev Get a public attribute
+     * Anyone can read public attributes
+     * @param key The attribute key
+     * @return The attribute value
+     */
+    function getPublicAttribute(string memory key) external view returns (string memory) {
+        return publicAttributes[key];
+    }
+
+    /**
+     * @dev Get all public attribute keys
+     * @return Array of all public attribute keys
+     */
+    function getPublicAttributeKeys() external view returns (string[] memory) {
+        return publicAttributeKeys;
+    }
+
+    /**
+     * @dev Set a private attribute (readable only by authorized rivets)
+     * Only authorized rivets can set private attributes
+     * @param key The attribute key
+     * @param value The attribute value
+     */
+    function setPrivateAttribute(string memory key, string memory value) external onlyAuthorized {
+        require(bytes(key).length > 0, "Key cannot be empty");
+
+        // Track key for enumeration if it's new
+        if (bytes(privateAttributes[key]).length == 0) {
+            privateAttributeKeys.push(key);
+        }
+
+        privateAttributes[key] = value;
+        emit AttributeSet(key, false, block.timestamp);
+    }
+
+    /**
+     * @dev Get a private attribute
+     * Only authorized rivets can read private attributes
+     * @param key The attribute key
+     * @return The attribute value
+     */
+    function getPrivateAttribute(string memory key) external view onlyAuthorized returns (string memory) {
+        return privateAttributes[key];
+    }
+
+    /**
+     * @dev Get all private attribute keys
+     * Only authorized rivets can see private attribute keys
+     * @return Array of all private attribute keys
+     */
+    function getPrivateAttributeKeys() external view onlyAuthorized returns (string[] memory) {
+        return privateAttributeKeys;
+    }
+
+    /**
+     * @dev Delete a public attribute
+     * Only authorized rivets can delete public attributes
+     * @param key The attribute key to delete
+     */
+    function deletePublicAttribute(string memory key) external onlyAuthorized {
+        delete publicAttributes[key];
+
+        // Remove from keys array
+        for (uint256 i = 0; i < publicAttributeKeys.length; i++) {
+            if (keccak256(bytes(publicAttributeKeys[i])) == keccak256(bytes(key))) {
+                publicAttributeKeys[i] = publicAttributeKeys[publicAttributeKeys.length - 1];
+                publicAttributeKeys.pop();
+                break;
+            }
+        }
+    }
+
+    /**
+     * @dev Delete a private attribute
+     * Only authorized rivets can delete private attributes
+     * @param key The attribute key to delete
+     */
+    function deletePrivateAttribute(string memory key) external onlyAuthorized {
+        delete privateAttributes[key];
+
+        // Remove from keys array
+        for (uint256 i = 0; i < privateAttributeKeys.length; i++) {
+            if (keccak256(bytes(privateAttributeKeys[i])) == keccak256(bytes(key))) {
+                privateAttributeKeys[i] = privateAttributeKeys[privateAttributeKeys.length - 1];
+                privateAttributeKeys.pop();
+                break;
+            }
+        }
     }
 }
