@@ -42,7 +42,7 @@ class EpisteryAttach {
   }
 
   async attach(app,rootPath) {
-    this.rootPath = rootPath || '.well-known/epistery';
+    this.rootPath = rootPath || '/.well-known/epistery';
     app.locals.epistery = this;
 
     app.use(async (req, res, next) => {
