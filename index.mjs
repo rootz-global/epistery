@@ -96,7 +96,7 @@ class EpisteryAttach {
 
   /**
    * Get a list for the current server domain
-   * @param {string} listName - Name of the list (e.g., "domain::example.com")
+   * @param {string} listName - Name of the list (e.g., "example.com::admin")
    * @returns {Promise<Array>} Array of list entries
    */
   async getList(listName) {
@@ -1267,7 +1267,7 @@ class EpisteryAttach {
       }
     });
 
-    // Get a specific list by name (query param: ?list=domain::example.com)
+    // Get a specific list by name (query param: ?list=example.com::admin)
     router.get('/list', async (req, res) => {
       try {
         const listName = req.query.list;
@@ -1290,7 +1290,7 @@ class EpisteryAttach {
       }
     });
 
-    // Check if address is on a specific list (query param: ?list=domain::example.com)
+    // Check if address is on a specific list (query param: ?list=example.com::admin)
     router.get('/list/check/:address', async (req, res) => {
       try {
         const { address } = req.params;
