@@ -207,12 +207,6 @@ class EpisteryAttach {
       throw new Error('Domain name not set');
     }
 
-    // Initialize server wallet if not already done
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error('Server wallet not connected');
-    }
-
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
@@ -220,10 +214,17 @@ class EpisteryAttach {
       throw new Error('Agent contract address not configured for domain');
     }
 
-    // Get sponsor from contract
+    // Get provider from domain config
+    const providerConfig = this.config.data?.provider;
+    if (!providerConfig || !providerConfig.rpc) {
+      throw new Error('Provider not configured for domain');
+    }
+
+    // Create ethers provider and contract
     const ethers = await import('ethers');
+    const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
     const AgentArtifact = await import('epistery/artifacts/contracts/agent.sol/Agent.json', { with: { type: 'json' } });
-    const contract = new ethers.Contract(contractAddress, AgentArtifact.default.abi, serverWallet.ethers);
+    const contract = new ethers.Contract(contractAddress, AgentArtifact.default.abi, provider);
 
     return await contract.sponsor();
   }
