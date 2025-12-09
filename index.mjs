@@ -222,7 +222,7 @@ class EpisteryAttach {
 
     // Get sponsor from contract
     const ethers = await import('ethers');
-    const AgentArtifact = await import('epistery-plugin/artifacts/contracts/agent.sol/Agent.json', { with: { type: 'json' } });
+    const AgentArtifact = await import('epistery/artifacts/contracts/agent.sol/Agent.json', { with: { type: 'json' } });
     const contract = new ethers.Contract(contractAddress, AgentArtifact.default.abi, serverWallet.ethers);
 
     return await contract.sponsor();
