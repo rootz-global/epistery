@@ -45,9 +45,29 @@ class EpisteryAttach {
     this.rootPath = rootPath || '/.well-known/epistery';
     app.locals.epistery = this;
 
+    // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
       if (req.app.locals.epistery.domain?.name !== req.hostname) {
         await req.app.locals.epistery.setDomain(req.hostname);
+      }
+      next();
+    });
+
+    // Session middleware - restore req.episteryClient from _epistery cookie
+    app.use(async (req, res, next) => {
+      if (!req.episteryClient && req.cookies?._epistery) {
+        try {
+          const sessionData = JSON.parse(Buffer.from(req.cookies._epistery, 'base64').toString('utf8'));
+          if (sessionData && sessionData.rivetAddress) {
+            req.episteryClient = {
+              address: sessionData.rivetAddress,
+              publicKey: sessionData.publicKey,
+              authenticated: sessionData.authenticated || false
+            };
+          }
+        } catch (e) {
+          // Invalid session cookie, ignore
+        }
       }
       next();
     });
@@ -172,6 +192,40 @@ class EpisteryAttach {
       address,
       contractAddress
     );
+  }
+
+  /**
+   * Get the contract sponsor (owner) address
+   * @returns {Promise<string>} The sponsor's Ethereum address
+   */
+  async getSponsor() {
+    if (!this.domain?.wallet) {
+      throw new Error('Server wallet not initialized for domain');
+    }
+
+    if (!this.domainName) {
+      throw new Error('Domain name not set');
+    }
+
+    // Initialize server wallet if not already done
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error('Server wallet not connected');
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error('Agent contract address not configured for domain');
+    }
+
+    // Get sponsor from contract
+    const ethers = await import('ethers');
+    const AgentArtifact = await import('epistery-plugin/artifacts/contracts/agent.sol/Agent.json', { with: { type: 'json' } });
+    const contract = new ethers.Contract(contractAddress, AgentArtifact.default.abi, serverWallet.ethers);
+
+    return await contract.sponsor();
   }
 
   /**
@@ -463,7 +517,6 @@ class EpisteryAttach {
       "wallet.js": path.resolve(__dirname, "client/wallet.js"),
       "notabot.js": path.resolve(__dirname, "client/notabot.js"),
       "export.js": path.resolve(__dirname, "client/export.js"),
-      "delegation.js": path.resolve(__dirname, "client/delegation.js"),
       "ethers.js": path.resolve(__dirname, "client/ethers.js"),
       "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
     };
@@ -529,24 +582,6 @@ class EpisteryAttach {
       res.send(template);
     });
 
-    // Delegation approval UI
-    router.get('/delegate', (req, res) => {
-      // Normalize rootPath to ensure it doesn't have trailing slash
-      let rootPath = req.baseUrl || '';
-      if (rootPath === '/') rootPath = '';
-
-      const templatePath = path.resolve(__dirname, 'client/delegate.html');
-
-      if (!fs.existsSync(templatePath)) {
-        return res.status(404).send('Delegation template not found');
-      }
-
-      let template = fs.readFileSync(templatePath, 'utf8');
-      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
-
-      res.send(template);
-    });
-
     // Key exchange endpoint - handles POST requests for key exchange
     router.post('/connect', async (req, res) => {
       try {
@@ -575,6 +610,22 @@ class EpisteryAttach {
           clientInfo.authenticated = !!clientInfo.profile;
         }
         req.episteryClient = clientInfo;
+
+        // Create session cookie with rivet identity
+        const sessionData = {
+          rivetAddress: data.clientAddress,
+          publicKey: data.clientPublicKey,
+          authenticated: clientInfo.authenticated || false,
+          timestamp: new Date().toISOString()
+        };
+        const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString('base64');
+        res.cookie('_epistery', sessionToken, {
+          httpOnly: true,
+          secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+          sameSite: 'strict',
+          path: '/',
+          maxAge: 24 * 60 * 60 * 1000  // 24 hours
+        });
 
         // Call onAuthenticated hook if provided
         if (this.options.onAuthenticated && clientInfo.authenticated) {
@@ -993,10 +1044,6 @@ class EpisteryAttach {
         const body = req.body;
         const domain = req.hostname;
         const { provider } = body;
-
-        console.log(`[debug] Domain initialization request for: ${domain}`);
-        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
-        console.log(`[debug] Full request body:`, JSON.stringify(body, null, 2));
 
         if (!provider || !provider.name || !provider.chainId || !provider.rpc) {
           return res.status(400).json({ error: 'Invalid provider configuration' });
