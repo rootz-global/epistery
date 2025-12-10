@@ -47,8 +47,11 @@ class EpisteryAttach {
 
     // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
-      if (req.app.locals.epistery.domain?.name !== req.hostname) {
-        await req.app.locals.epistery.setDomain(req.hostname);
+      // Use req.headers.host and strip port for reliable subdomain detection
+      // Express v5 req.hostname may not parse subdomains correctly
+      const hostname = req.headers.host?.split(':')[0] || 'localhost';
+      if (req.app.locals.epistery.domain?.name !== hostname) {
+        await req.app.locals.epistery.setDomain(hostname);
       }
       next();
     });
@@ -620,6 +623,10 @@ class EpisteryAttach {
           timestamp: new Date().toISOString()
         };
         const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString('base64');
+
+        // Cookie must be strictly scoped to this specific domain
+        // Each domain has its own server wallet and client rivets in IndexedDB
+        // DO NOT set domain attribute - let browser use strict same-origin policy
         res.cookie('_epistery', sessionToken, {
           httpOnly: true,
           secure: req.secure || req.headers['x-forwarded-proto'] === 'https',

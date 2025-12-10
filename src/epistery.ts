@@ -1161,11 +1161,22 @@ export class Epistery {
     }
     const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
 
-    // Load IdentityContract artifact from file system
+    // Load IdentityContract artifact - try multiple paths
     const fs = await import('fs/promises');
     const path = await import('path');
-    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+
+    // Try epistery package path first (when running from epistery-host)
+    let artifactPath = path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+
+    let artifactData: string;
+    try {
+      artifactData = await fs.readFile(artifactPath, 'utf-8');
+    } catch (e) {
+      // Fallback to process.cwd() for development
+      artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+      artifactData = await fs.readFile(artifactPath, 'utf-8');
+    }
+
     const artifact = JSON.parse(artifactData);
 
     // Create contract factory to get deployment bytecode (no signer needed for getting deployment tx)
@@ -1293,11 +1304,22 @@ export class Epistery {
     }
     const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
 
-    // Load IdentityContract artifact from file system
+    // Load IdentityContract artifact - try multiple paths
     const fs = await import('fs/promises');
     const path = await import('path');
-    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+
+    // Try epistery package path first (when running from epistery-host)
+    let artifactPath = path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+
+    let artifactData: string;
+    try {
+      artifactData = await fs.readFile(artifactPath, 'utf-8');
+    } catch (e) {
+      // Fallback to process.cwd() for development
+      artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+      artifactData = await fs.readFile(artifactPath, 'utf-8');
+    }
+
     const artifact = JSON.parse(artifactData);
 
     // Create contract interface to encode function call
