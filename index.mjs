@@ -1,16 +1,17 @@
-import express from 'express';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { Epistery } from "./dist/epistery.js";
-import { Utils } from './dist/utils/Utils.js';
-import { Config } from './dist/utils/Config.js';
+import { Utils } from "./dist/utils/Utils.js";
+import { Config } from "./dist/utils/Config.js";
+import createRoutes from "./routes/index.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Expected Agent contract version - must match contract VERSION constant
-export const EXPECTED_CONTRACT_VERSION = '2.0.0';
+export const EXPECTED_CONTRACT_VERSION = "2.0.0";
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
@@ -27,7 +28,7 @@ class EpisteryAttach {
     this.options = options;
     this.domain = null;
     this.domainName = null;
-    this.config = new Config()
+    this.config = new Config();
   }
 
   static async connect(options) {
@@ -41,15 +42,15 @@ class EpisteryAttach {
     this.domain = getDomainConfig(domain);
   }
 
-  async attach(app,rootPath) {
-    this.rootPath = rootPath || '/.well-known/epistery';
+  async attach(app, rootPath) {
+    this.rootPath = rootPath || "/.well-known/epistery";
     app.locals.epistery = this;
 
     // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
       // Use req.headers.host and strip port for reliable subdomain detection
       // Express v5 req.hostname may not parse subdomains correctly
-      const hostname = req.headers.host?.split(':')[0] || 'localhost';
+      const hostname = req.headers.host?.split(":")[0] || "localhost";
       if (req.app.locals.epistery.domain?.name !== hostname) {
         await req.app.locals.epistery.setDomain(hostname);
       }
@@ -60,12 +61,14 @@ class EpisteryAttach {
     app.use(async (req, res, next) => {
       if (!req.episteryClient && req.cookies?._epistery) {
         try {
-          const sessionData = JSON.parse(Buffer.from(req.cookies._epistery, 'base64').toString('utf8'));
+          const sessionData = JSON.parse(
+            Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
+          );
           if (sessionData && sessionData.rivetAddress) {
             req.episteryClient = {
               address: sessionData.rivetAddress,
               publicKey: sessionData.publicKey,
-              authenticated: sessionData.authenticated || false
+              authenticated: sessionData.authenticated || false,
             };
           }
         } catch (e) {
@@ -82,12 +85,13 @@ class EpisteryAttach {
         try {
           // Get identity contract address if available
           // For now, we'll try to get it from query params or headers
-          const identityContractAddress = req.query.identityContract || req.headers['x-identity-contract'];
+          const identityContractAddress =
+            req.query.identityContract || req.headers["x-identity-contract"];
 
           // Retrieve notabot score
           const notabotScore = await Epistery.getNotabotScore(
             req.episteryClient.address,
-            identityContractAddress
+            identityContractAddress,
           );
 
           // Enrich client info with notabot data
@@ -102,12 +106,14 @@ class EpisteryAttach {
           }
           req.app.epistery.clientWallet = Object.assign(
             req.app.epistery.clientWallet,
-            req.episteryClient
+            req.episteryClient,
           );
-
         } catch (error) {
           // Log error but don't fail the request
-          console.error('[Epistery] Failed to retrieve notabot score:', error.message);
+          console.error(
+            "[Epistery] Failed to retrieve notabot score:",
+            error.message,
+          );
         }
       }
       next();
@@ -124,35 +130,37 @@ class EpisteryAttach {
    */
   async getList(listName) {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     if (!listName) {
-      throw new Error('List name is required');
+      throw new Error("List name is required");
     }
 
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
-      throw new Error('Agent contract address not configured for domain');
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.GetWhitelist(
       serverWallet,
       this.domain.wallet.address,
       listName,
-      contractAddress
+      contractAddress,
     );
   }
 
@@ -164,28 +172,30 @@ class EpisteryAttach {
    */
   async isListed(address, listName) {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     if (!listName) {
-      throw new Error('List name is required');
+      throw new Error("List name is required");
     }
 
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
-      throw new Error('Agent contract address not configured for domain');
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.IsWhitelisted(
@@ -193,7 +203,7 @@ class EpisteryAttach {
       this.domain.wallet.address,
       listName,
       address,
-      contractAddress
+      contractAddress,
     );
   }
 
@@ -203,31 +213,45 @@ class EpisteryAttach {
    */
   async getSponsor() {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
-      throw new Error('Agent contract address not configured for domain');
+      throw new Error("Agent contract address not configured for domain");
     }
 
     // Get provider from domain config
     const providerConfig = this.config.data?.provider;
     if (!providerConfig || !providerConfig.rpc) {
-      throw new Error('Provider not configured for domain');
+      throw new Error("Provider not configured for domain");
     }
 
     // Create ethers provider and contract
-    const ethers = await import('ethers');
+    const { ethers } = await import("ethers");
     const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
-    const AgentArtifact = await import('epistery/artifacts/contracts/agent.sol/Agent.json', { with: { type: 'json' } });
-    const contract = new ethers.Contract(contractAddress, AgentArtifact.default.abi, provider);
+
+    // Load contract ABI using fs like other methods in this file
+    const AgentArtifact = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+        "utf8",
+      ),
+    );
+
+    const contract = new ethers.Contract(
+      contractAddress,
+      AgentArtifact.abi,
+      provider,
+    );
 
     return await contract.sponsor();
   }
@@ -240,29 +264,31 @@ class EpisteryAttach {
    * @param {number} role - Role (0-4)
    * @param {string} meta - Metadata JSON string
    */
-  async addToList(listName, address, name = '', role = 0, meta = '') {
+  async addToList(listName, address, name = "", role = 0, meta = "") {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     if (!listName) {
-      throw new Error('List name is required');
+      throw new Error("List name is required");
     }
 
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
-      throw new Error('Agent contract address not configured for domain');
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.AddToWhitelist(
@@ -272,7 +298,7 @@ class EpisteryAttach {
       name,
       role,
       meta,
-      contractAddress
+      contractAddress,
     );
   }
 
@@ -283,34 +309,36 @@ class EpisteryAttach {
    */
   async removeFromList(listName, address) {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     if (!listName) {
-      throw new Error('List name is required');
+      throw new Error("List name is required");
     }
 
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const contractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
-      throw new Error('Agent contract address not configured for domain');
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.RemoveFromWhitelist(
       serverWallet,
       listName,
       address,
-      contractAddress
+      contractAddress,
     );
   }
 
@@ -320,11 +348,11 @@ class EpisteryAttach {
    */
   async checkContractVersion() {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     // Get contract address from domain config - reload from disk to get latest
@@ -333,33 +361,39 @@ class EpisteryAttach {
     const agentContractAddress = this.config.data?.agent_contract_address;
     const upgradeNotes = this.config.data?.contract_upgrade_notes;
 
-    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+    if (
+      !agentContractAddress ||
+      agentContractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
       return {
         needsUpgrade: true,
-        reason: 'no_contract',
+        reason: "no_contract",
         deployedVersion: null,
         expectedVersion: EXPECTED_CONTRACT_VERSION,
         contractAddress: null,
-        notes: upgradeNotes
+        notes: upgradeNotes,
       };
     }
 
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     try {
       // Load contract ABI - use readFileSync since dynamic import with assertions is problematic
       const AgentArtifact = JSON.parse(
-        fs.readFileSync(path.join(__dirname, 'artifacts/contracts/agent.sol/Agent.json'), 'utf8')
+        fs.readFileSync(
+          path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+          "utf8",
+        ),
       );
 
-      const { ethers } = await import('ethers');
+      const { ethers } = await import("ethers");
       const agentContract = new ethers.Contract(
         agentContractAddress,
         AgentArtifact.abi,
-        serverWallet
+        serverWallet,
       );
 
       // Try to get VERSION from contract
@@ -368,28 +402,28 @@ class EpisteryAttach {
         deployedVersion = await agentContract.VERSION();
       } catch (error) {
         // Contract doesn't have VERSION field (old version)
-        deployedVersion = '1.0.0'; // Assume old version
+        deployedVersion = "1.0.0"; // Assume old version
       }
 
       const needsUpgrade = deployedVersion !== EXPECTED_CONTRACT_VERSION;
 
       return {
         needsUpgrade,
-        reason: needsUpgrade ? 'version_mismatch' : 'up_to_date',
+        reason: needsUpgrade ? "version_mismatch" : "up_to_date",
         deployedVersion,
         expectedVersion: EXPECTED_CONTRACT_VERSION,
         contractAddress: agentContractAddress,
-        notes: upgradeNotes
+        notes: upgradeNotes,
       };
     } catch (error) {
       return {
         needsUpgrade: true,
-        reason: 'check_failed',
+        reason: "check_failed",
         error: error.message,
         deployedVersion: null,
         expectedVersion: EXPECTED_CONTRACT_VERSION,
         contractAddress: agentContractAddress,
-        notes: upgradeNotes
+        notes: upgradeNotes,
       };
     }
   }
@@ -400,37 +434,47 @@ class EpisteryAttach {
    */
   async getLists() {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
     }
 
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
     }
 
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
-    const agentContractAddress = this.config.data?.agent_contract_address || process.env.AGENT_CONTRACT_ADDRESS;
-    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
-      throw new Error('Agent contract address not configured for domain');
+    const agentContractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (
+      !agentContractAddress ||
+      agentContractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      throw new Error("Agent contract address not configured for domain");
     }
 
     const AgentArtifact = JSON.parse(
-      fs.readFileSync(path.join(__dirname, 'artifacts/contracts/agent.sol/Agent.json'), 'utf8')
+      fs.readFileSync(
+        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+        "utf8",
+      ),
     );
 
-    const { ethers } = await import('ethers');
+    const { ethers } = await import("ethers");
     const agentContract = new ethers.Contract(
       agentContractAddress,
       AgentArtifact.abi,
-      serverWallet
+      serverWallet,
     );
 
-    const listNames = await agentContract.getListNames(this.domain.wallet.address);
+    const listNames = await agentContract.getListNames(
+      this.domain.wallet.address,
+    );
     return listNames;
   }
 
@@ -459,928 +503,48 @@ class EpisteryAttach {
       server: {
         walletAddress: serverWallet?.wallet?.address || null,
         publicKey: serverWallet?.wallet?.publicKey || null,
-        provider: serverWallet?.provider?.name || 'Polygon Mainnet',
-        chainId: serverWallet?.provider?.chainId?.toString() || '137',
-        rpc: serverWallet?.provider?.rpc || 'https://polygon-rpc.com',
+        provider: serverWallet?.provider?.name || "Polygon Mainnet",
+        chainId: serverWallet?.provider?.chainId?.toString() || "137",
+        rpc: serverWallet?.provider?.rpc || "https://polygon-rpc.com",
         nativeCurrency: {
-          symbol: serverWallet?.provider?.nativeCurrency?.symbol || 'POL',
-          name: serverWallet?.provider?.nativeCurrency?.name || 'POL',
-          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18
-        }
+          symbol: serverWallet?.provider?.nativeCurrency?.symbol || "POL",
+          name: serverWallet?.provider?.nativeCurrency?.name || "POL",
+          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18,
+        },
       },
       client: {},
       ipfs: {
-        url: process.env.IPFS_URL || 'https://rootz.digital/api/v0'
+        url: process.env.IPFS_URL || "https://rootz.digital/api/v0",
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   }
 
+  /**
+   * Creates and returns the router with all Epistery routes
+   *
+   * Route structure (all mounted under /.well-known/epistery/):
+   *   /                     - Status (JSON/HTML)
+   *   /status               - Status page (HTML)
+   *   /lib/:module          - Client library files
+   *   /artifacts/:file      - Contract artifacts
+   *   /connect              - Key exchange
+   *   /create               - Create wallet
+   *   /auth/*               - Authentication & domain claiming
+   *   /data/*               - Data read/write/ownership
+   *   /approval/*           - Approval system
+   *   /identity/*           - Identity contract management
+   *   /domain/*             - Domain initialization
+   *   /notabot/*            - Notabot scoring
+   *   /lists                - Get all lists
+   *   /list                 - Get specific list
+   *   /list/check/:address  - Check list membership
+   *   /contract/*           - Contract version info
+   *
+   * @returns {express.Router}
+   */
   routes() {
-    const router = express.Router();
-
-    // Root endpoint - returns JSON for API clients, HTML for browsers
-    router.get('/', (req, res) => {
-      // Check if client wants JSON (API request)
-      const acceptsJson = req.accepts('json') && !req.accepts('html');
-
-      if (acceptsJson) {
-        return res.json(this.buildStatus());
-      }
-
-      // Return HTML for browsers
-      const domain = req.hostname;
-      const serverWallet = this.domain;
-
-      // Determine the root path from the request's base URL
-      // baseUrl will be '/' or '/.well-known/epistery' depending on mount point
-      const rootPath = req.baseUrl || '/';
-
-      const templatePath = path.resolve(__dirname, 'client/status.html');
-      if (!fs.existsSync(templatePath)) {
-        return res.status(404).send('Status template not found');
-      }
-
-      let template = fs.readFileSync(templatePath, 'utf8');
-
-      // Template replacement
-      template = template.replace(/\{\{server\.domain\}\}/g, domain);
-      template = template.replace(/\{\{server\.walletAddress\}\}/g, serverWallet?.wallet?.address || '');
-      template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
-      template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
-      template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
-      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
-
-      res.send(template);
-    });
-
-    // Client library files
-    const library = {
-      "client.js": path.resolve(__dirname, "client/client.js"),
-      "witness.js": path.resolve(__dirname, "client/witness.js"),
-      "wallet.js": path.resolve(__dirname, "client/wallet.js"),
-      "notabot.js": path.resolve(__dirname, "client/notabot.js"),
-      "export.js": path.resolve(__dirname, "client/export.js"),
-      "ethers.js": path.resolve(__dirname, "client/ethers.js"),
-      "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
-    };
-
-    // Serve client library files
-    router.get('/lib/:module', (req, res) => {
-      const modulePath = library[req.params.module];
-      if (!modulePath) return res.status(404).send('Library not found');
-
-      if (!fs.existsSync(modulePath)) return res.status(404).send('File not found');
-
-      const ext = modulePath.slice(modulePath.lastIndexOf('.') + 1);
-      const contentTypes = {
-        'js': 'text/javascript',
-        'mjs': 'text/javascript',
-        'css': 'text/css',
-        'html': 'text/html',
-        'json': 'application/json'
-      };
-
-      if (contentTypes[ext]) {
-        res.set('Content-Type', contentTypes[ext]);
-      }
-
-      res.sendFile(modulePath);
-    });
-
-    // Serve contract artifacts
-    router.get('/artifacts/:contractFile', (req, res) => {
-      const contractFile = req.params.contractFile;
-      const artifactPath = path.resolve(__dirname, 'artifacts/contracts', contractFile.replace('.json', '.sol'), contractFile);
-
-      if (!fs.existsSync(artifactPath)) {
-        return res.status(404).send('Contract artifact not found');
-      }
-
-      res.set('Content-Type', 'application/json');
-      res.sendFile(artifactPath);
-    });
-
-    router.get('/status', (req, res) => {
-      const domain = req.hostname;
-      const serverWallet = this.domain;
-
-      // Determine the root path from the request's base URL
-      const rootPath = req.baseUrl;
-
-      const templatePath = path.resolve(__dirname, 'client/status.html');
-      if (!fs.existsSync(templatePath)) {
-        return res.status(404).send('Status template not found');
-      }
-
-      let template = fs.readFileSync(templatePath, 'utf8');
-
-      // Template replacement
-      template = template.replace(/\{\{server\.domain\}\}/g, domain);
-      template = template.replace(/\{\{server\.walletAddress\}\}/g, serverWallet?.wallet?.address || '');
-      template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
-      template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
-      template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
-      template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
-
-      res.send(template);
-    });
-
-    // Key exchange endpoint - handles POST requests for key exchange
-    router.post('/connect', async (req, res) => {
-      try {
-        const data = req.body;
-        if (!data && Object.keys(data).length <= 0)
-          data = req.body;
-
-        const serverWallet = this.domain;
-
-        if (!serverWallet?.wallet) {
-          return res.status(500).json({ error: 'Server wallet not found' });
-        }
-
-        // Handle key exchange request
-        const keyExchangeResponse = await Epistery.handleKeyExchange(data, serverWallet.wallet);
-
-        if (!keyExchangeResponse) {
-          return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
-        }
-        const clientInfo = {
-          address: data.clientAddress,
-          publicKey: data.clientPublicKey
-        }
-        if (this.options.authentication) {
-          clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
-          clientInfo.authenticated = !!clientInfo.profile;
-        }
-        req.episteryClient = clientInfo;
-
-        // Create session cookie with rivet identity
-        const sessionData = {
-          rivetAddress: data.clientAddress,
-          publicKey: data.clientPublicKey,
-          authenticated: clientInfo.authenticated || false,
-          timestamp: new Date().toISOString()
-        };
-        const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString('base64');
-
-        // Cookie must be strictly scoped to this specific domain
-        // Each domain has its own server wallet and client rivets in IndexedDB
-        // DO NOT set domain attribute - let browser use strict same-origin policy
-        res.cookie('_epistery', sessionToken, {
-          httpOnly: true,
-          secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-          sameSite: 'strict',
-          path: '/',
-          maxAge: 24 * 60 * 60 * 1000  // 24 hours
-        });
-
-        // Call onAuthenticated hook if provided
-        if (this.options.onAuthenticated && clientInfo.authenticated) {
-          await this.options.onAuthenticated(clientInfo, req, res);
-        }
-
-        res.json(Object.assign(keyExchangeResponse,{profile:clientInfo.profile,authenticated:clientInfo.authenticated}));
-      } catch (error) {
-        console.error('Key exchange error:', error);
-        res.status(500).json({ error: 'Internal server error during key exchange' });
-      }
-    });
-
-    router.get('/create', (req, res) => {
-      const wallet = Epistery.createWallet();
-      res.json({ wallet });
-    });
-
-    router.post('/data/write', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, data } = body;
-
-        if (!clientWalletInfo || !data) {
-          return res.status(400).json({ error: 'Missing client wallet or data' });
-        }
-
-        const result = await Epistery.write(clientWalletInfo, data);
-        if (!result) {
-          return res.status(500).json({ error: 'Write operation failed' });
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Write error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.post('/data/read', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo } = body;
-
-        if (!clientWalletInfo) {
-          return res.status(400).json({ error: 'Missing client wallet' });
-        }
-
-        const result = await Epistery.read(clientWalletInfo);
-        if (!result) {
-          return res.status(204);
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Read error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.put('/data/ownership', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, futureOwnerWalletAddress } = body;
-
-        if (!clientWalletInfo || !futureOwnerWalletAddress) {
-          return res.status(400).json({ error: 'Missing either client wallet or future owner address.' });
-        }
-
-        const result = await Epistery.transferOwnership(clientWalletInfo, futureOwnerWalletAddress);
-        if (!result) {
-          return res.status(500).json({ error: 'Transfer ownership failed' });
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Transfer ownership error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Approval endpoints
-    router.post('/approval/create', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, approverAddress, fileName, fileHash, domain } = body;
-
-        if (!clientWalletInfo || !approverAddress || !fileName || !fileHash || !domain) {
-          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, fileName, fileHash, domain' });
-        }
-
-        const result = await Epistery.createApproval(clientWalletInfo, approverAddress, fileName, fileHash, domain);
-        if (!result) {
-          return res.status(500).json({ error: 'Create approval failed' });
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Create approval error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.post('/approval/get', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, approverAddress, requestorAddress } = body;
-
-        if (!clientWalletInfo || !approverAddress || !requestorAddress) {
-          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress, requestorAddress' });
-        }
-
-        const result = await Epistery.getApprovals(clientWalletInfo, approverAddress, requestorAddress);
-
-        res.json({
-          approverAddress: approverAddress,
-          requestorAddress: requestorAddress,
-          approvals: result,
-          count: result.length
-        });
-      }
-      catch (error) {
-        console.error('Get approvals error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.post('/approval/get-all', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, approverAddress } = body;
-
-        if (!clientWalletInfo || !approverAddress) {
-          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, approverAddress' });
-        }
-
-        const result = await Epistery.getAllApprovalsForApprover(clientWalletInfo, approverAddress);
-
-        res.json({
-          approverAddress: approverAddress,
-          approvals: result,
-          count: result.length
-        });
-      }
-      catch (error) {
-        console.error('Get all approvals error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.post('/approval/get-all-requestor', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, requestorAddress } = body;
-
-        if (!clientWalletInfo || !requestorAddress) {
-          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress' });
-        }
-
-        const result = await Epistery.getAllApprovalsForRequestor(clientWalletInfo, requestorAddress);
-
-        res.json({
-          requestorAddress: requestorAddress,
-          approvals: result,
-          count: result.length
-        });
-      }
-      catch (error) {
-        console.error('Get all approvals for requestor error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.post('/approval/handle', async (req, res) => {
-      try {
-        const body = req.body;
-        const { clientWalletInfo, requestorAddress, fileName, approved } = body;
-
-        if (!clientWalletInfo || !requestorAddress || !fileName || approved === undefined) {
-          return res.status(400).json({ error: 'Missing required fields: clientWalletInfo, requestorAddress, fileName, approved' });
-        }
-
-        const result = await Epistery.handleApproval(clientWalletInfo, requestorAddress, fileName, approved);
-        if (!result) {
-          return res.status(500).json({ error: 'Handle approval failed' });
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Handle approval error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // ============================================================================
-    // CLIENT-SIDE SIGNING ENDPOINTS
-    //
-    // These endpoints support the new client-side signing flow.
-    // They work alongside the old endpoints for backward compatibility.
-    // ============================================================================
-
-    // ----- PREPARE ENDPOINTS (Build unsigned transactions) -----
-
-    /**
-     * POST /data/prepare-write
-     *
-     * Prepares an unsigned transaction for writing data.
-     * Server handles IPFS upload, gas estimation, and client funding.
-     * Returns unsigned transaction for client to sign.
-     */
-    router.post('/data/prepare-write', async (req, res) => {
-      try {
-        const { clientAddress, publicKey, data } = req.body;
-
-        if (!clientAddress || !publicKey || !data) {
-          return res.status(400).json({
-            error: 'Missing required fields: clientAddress, publicKey, data'
-          });
-        }
-
-        const result = await Epistery.prepareWrite(clientAddress, publicKey, data);
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare write error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    /**
-     * POST /data/prepare-transfer-ownership
-     *
-     * Prepares an unsigned transaction for transferring ownership.
-     */
-    router.post('/data/prepare-transfer-ownership', async (req, res) => {
-      try {
-        const { clientAddress, futureOwnerAddress } = req.body;
-
-        if (!clientAddress || !futureOwnerAddress) {
-          return res.status(400).json({
-            error: 'Missing required fields: clientAddress, futureOwnerAddress'
-          });
-        }
-
-        const result = await Epistery.prepareTransferOwnership(clientAddress, futureOwnerAddress);
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare transfer ownership error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    /**
-     * POST /approval/prepare-create
-     *
-     * Prepares an unsigned transaction for creating an approval request.
-     */
-    router.post('/approval/prepare-create', async (req, res) => {
-      try {
-        const { clientAddress, approverAddress, fileName, fileHash, domain } = req.body;
-
-        if (!clientAddress || !approverAddress || !fileName || !fileHash || !domain) {
-          return res.status(400).json({
-            error: 'Missing required fields: clientAddress, approverAddress, fileName, fileHash, domain'
-          });
-        }
-
-        const result = await Epistery.prepareCreateApproval(
-          clientAddress,
-          approverAddress,
-          fileName,
-          fileHash,
-          domain
-        );
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare create approval error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    /**
-     * POST /approval/prepare-handle
-     *
-     * Prepares an unsigned transaction for handling an approval request.
-     */
-    router.post('/approval/prepare-handle', async (req, res) => {
-      try {
-        const { approverAddress, requestorAddress, fileName, approved, domain } = req.body;
-
-        if (!approverAddress || !requestorAddress || !fileName || approved === undefined || !domain) {
-          return res.status(400).json({
-            error: 'Missing required fields: approverAddress, requestorAddress, fileName, approved, domain'
-          });
-        }
-
-        const result = await Epistery.prepareHandleApproval(
-          approverAddress,
-          requestorAddress,
-          fileName,
-          approved,
-          domain
-        );
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare handle approval error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    /**
-     * POST /identity/prepare-deploy
-     *
-     * Prepares an unsigned transaction for deploying an IdentityContract.
-     * Server handles gas estimation and client funding.
-     * Returns unsigned deployment transaction for client to sign.
-     */
-    router.post('/identity/prepare-deploy', async (req, res) => {
-      try {
-        const { clientAddress, domain } = req.body;
-
-        if (!clientAddress || !domain) {
-          return res.status(400).json({
-            error: 'Missing required fields: clientAddress, domain'
-          });
-        }
-
-        const result = await Epistery.prepareDeployIdentityContract(clientAddress, domain);
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare deploy identity contract error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    /**
-     * POST /identity/prepare-add-rivet
-     *
-     * Prepares an unsigned transaction for adding a rivet to an IdentityContract.
-     * Server handles gas estimation and client funding.
-     * Returns unsigned transaction for client to sign.
-     */
-    router.post('/identity/prepare-add-rivet', async (req, res) => {
-      try {
-        const { signerAddress, contractAddress, rivetAddressToAdd, rivetName, domain } = req.body;
-
-        if (!signerAddress || !contractAddress || !rivetAddressToAdd || !rivetName || !domain) {
-          return res.status(400).json({
-            error: 'Missing required fields: signerAddress, contractAddress, rivetAddressToAdd, rivetName, domain'
-          });
-        }
-
-        const result = await Epistery.prepareAddRivetToContract(
-          signerAddress,
-          contractAddress,
-          rivetAddressToAdd,
-          rivetName,
-          domain
-        );
-        res.json(result);
-
-      } catch (error) {
-        console.error('Prepare add rivet to contract error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // ----- SUBMIT ENDPOINT (Broadcast signed transactions) -----
-
-    /**
-     * POST /data/submit-signed
-     *
-     * Submits a client-signed transaction to the blockchain.
-     * This is a generic endpoint used by all write operations.
-     *
-     * The transaction is already signed and immutable.
-     * Server just broadcasts it and returns the receipt.
-     */
-    router.post('/data/submit-signed', async (req, res) => {
-      try {
-        const { signedTransaction, operation, metadata } = req.body;
-
-        if (!signedTransaction) {
-          return res.status(400).json({
-            error: 'Missing required field: signedTransaction'
-          });
-        }
-
-        const result = await Epistery.submitSignedTransaction(signedTransaction);
-
-        // Merge metadata into response (e.g., ipfsHash for write operations)
-        res.json({
-          ...result,
-          operation: operation,
-          metadata: metadata
-        });
-
-      } catch (error) {
-        console.error('Submit signed transaction error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Domain initialization endpoint - use to set up domain with custom provider
-    router.post('/domain/initialize', async (req, res) => {
-      try {
-        const body = req.body;
-        const domain = req.hostname;
-        const { provider } = body;
-
-        if (!provider || !provider.name || !provider.chainId || !provider.rpc) {
-          return res.status(400).json({ error: 'Invalid provider configuration' });
-        }
-
-        // Check if domain already exists
-        const config = Utils.GetConfig();
-        config.setPath(domain);
-
-        let domainConfig = config.data;
-        if (!domainConfig.domain) domainConfig.domain = domain;
-        domainConfig.pending = true;
-        if (!domainConfig.provider) domainConfig.provider = {
-          chainId: provider.chainId,
-          name: provider.name,
-          rpc: provider.rpc
-        }
-
-        // Save domain config with custom provider (marked as pending)
-        config.save();
-
-        res.json({ status: 'success', message: 'Domain initialized with custom provider' });
-
-      } catch (error) {
-        console.error('Domain initialization error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // ============================================================================
-    // NOTABOT SCORE ENDPOINTS
-    //
-    // Funding economics: Server funds legitimate rivets once per hour to enable
-    // notabot score commits. Bot farms must either pay their own gas (expensive
-    // at scale) or wait real time (defeating purpose).
-    // ============================================================================
-
-    // Funding tracking for notabot commits
-    const notabotFunding = {
-      // rivetAddress => { lastFunded: timestamp, fundingCount: number, firstFunded: timestamp }
-      ledger: new Map(),
-
-      // Configuration
-      FUNDING_COOLDOWN: 60 * 60 * 1000,  // 1 hour
-      MAX_FUNDINGS_PER_DAY: 30,           // Catch runaway scripts
-      FUNDING_AMOUNT: '20000000000000000', // 0.02 native token (enough for ~2-3 commits on Polygon)
-
-      getLastFundingTime(rivetAddress) {
-        const entry = this.ledger.get(rivetAddress);
-        return entry ? entry.lastFunded : 0;
-      },
-
-      recordFunding(rivetAddress) {
-        const now = Date.now();
-        const entry = this.ledger.get(rivetAddress);
-
-        if (!entry) {
-          this.ledger.set(rivetAddress, {
-            lastFunded: now,
-            fundingCount: 1,
-            firstFunded: now
-          });
-        } else {
-          entry.lastFunded = now;
-          entry.fundingCount++;
-        }
-      },
-
-      async fundForSingleCommit(rivetAddress, serverWallet) {
-        try {
-          // Check if server wallet has sufficient balance
-          const balance = await serverWallet.wallet.provider.getBalance(serverWallet.wallet.address);
-          const fundingAmount = this.FUNDING_AMOUNT;
-
-          if (balance.lt(fundingAmount)) {
-            console.error('[Notabot] Server wallet insufficient balance for funding');
-            return { success: false, reason: 'insufficient_server_balance' };
-          }
-
-          // Send funding transaction
-          const tx = await serverWallet.wallet.sendTransaction({
-            to: rivetAddress,
-            value: fundingAmount,
-            maxFeePerGas: 50000000000, // 50 gwei
-            maxPriorityFeePerGas: 30000000000 // 30 gwei
-          });
-
-          await tx.wait();
-
-          console.log(`[Notabot] Funded ${rivetAddress} with ${fundingAmount} wei`);
-          this.recordFunding(rivetAddress);
-
-          return {
-            success: true,
-            txHash: tx.hash,
-            amount: fundingAmount,
-            nextEligible: Date.now() + this.FUNDING_COOLDOWN
-          };
-
-        } catch (error) {
-          console.error('[Notabot] Funding transaction failed:', error);
-          return { success: false, reason: 'tx_failed', error: error.message };
-        }
-      },
-
-      detectSuspiciousPattern(rivetAddress, eventChain) {
-        const entry = this.ledger.get(rivetAddress);
-
-        if (!entry) return { suspicious: false };
-
-        // Check for excessive funding requests
-        const daysSinceFirst = (Date.now() - entry.firstFunded) / (1000 * 60 * 60 * 24);
-        const fundingsPerDay = daysSinceFirst > 0 ? entry.fundingCount / daysSinceFirst : entry.fundingCount;
-
-        if (fundingsPerDay > this.MAX_FUNDINGS_PER_DAY) {
-          return {
-            suspicious: true,
-            reason: 'excessive_funding_rate',
-            details: `${fundingsPerDay.toFixed(1)} fundings/day (max: ${this.MAX_FUNDINGS_PER_DAY})`
-          };
-        }
-
-        // Check for synthetic event patterns (all events at exactly same interval)
-        if (eventChain && eventChain.length > 5) {
-          const intervals = [];
-          for (let i = 1; i < eventChain.length; i++) {
-            intervals.push(eventChain[i].timestamp - eventChain[i-1].timestamp);
-          }
-
-          const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-          const variance = intervals.reduce((sum, interval) => {
-            return sum + Math.pow(interval - avgInterval, 2);
-          }, 0) / intervals.length;
-
-          const stdDev = Math.sqrt(variance);
-
-          // If standard deviation is very low, timing is too uniform (bot-like)
-          if (stdDev < avgInterval * 0.1) {
-            return {
-              suspicious: true,
-              reason: 'uniform_timing',
-              details: `Events too evenly spaced (stdDev: ${stdDev.toFixed(0)}ms, avg: ${avgInterval.toFixed(0)}ms)`
-            };
-          }
-        }
-
-        return { suspicious: false };
-      }
-    };
-
-    // Notabot score endpoint - commit score to identity contract
-    router.post('/notabot/commit', async (req, res) => {
-      try {
-        const { commitment, eventChain, identityContractAddress, requestFunding } = req.body;
-
-        if (!commitment || !eventChain || !identityContractAddress) {
-          return res.status(400).json({
-            error: 'Missing required fields: commitment, eventChain, identityContractAddress'
-          });
-        }
-
-        // Get rivet information from session/auth
-        // For now, expect rivet info in request body
-        const { rivetAddress, rivetMnemonic } = req.body;
-
-        if (!rivetAddress || !rivetMnemonic) {
-          return res.status(400).json({
-            error: 'Missing rivet authentication: rivetAddress, rivetMnemonic'
-          });
-        }
-
-        // Check for suspicious patterns BEFORE funding
-        const suspiciousCheck = notabotFunding.detectSuspiciousPattern(rivetAddress, eventChain);
-        if (suspiciousCheck.suspicious) {
-          console.log(`[Notabot] Suspicious pattern detected for ${rivetAddress}: ${suspiciousCheck.reason}`);
-          return res.status(403).json({
-            error: 'Suspicious activity detected',
-            reason: suspiciousCheck.reason,
-            details: suspiciousCheck.details,
-            message: 'This rivet has been flagged for unusual behavior patterns'
-          });
-        }
-
-        // Handle funding request
-        if (requestFunding) {
-          const lastFunded = notabotFunding.getLastFundingTime(rivetAddress);
-          const timeSinceLastFunding = Date.now() - lastFunded;
-
-          // Check if funding cooldown has elapsed
-          if (timeSinceLastFunding < notabotFunding.FUNDING_COOLDOWN) {
-            const waitMinutes = Math.ceil((notabotFunding.FUNDING_COOLDOWN - timeSinceLastFunding) / 60000);
-            return res.status(402).json({
-              error: 'Funding not available yet',
-              reason: 'cooldown_active',
-              lastFunded: lastFunded,
-              nextEligible: lastFunded + notabotFunding.FUNDING_COOLDOWN,
-              waitMinutes: waitMinutes,
-              message: `Funding available once per hour. Please wait ${waitMinutes} more minutes.`
-            });
-          }
-
-          // Fund the rivet
-          const serverWallet = this.domain;
-          const fundingResult = await notabotFunding.fundForSingleCommit(rivetAddress, serverWallet);
-
-          if (!fundingResult.success) {
-            return res.status(503).json({
-              error: 'Funding failed',
-              reason: fundingResult.reason,
-              details: fundingResult.error,
-              message: 'Server unable to provide funding. You may need to fund your own transaction.'
-            });
-          }
-
-          console.log(`[Notabot] Funded ${rivetAddress}, next eligible: ${new Date(fundingResult.nextEligible).toISOString()}`);
-        }
-
-        // Commit the score to the identity contract
-        const result = await Epistery.commitNotabotScore(
-          rivetAddress,
-          rivetMnemonic,
-          { commitment, eventChain },
-          identityContractAddress
-        );
-
-        res.json(result);
-
-      } catch (error) {
-        console.error('Commit notabot score error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Get notabot score for a rivet
-    router.get('/notabot/score/:rivetAddress', async (req, res) => {
-      try {
-        const { rivetAddress } = req.params;
-        const { identityContractAddress } = req.query;
-
-        if (!rivetAddress) {
-          return res.status(400).json({ error: 'Missing rivet address' });
-        }
-
-        const score = await Epistery.getNotabotScore(rivetAddress, identityContractAddress);
-        res.json(score);
-
-      } catch (error) {
-        console.error('Get notabot score error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // List endpoints - with named list support
-    // Get all lists for the domain
-    router.get('/lists', async (req, res) => {
-      try {
-        const lists = await this.getLists();
-        res.json({
-          domain: this.domainName,
-          owner: this.domain.wallet.address,
-          lists: lists,
-          count: lists.length
-        });
-      }
-      catch (error) {
-        console.error('Get lists error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Get a specific list by name (query param: ?list=example.com::admin)
-    router.get('/list', async (req, res) => {
-      try {
-        const listName = req.query.list;
-        if (!listName) {
-          return res.status(400).json({ error: 'List name is required (use ?list=name)' });
-        }
-
-        const list = await this.getList(listName);
-        res.json({
-          domain: this.domainName,
-          owner: this.domain.wallet.address,
-          listName: listName,
-          list: list,
-          count: list.length
-        });
-      }
-      catch (error) {
-        console.error('Get list error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Check if address is on a specific list (query param: ?list=example.com::admin)
-    router.get('/list/check/:address', async (req, res) => {
-      try {
-        const { address } = req.params;
-        const listName = req.query.list;
-        if (!listName) {
-          return res.status(400).json({ error: 'List name is required (use ?list=name)' });
-        }
-
-        const isListed = await this.isListed(address, listName);
-        res.json({
-          address: address,
-          listName: listName,
-          isListed: isListed,
-          domain: this.domainName
-        });
-      }
-      catch (error) {
-        console.error('Check list error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Contract version check endpoint
-    router.get('/contract/version', async (req, res) => {
-      try {
-        const versionInfo = await this.checkContractVersion();
-        res.json(versionInfo);
-      }
-      catch (error) {
-        console.error('Check contract version error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    return router;
+    return createRoutes(this);
   }
 }
 

@@ -15,7 +15,11 @@ import {
   NotabotEvent,
   NotabotCommitment,
   NotabotScore,
-  NotabotCommitRequest
+  NotabotCommitRequest,
+  RivetItem,
+  Visibility,
+  SendMessageRequest,
+  CreatePostRequest
 } from './utils/index.js';
 import { ethers, Wallet } from 'ethers';
 import { AquaTree } from 'aqua-js-sdk';
@@ -218,7 +222,7 @@ export class Epistery {
   /**
     * Returns true if successfully transferred ownership, else false
   */
-  public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string): Promise<any> {
+  public static async transferOwnership(clientWalletInfo: ClientWalletInfo, futureOwnerWalletAddress: string, contractAddress?: string): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
 
     if (!clientWalletInfo.mnemonic) {
@@ -228,9 +232,14 @@ export class Epistery {
     const clientWallet: ethers.Wallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
 
     try {
-      const receipt = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress);
-      if (!receipt) return false;
-      return true;
+      const receipts = await Utils.TransferOwnership(clientWallet, futureOwnerWalletAddress, contractAddress);
+      if (!receipts || receipts.length === 0) return false;
+
+      // Return detailed results
+      return {
+        success: true,
+        transfers: receipts
+      };
     }
     catch(error) {
       throw error;
@@ -417,6 +426,352 @@ export class Epistery {
     catch(error) {
       throw error;
     }
+  }
+
+  // ============================================================================
+  // RIVET ITEM METHODS
+  // Messages and Posts using the new RivetItem structure
+  // ============================================================================
+
+  /**
+   * Send a direct message to another address
+   * Uses server-side signing (requires mnemonic)
+   * @param clientWalletInfo - Sender's wallet info
+   * @param to - Recipient address
+   * @param data - Message content (will be stored in IPFS)
+   * @param metadata - Optional metadata for the message
+   */
+  public static async sendMessage(
+    clientWalletInfo: ClientWalletInfo,
+    to: string,
+    data: any,
+    metadata: string = ''
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
+    const clientWallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const domain = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Create message data and upload to IPFS
+    const messageData = {
+      content: data,
+      metadata: metadata,
+      from: clientWallet.address,
+      to: to,
+      timestamp: new Date().toISOString()
+    };
+
+    const jsonString = JSON.stringify(messageData, null, 2);
+    const ipfsHash = await Epistery.addToIPFS(jsonString);
+
+    if (!ipfsHash) {
+      throw new Error('Failed to upload message to IPFS');
+    }
+
+    // Estimate gas for the operation
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress) {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      clientWallet
+    );
+
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.sendMessage(
+        to,
+        clientWallet.publicKey,
+        metadata,
+        domain,
+        ipfsHash
+      );
+    } catch (error) {
+      estimatedGas = ethers.BigNumber.from(Epistery.FALLBACK_GAS_LIMIT);
+    }
+
+    // Ensure client wallet is funded
+    const isFunded = await Utils.EnsureFunded(serverWallet, clientWallet, estimatedGas);
+    if (!isFunded) {
+      throw new Error('Failed to ensure client wallet has sufficient funds');
+    }
+
+    // Send the message
+    const receipt = await Utils.SendMessage(
+      clientWallet,
+      to,
+      clientWallet.publicKey,
+      metadata,
+      domain,
+      ipfsHash
+    );
+
+    return {
+      receipt,
+      ipfsHash,
+      ipfsUrl: `${Epistery.ipfsGatewayUrl}/ipfs/${ipfsHash}`,
+      from: clientWallet.address,
+      to: to,
+      timestamp: messageData.timestamp
+    };
+  }
+
+  /**
+   * Create a post on a board
+   * Uses server-side signing (requires mnemonic)
+   * @param clientWalletInfo - Poster's wallet info
+   * @param board - Board address (can be own address or another's)
+   * @param data - Post content (will be stored in IPFS)
+   * @param visibility - Public or Private
+   * @param metadata - Optional metadata for the post
+   */
+  public static async createPost(
+    clientWalletInfo: ClientWalletInfo,
+    board: string,
+    data: any,
+    visibility: Visibility = Visibility.Public,
+    metadata: string = ''
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    if (!clientWalletInfo.mnemonic) {
+      throw new Error('Mnemonic is required for server-side signing operations');
+    }
+
+    const clientWallet = ethers.Wallet.fromMnemonic(clientWalletInfo.mnemonic).connect(provider);
+
+    const domain = process.env.SERVER_DOMAIN || 'localhost';
+    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    if (!serverWalletConfig) {
+      throw new Error('Server wallet not configured');
+    }
+    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
+
+    // Create post data and upload to IPFS
+    const postData = {
+      content: data,
+      metadata: metadata,
+      from: clientWallet.address,
+      board: board,
+      visibility: visibility === Visibility.Public ? 'public' : 'private',
+      timestamp: new Date().toISOString()
+    };
+
+    const jsonString = JSON.stringify(postData, null, 2);
+    const ipfsHash = await Epistery.addToIPFS(jsonString);
+
+    if (!ipfsHash) {
+      throw new Error('Failed to upload post to IPFS');
+    }
+
+    // Estimate gas for the operation
+    const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress) {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      clientWallet
+    );
+
+    let estimatedGas: ethers.BigNumber;
+    try {
+      estimatedGas = await agentContract.estimateGas.createPost(
+        board,
+        clientWallet.publicKey,
+        metadata,
+        domain,
+        ipfsHash,
+        visibility
+      );
+    } catch (error) {
+      estimatedGas = ethers.BigNumber.from(Epistery.FALLBACK_GAS_LIMIT);
+    }
+
+    // Ensure client wallet is funded
+    const isFunded = await Utils.EnsureFunded(serverWallet, clientWallet, estimatedGas);
+    if (!isFunded) {
+      throw new Error('Failed to ensure client wallet has sufficient funds');
+    }
+
+    // Create the post
+    const receipt = await Utils.CreatePost(
+      clientWallet,
+      board,
+      clientWallet.publicKey,
+      metadata,
+      domain,
+      ipfsHash,
+      visibility
+    );
+
+    return {
+      receipt,
+      ipfsHash,
+      ipfsUrl: `${Epistery.ipfsGatewayUrl}/ipfs/${ipfsHash}`,
+      from: clientWallet.address,
+      board: board,
+      visibility: visibility === Visibility.Public ? 'public' : 'private',
+      timestamp: postData.timestamp
+    };
+  }
+
+  /**
+   * Get conversation messages between the caller and another party
+   * @param clientWalletInfo - Caller's wallet info
+   * @param otherParty - Other participant's address
+   * @returns Array of RivetItems with IPFS content fetched
+   */
+  public static async getConversation(
+    clientWalletInfo: ClientWalletInfo,
+    otherParty: string
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get messages from contract
+    const messages = await Utils.GetConversation(provider, clientWalletInfo.address, otherParty);
+
+    // Fetch IPFS content for each message
+    const messagesWithContent = await Promise.all(
+      messages.map(async (msg: RivetItem) => {
+        let content = null;
+        let error = null;
+
+        if (msg.ipfsHash) {
+          try {
+            const ipfsUrl = `${Epistery.ipfsGatewayUrl}/ipfs/${msg.ipfsHash}`;
+            const response = await fetch(ipfsUrl);
+            if (response.ok) {
+              content = await response.json();
+            } else {
+              error = `Failed to fetch: ${response.status}`;
+            }
+          } catch (e) {
+            error = e instanceof Error ? e.message : 'Unknown error';
+          }
+        }
+
+        return {
+          ...msg,
+          ipfsUrl: msg.ipfsHash ? `${Epistery.ipfsGatewayUrl}/ipfs/${msg.ipfsHash}` : null,
+          content,
+          error
+        };
+      })
+    );
+
+    return {
+      otherParty,
+      callerAddress: clientWalletInfo.address,
+      messages: messagesWithContent,
+      count: messages.length
+    };
+  }
+
+  /**
+   * Get posts from a board
+   * @param clientWalletInfo - Caller's wallet info (for visibility filtering)
+   * @param board - Board address to get posts from
+   * @param offset - Optional pagination offset
+   * @param limit - Optional pagination limit
+   * @returns Array of RivetItems with IPFS content fetched
+   */
+  public static async getPosts(
+    clientWalletInfo: ClientWalletInfo,
+    board: string,
+    offset?: number,
+    limit?: number
+  ): Promise<any> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+
+    // Get posts from contract
+    let posts: RivetItem[];
+    if (offset !== undefined && limit !== undefined) {
+      posts = await Utils.GetPostsPaginated(provider, clientWalletInfo.address, board, offset, limit);
+    } else {
+      posts = await Utils.GetPosts(provider, clientWalletInfo.address, board);
+    }
+
+    // Fetch IPFS content for each post
+    const postsWithContent = await Promise.all(
+      posts.map(async (post: RivetItem) => {
+        let content = null;
+        let error = null;
+
+        if (post.ipfsHash) {
+          try {
+            const ipfsUrl = `${Epistery.ipfsGatewayUrl}/ipfs/${post.ipfsHash}`;
+            const response = await fetch(ipfsUrl);
+            if (response.ok) {
+              content = await response.json();
+            } else {
+              error = `Failed to fetch: ${response.status}`;
+            }
+          } catch (e) {
+            error = e instanceof Error ? e.message : 'Unknown error';
+          }
+        }
+
+        return {
+          ...post,
+          ipfsUrl: post.ipfsHash ? `${Epistery.ipfsGatewayUrl}/ipfs/${post.ipfsHash}` : null,
+          content,
+          error
+        };
+      })
+    );
+
+    return {
+      board,
+      callerAddress: clientWalletInfo.address,
+      posts: postsWithContent,
+      count: posts.length
+    };
+  }
+
+  /**
+   * Get all conversation IDs for a user
+   * @param clientWalletInfo - User's wallet info
+   * @returns Array of conversation IDs
+   */
+  public static async getUserConversations(
+    clientWalletInfo: ClientWalletInfo
+  ): Promise<string[]> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    return await Utils.GetUserConversationIds(provider, clientWalletInfo.address);
+  }
+
+  /**
+   * Get the deterministic conversation ID for two addresses
+   * Pure function, no blockchain access needed
+   */
+  public static getConversationId(addr1: string, addr2: string): string {
+    return Utils.GetConversationId(addr1, addr2);
+  }
+
+  /**
+   * Get public keys for an address
+   * @param address - Address to get public keys for
+   * @returns Array of public keys
+   */
+  public static async getPublicKeys(address: string): Promise<string[]> {
+    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    return await Utils.GetPublicKeys(provider, address);
   }
 
   private static async initIPFS(): Promise<void> {
@@ -729,7 +1084,8 @@ export class Epistery {
    */
   public static async prepareTransferOwnership(
     clientAddress: string,
-    futureOwnerAddress: string
+    futureOwnerAddress: string,
+    contractAddress?: string
   ): Promise<any> {
     const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
 
@@ -741,7 +1097,14 @@ export class Epistery {
     }
     const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
 
-    // Contract Setup
+    const network = await provider.getNetwork();
+    const feeData = await provider.getFeeData();
+    let currentNonce = await provider.getTransactionCount(clientAddress, 'pending');
+
+    const transactions: any[] = [];
+    let totalCostNeeded = ethers.BigNumber.from(0);
+
+    // STEP 1: Always prepare Agent contract transaction
     const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
     if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
       throw new Error('Agent contract address not configured');
@@ -753,36 +1116,31 @@ export class Epistery {
       provider
     );
 
-    // Gas Estimation
-    let estimatedGas: ethers.BigNumber;
+    // Gas Estimation for Agent transfer
+    let agentGasLimit: ethers.BigNumber;
     try {
-      estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerAddress, {
+      const estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerAddress, {
         from: clientAddress
       });
+      agentGasLimit = estimatedGas.mul(130).div(100);
     } catch (error) {
-      console.warn('Gas estimation failed, using fallback');
-      estimatedGas = ethers.BigNumber.from(100000);
+      console.warn('Agent gas estimation failed (may have no data), using fallback');
+      agentGasLimit = ethers.BigNumber.from(150000);
     }
 
-    const gasLimit = estimatedGas.mul(130).div(100);
+    const agentTxData = agentContract.interface.encodeFunctionData('transferOwnership', [futureOwnerAddress]);
 
-    // Build Transaction (before funding so we know exact cost)
-    const network = await provider.getNetwork();
-    const nonce = await provider.getTransactionCount(clientAddress, 'pending');
-    const feeData = await provider.getFeeData();
-
-    const txData = agentContract.interface.encodeFunctionData('transferOwnership', [futureOwnerAddress]);
-
-    const unsignedTx: any = {
+    const agentUnsignedTx: any = {
       to: agentContractAddress,
-      data: txData,
+      data: agentTxData,
       value: '0x00',
-      nonce: nonce,
+      nonce: currentNonce,
       chainId: network.chainId,
-      gasLimit: '0x' + gasLimit.toHexString().slice(2)
+      gasLimit: '0x' + agentGasLimit.toHexString().slice(2)
     };
 
-    let totalTxCost: ethers.BigNumber;
+    // Add gas pricing (EIP-1559 or legacy)
+    let agentTxCost: ethers.BigNumber;
     if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
       let maxFee = feeData.maxFeePerGas.mul(120).div(100);
       let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
@@ -798,21 +1156,117 @@ export class Epistery {
         }
       }
 
-      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
-      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
-      unsignedTx.type = 2;
+      agentUnsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+      agentUnsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+      agentUnsignedTx.type = 2;
 
-      totalTxCost = gasLimit.mul(maxFee);
+      agentTxCost = agentGasLimit.mul(maxFee);
     } else {
       const gasPrice = feeData.gasPrice!.mul(120).div(100);
-      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+      agentUnsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
 
-      totalTxCost = gasLimit.mul(gasPrice);
+      agentTxCost = agentGasLimit.mul(gasPrice);
     }
 
-    // Fund Client Wallet
+    transactions.push({
+      unsignedTransaction: agentUnsignedTx,
+      metadata: {
+        operation: 'transferOwnership',
+        contractType: 'Agent',
+        contractAddress: agentContractAddress,
+        estimatedCost: ethers.utils.formatEther(agentTxCost),
+        currentOwner: clientAddress,
+        newOwner: futureOwnerAddress
+      }
+    });
+
+    totalCostNeeded = totalCostNeeded.add(agentTxCost);
+    currentNonce++;
+
+    // STEP 2: If IdentityContract exists, also prepare IdentityContract transaction
+    if (contractAddress) {
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+      const artifactData = await fs.readFile(artifactPath, 'utf-8');
+      const identityArtifact = JSON.parse(artifactData);
+
+      const identityContract = new ethers.Contract(
+        contractAddress,
+        identityArtifact.abi,
+        provider
+      );
+
+      // Gas Estimation for IdentityContract transfer
+      let identityGasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await identityContract.estimateGas.transferOwnership(futureOwnerAddress, {
+          from: clientAddress
+        });
+        identityGasLimit = estimatedGas.mul(130).div(100);
+      } catch (error) {
+        console.warn('IdentityContract gas estimation failed, using fallback');
+        identityGasLimit = ethers.BigNumber.from(100000);
+      }
+
+      const identityTxData = new ethers.utils.Interface(identityArtifact.abi).encodeFunctionData('transferOwnership', [futureOwnerAddress]);
+
+      const identityUnsignedTx: any = {
+        to: contractAddress,
+        data: identityTxData,
+        value: '0x00',
+        nonce: currentNonce,
+        chainId: network.chainId,
+        gasLimit: '0x' + identityGasLimit.toHexString().slice(2)
+      };
+
+      // Add gas pricing (EIP-1559 or legacy)
+      let identityTxCost: ethers.BigNumber;
+      if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
+        let maxFee = feeData.maxFeePerGas.mul(120).div(100);
+        let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
+
+        const isPolygon = network.chainId === 137 || network.chainId === 80002;
+        if (isPolygon) {
+          const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
+          if (priorityFee.lt(minPriorityFee)) {
+            priorityFee = minPriorityFee;
+          }
+          if (maxFee.lt(priorityFee)) {
+            maxFee = priorityFee.mul(2);
+          }
+        }
+
+        identityUnsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
+        identityUnsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
+        identityUnsignedTx.type = 2;
+
+        identityTxCost = identityGasLimit.mul(maxFee);
+      } else {
+        const gasPrice = feeData.gasPrice!.mul(120).div(100);
+        identityUnsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
+
+        identityTxCost = identityGasLimit.mul(gasPrice);
+      }
+
+      transactions.push({
+        unsignedTransaction: identityUnsignedTx,
+        metadata: {
+          operation: 'transferOwnership',
+          contractType: 'IdentityContract',
+          contractAddress: contractAddress,
+          estimatedCost: ethers.utils.formatEther(identityTxCost),
+          currentOwner: clientAddress,
+          newOwner: futureOwnerAddress
+        }
+      });
+
+      totalCostNeeded = totalCostNeeded.add(identityTxCost);
+    }
+
+    // Fund Client Wallet (for all transactions)
     const clientBalance = await provider.getBalance(clientAddress);
-    const neededWithBuffer = totalTxCost.mul(150).div(100);
+    const neededWithBuffer = totalCostNeeded.mul(150).div(100);
 
     if (clientBalance.lt(neededWithBuffer)) {
       const amountToFund = neededWithBuffer.sub(clientBalance);
@@ -823,30 +1277,28 @@ export class Epistery {
         gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
       };
 
-      if (unsignedTx.type === 2) {
+      if (transactions[0].unsignedTransaction.type === 2) {
         const isPolygon = network.chainId === 137 || network.chainId === 80002;
-        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
-        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
+        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(transactions[0].unsignedTransaction.maxPriorityFeePerGas);
+        fundTxParams.maxFeePerGas = transactions[0].unsignedTransaction.maxFeePerGas;
         fundTxParams.maxPriorityFeePerGas = minPriorityFee;
         fundTxParams.type = 2;
       } else {
-        fundTxParams.gasPrice = unsignedTx.gasPrice;
+        fundTxParams.gasPrice = transactions[0].unsignedTransaction.gasPrice;
       }
 
       const fundTx = await serverWallet.sendTransaction(fundTxParams);
       await fundTx.wait();
     }
 
-    console.log(`Prepared transferOwnership transaction from ${clientAddress} to ${futureOwnerAddress}`);
+    console.log(`Prepared ${transactions.length} transferOwnership transaction(s) from ${clientAddress} to ${futureOwnerAddress}`);
+    transactions.forEach((tx, idx) => {
+      console.log(`  [${idx + 1}] ${tx.metadata.contractType} at ${tx.metadata.contractAddress}`);
+    });
 
     return {
-      unsignedTransaction: unsignedTx,
-      metadata: {
-        operation: 'transferOwnership',
-        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
-        currentOwner: clientAddress,
-        newOwner: futureOwnerAddress
-      }
+      transactions,
+      totalEstimatedCost: ethers.utils.formatEther(totalCostNeeded)
     };
   }
 

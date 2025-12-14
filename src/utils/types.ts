@@ -108,6 +108,73 @@ export interface EpisteryWrite {
   ipfsUrl: string | undefined;
 }
 
+// ============================================================================
+// RIVET ITEM TYPES
+// Matches the RivetItem structure in agent.sol
+// ============================================================================
+
+/**
+ * Visibility enum matching Solidity enum
+ */
+export enum Visibility {
+  Public = 0,
+  Private = 1,
+}
+
+/**
+ * RivetItem - core data structure for messages and posts
+ * Matches the struct in agent.sol
+ */
+export interface RivetItem {
+  from: string;           // Author/sender address
+  to: string;             // Recipient (0x0 for posts, specific address for DMs)
+  data: string;           // Metadata or short content
+  publicKey: string;      // Public key of the sender
+  domain: string;         // Domain context
+  ipfsHash: string;       // IPFS hash of full content
+  visibility: Visibility; // Public or Private
+  timestamp: number;      // Unix timestamp (bigint from contract)
+}
+
+/**
+ * Request to send a direct message
+ */
+export interface SendMessageRequest {
+  to: string;             // Recipient address
+  publicKey: string;      // Sender's public key
+  data: string;           // Metadata or short content
+  domain: string;         // Domain context
+  ipfsHash: string;       // IPFS hash of full message content
+}
+
+/**
+ * Request to create a post on a board
+ */
+export interface CreatePostRequest {
+  board: string;          // Board address (can be own address or another's)
+  publicKey: string;      // Sender's public key
+  data: string;           // Metadata or short content
+  domain: string;         // Domain context
+  ipfsHash: string;       // IPFS hash of full post content
+  visibility: Visibility; // Public or Private
+}
+
+/**
+ * Request to get conversation messages
+ */
+export interface GetConversationRequest {
+  otherParty: string;     // The other participant in the conversation
+}
+
+/**
+ * Request to get posts from a board
+ */
+export interface GetPostsRequest {
+  board: string;          // Board address
+  offset?: number;        // For pagination
+  limit?: number;         // For pagination
+}
+
 export interface KeyExchangeRequest {
   clientAddress: string;
   clientPublicKey: string;
@@ -159,7 +226,7 @@ export interface UnsignedTransaction {
 export interface PrepareTransactionRequest {
   clientAddress: string;
   publicKey: string;
-  operation: 'write' | 'transferOwnership' | 'createApproval' | 'handleApproval';
+  operation: 'write' | 'transferOwnership' | 'createApproval' | 'handleApproval' | 'sendMessage' | 'createPost';
   params: any;
 }
 

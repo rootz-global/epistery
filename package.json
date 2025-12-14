@@ -14,14 +14,17 @@
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "start": "npm run build && node test/server.mjs",
+    "start": "npm run build && node demo/server.mjs",
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
     "certify": "node cli/index.mjs certify",
     "initialize": "node cli/index.mjs initialize",
     "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify",
     "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network sepolia",
-    "verify:agent": "node scripts/verify-agent.js"
+    "verify:agent": "node scripts/verify-agent.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@types/cookie-parser": "^1.4.9",
@@ -39,10 +42,14 @@
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@types/supertest": "^6.0.2",
+    "@vitest/coverage-v8": "^2.1.8",
     "chai": "^6.2.0",
     "hardhat": "^2.26.3",
     "nodemon": "^3.0.0",
+    "supertest": "^7.0.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^2.1.8"
   }
 }

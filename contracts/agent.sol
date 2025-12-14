@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 contract Agent {
   // Contract version - increment when ABI or functionality changes
-  string public constant VERSION = "2.0.0";
+  string public constant VERSION = "3.0.0";
 
   // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
   string public domain;
@@ -11,11 +11,36 @@ contract Agent {
   // Immutable sponsor address - the address that paid for deployment
   address public immutable sponsor;
 
-  // Mapping from wallet address to array of data (IPFS hashes)
-  mapping(address => string[]) private addressData;
+  // ============================================================================
+  // RIVET ITEM DATA STRUCTURE
+  //
+  // Core data structure for messages and posts
+  // ============================================================================
 
-  // Mapping from wallet address to array of public keys
+  enum Visibility { Public, Private }
+
+  struct RivetItem {
+    address from;        // Author/sender of the item
+    address to;          // Recipient (address(0) for posts, specific address for DMs)
+    string data;         // Metadata or short content
+    string publicKey;    // Public key of the sender
+    string domain;       // Domain context
+    string ipfsHash;     // IPFS hash of full content
+    Visibility visibility;
+    uint256 timestamp;
+  }
+
+  // Conversations between two addresses (deterministic conversation ID)
+  mapping(bytes32 => RivetItem[]) private conversations;
+
+  // Posts on boards (address as board identifier)
+  mapping(address => RivetItem[]) private posts;
+
+  // Mapping from wallet address to array of public keys (for key exchange)
   mapping(address => string[]) private addressPublicKeys;
+
+  // Track conversation IDs for each participant (for enumeration)
+  mapping(address => bytes32[]) private userConversationIds;
 
   // Struct for whitelist entry with metadata
   struct WhitelistEntry {
@@ -44,7 +69,13 @@ contract Agent {
     sponsor = _sponsor;
   }
 
-  // Event emitted when data is written
+  // Event emitted when a message is sent (DM)
+  event MessageSent(address indexed from, address indexed to, string ipfsHash, string domain, uint256 timestamp);
+
+  // Event emitted when a post is created
+  event PostCreated(address indexed from, address indexed board, string ipfsHash, string domain, Visibility visibility, uint256 timestamp);
+
+  // Event emitted when data is written (legacy - maps to PostCreated)
   event DataWritten(address indexed owner, string publicKey, string data, uint256 timestamp);
 
   // Event emitted when ownership is transferred
@@ -104,9 +135,29 @@ contract Agent {
   // Event emitted when an attribute is set
   event AttributeSet(string indexed key, bool isPublic, uint256 timestamp);
 
+  // ============================================================================
+  // HELPER FUNCTIONS
+  // ============================================================================
+
   /**
-   * @dev Writes data for the caller's address
-   * Appends new data to the caller's message history
+   * @dev Generate deterministic conversation ID for two addresses
+   * The ID is the same regardless of which address is first
+   * @param addr1 First address
+   * @param addr2 Second address
+   * @return Deterministic conversation ID
+   */
+  function getConversationId(address addr1, address addr2) public pure returns (bytes32) {
+    (address min, address max) = addr1 < addr2 ? (addr1, addr2) : (addr2, addr1);
+    return keccak256(abi.encodePacked(min, max));
+  }
+
+  // ============================================================================
+  // WRITE FUNCTIONS
+  // ============================================================================
+
+  /**
+   * @dev Writes data for the caller's address (LEGACY - backward compatible)
+   * Creates a public post on the caller's own board
    * @param publicKey The public key to associate with this address
    * @param data The data to store (IPFS hash)
    */
@@ -114,46 +165,317 @@ contract Agent {
     require(bytes(publicKey).length > 0, "Public key cannot be empty");
     require(bytes(data).length > 0, "Data cannot be empty");
 
-    // Append data to msg.sender's array
-    addressData[msg.sender].push(data);
+    // Store public key
     addressPublicKeys[msg.sender].push(publicKey);
 
+    // Create a post on sender's own board (backward compatible behavior)
+    posts[msg.sender].push(RivetItem({
+      from: msg.sender,
+      to: address(0),
+      data: "",
+      publicKey: publicKey,
+      domain: domain,
+      ipfsHash: data,
+      visibility: Visibility.Public,
+      timestamp: block.timestamp
+    }));
+
     emit DataWritten(msg.sender, publicKey, data, block.timestamp);
+    emit PostCreated(msg.sender, msg.sender, data, domain, Visibility.Public, block.timestamp);
   }
 
   /**
-   * @dev Reads all data for the caller's address
-   * Returns empty array if no data exists
-   * @return Array of all IPFS hashes associated with the caller's address
+   * @dev Send a direct message to another address
+   * Messages are stored in a shared conversation accessible by both parties
+   * @param to Recipient address
+   * @param publicKey Sender's public key
+   * @param data Metadata or short content
+   * @param messageDomain Domain context for the message
+   * @param ipfsHash IPFS hash of the full message content
+   */
+  function sendMessage(
+    address to,
+    string memory publicKey,
+    string memory data,
+    string memory messageDomain,
+    string memory ipfsHash
+  ) external {
+    require(to != address(0), "Recipient cannot be zero address");
+    require(to != msg.sender, "Cannot message yourself");
+    require(bytes(ipfsHash).length > 0, "IPFS hash cannot be empty");
+
+    bytes32 convId = getConversationId(msg.sender, to);
+
+    // Track conversation for both participants if this is first message
+    if (conversations[convId].length == 0) {
+      userConversationIds[msg.sender].push(convId);
+      userConversationIds[to].push(convId);
+    }
+
+    conversations[convId].push(RivetItem({
+      from: msg.sender,
+      to: to,
+      data: data,
+      publicKey: publicKey,
+      domain: messageDomain,
+      ipfsHash: ipfsHash,
+      visibility: Visibility.Private,
+      timestamp: block.timestamp
+    }));
+
+    // Store public key if not empty
+    if (bytes(publicKey).length > 0) {
+      addressPublicKeys[msg.sender].push(publicKey);
+    }
+
+    emit MessageSent(msg.sender, to, ipfsHash, messageDomain, block.timestamp);
+  }
+
+  /**
+   * @dev Create a post on a board
+   * @param board Address of the board to post to (can be own address or another's)
+   * @param publicKey Sender's public key
+   * @param data Metadata or short content
+   * @param postDomain Domain context for the post
+   * @param ipfsHash IPFS hash of the full post content
+   * @param visibility Public or Private visibility
+   */
+  function createPost(
+    address board,
+    string memory publicKey,
+    string memory data,
+    string memory postDomain,
+    string memory ipfsHash,
+    Visibility visibility
+  ) external {
+    require(bytes(ipfsHash).length > 0, "IPFS hash cannot be empty");
+
+    posts[board].push(RivetItem({
+      from: msg.sender,
+      to: address(0),
+      data: data,
+      publicKey: publicKey,
+      domain: postDomain,
+      ipfsHash: ipfsHash,
+      visibility: visibility,
+      timestamp: block.timestamp
+    }));
+
+    // Store public key if not empty
+    if (bytes(publicKey).length > 0) {
+      addressPublicKeys[msg.sender].push(publicKey);
+    }
+
+    emit PostCreated(msg.sender, board, ipfsHash, postDomain, visibility, block.timestamp);
+  }
+
+  // ============================================================================
+  // READ FUNCTIONS
+  // ============================================================================
+
+  /**
+   * @dev Reads all IPFS hashes for the caller's posts (LEGACY - backward compatible)
+   * Returns empty array if no posts exist
+   * @return Array of all IPFS hashes from caller's posts
    */
   function read() public view returns (string[] memory) {
-    return addressData[msg.sender];
+    RivetItem[] memory userPosts = posts[msg.sender];
+    string[] memory hashes = new string[](userPosts.length);
+
+    for (uint256 i = 0; i < userPosts.length; i++) {
+      hashes[i] = userPosts[i].ipfsHash;
+    }
+
+    return hashes;
   }
 
   /**
-   * @dev Gets the count of messages for the caller
-   * @return The number of messages stored for the caller
+   * @dev Gets the count of posts for the caller
+   * @return The number of posts stored for the caller
    */
   function getMessageCount() public view returns (uint256) {
-    return addressData[msg.sender].length;
+    return posts[msg.sender].length;
+  }
+
+  /**
+   * @dev Gets all messages in a conversation between two addresses
+   * Only participants can read their conversations
+   * @param otherParty The other participant in the conversation
+   * @return Array of RivetItems representing the conversation
+   */
+  function getConversation(address otherParty) external view returns (RivetItem[] memory) {
+    require(otherParty != address(0), "Other party cannot be zero address");
+    require(otherParty != msg.sender, "Cannot get conversation with yourself");
+
+    bytes32 convId = getConversationId(msg.sender, otherParty);
+    return conversations[convId];
+  }
+
+  /**
+   * @dev Gets all conversation IDs for the caller
+   * @return Array of conversation IDs the caller participates in
+   */
+  function getUserConversationIds() external view returns (bytes32[] memory) {
+    return userConversationIds[msg.sender];
+  }
+
+  /**
+   * @dev Gets all posts on a board
+   * For public posts, anyone can read them
+   * For private posts, only the board owner can read them
+   * @param board The board address to get posts from
+   * @return Array of RivetItems representing posts (filtered by visibility)
+   */
+  function getPosts(address board) external view returns (RivetItem[] memory) {
+    RivetItem[] memory boardPosts = posts[board];
+
+    // If caller is the board owner, return all posts
+    if (msg.sender == board) {
+      return boardPosts;
+    }
+
+    // For non-owners, count public posts first
+    uint256 publicCount = 0;
+    for (uint256 i = 0; i < boardPosts.length; i++) {
+      if (boardPosts[i].visibility == Visibility.Public) {
+        publicCount++;
+      }
+    }
+
+    // Create array of only public posts
+    RivetItem[] memory publicPosts = new RivetItem[](publicCount);
+    uint256 index = 0;
+    for (uint256 i = 0; i < boardPosts.length; i++) {
+      if (boardPosts[i].visibility == Visibility.Public) {
+        publicPosts[index] = boardPosts[i];
+        index++;
+      }
+    }
+
+    return publicPosts;
+  }
+
+  /**
+   * @dev Gets posts on a board with pagination
+   * @param board The board address to get posts from
+   * @param offset Starting index
+   * @param limit Maximum number of posts to return
+   * @return Array of RivetItems (filtered by visibility)
+   */
+  function getPostsPaginated(address board, uint256 offset, uint256 limit) external view returns (RivetItem[] memory) {
+    RivetItem[] memory boardPosts = posts[board];
+
+    // If caller is board owner, return all posts with pagination
+    if (msg.sender == board) {
+      if (offset >= boardPosts.length) {
+        return new RivetItem[](0);
+      }
+
+      uint256 end = offset + limit;
+      if (end > boardPosts.length) {
+        end = boardPosts.length;
+      }
+
+      RivetItem[] memory ownerResult = new RivetItem[](end - offset);
+      for (uint256 i = offset; i < end; i++) {
+        ownerResult[i - offset] = boardPosts[i];
+      }
+      return ownerResult;
+    }
+
+    // For non-owners, filter to public posts then paginate
+    // First pass: count public posts
+    uint256 publicCount = 0;
+    for (uint256 i = 0; i < boardPosts.length; i++) {
+      if (boardPosts[i].visibility == Visibility.Public) {
+        publicCount++;
+      }
+    }
+
+    if (offset >= publicCount) {
+      return new RivetItem[](0);
+    }
+
+    uint256 resultSize = limit;
+    if (offset + limit > publicCount) {
+      resultSize = publicCount - offset;
+    }
+
+    RivetItem[] memory result = new RivetItem[](resultSize);
+    uint256 publicIndex = 0;
+    uint256 resultIndex = 0;
+
+    for (uint256 i = 0; i < boardPosts.length && resultIndex < resultSize; i++) {
+      if (boardPosts[i].visibility == Visibility.Public) {
+        if (publicIndex >= offset) {
+          result[resultIndex] = boardPosts[i];
+          resultIndex++;
+        }
+        publicIndex++;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * @dev Gets public keys for an address
+   * @param addr The address to get public keys for
+   * @return Array of public keys
+   */
+  function getPublicKeys(address addr) external view returns (string[] memory) {
+    return addressPublicKeys[addr];
   }
 
   /**
    * @dev Transfers ownership of all data to a new address
-   * Moves all data, public keys, and approval requests from caller to new owner
+   * Moves all posts, conversations, public keys, and approval requests from caller to new owner
    * Clears the caller's data after transfer
    * @param newOwner The address to transfer ownership to
    */
   function transferOwnership(address newOwner) public {
     require(newOwner != address(0), "New owner cannot be zero address");
     require(newOwner != msg.sender, "Cannot transfer to self");
-    require(addressData[msg.sender].length > 0, "No data to transfer");
+    require(posts[msg.sender].length > 0 || userConversationIds[msg.sender].length > 0, "No data to transfer");
 
-    // Transfer all data to new owner
-    uint256 length = addressData[msg.sender].length;
-    for (uint256 i = 0; i < length; i++) {
-      addressData[newOwner].push(addressData[msg.sender][i]);
-      addressPublicKeys[newOwner].push(addressPublicKeys[msg.sender][i]);
+    // Transfer all posts to new owner's board
+    RivetItem[] storage oldPosts = posts[msg.sender];
+    for (uint256 i = 0; i < oldPosts.length; i++) {
+      // Update the 'from' address in transferred posts
+      posts[newOwner].push(RivetItem({
+        from: newOwner,
+        to: oldPosts[i].to,
+        data: oldPosts[i].data,
+        publicKey: oldPosts[i].publicKey,
+        domain: oldPosts[i].domain,
+        ipfsHash: oldPosts[i].ipfsHash,
+        visibility: oldPosts[i].visibility,
+        timestamp: oldPosts[i].timestamp
+      }));
+    }
+
+    // Transfer public keys
+    string[] storage oldKeys = addressPublicKeys[msg.sender];
+    for (uint256 i = 0; i < oldKeys.length; i++) {
+      addressPublicKeys[newOwner].push(oldKeys[i]);
+    }
+
+    // Transfer conversation IDs (note: messages in conversations keep original 'from' addresses)
+    bytes32[] storage oldConvIds = userConversationIds[msg.sender];
+    for (uint256 i = 0; i < oldConvIds.length; i++) {
+      bytes32 convId = oldConvIds[i];
+      // Add to new owner's conversation list if not already there
+      bool exists = false;
+      bytes32[] storage newOwnerConvIds = userConversationIds[newOwner];
+      for (uint256 j = 0; j < newOwnerConvIds.length; j++) {
+        if (newOwnerConvIds[j] == convId) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        userConversationIds[newOwner].push(convId);
+      }
     }
 
     // Transfer all approval requests where msg.sender is the requestor
@@ -209,8 +531,9 @@ contract Agent {
     }
 
     // Clear old owner's data
-    delete addressData[msg.sender];
+    delete posts[msg.sender];
     delete addressPublicKeys[msg.sender];
+    delete userConversationIds[msg.sender];
     delete requestorApprovers[msg.sender];
 
     emit OwnershipTransferred(msg.sender, newOwner, block.timestamp);
