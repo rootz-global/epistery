@@ -30,8 +30,8 @@ async function main() {
   console.log("Deploying with account:", deployer.address);
 
   // Get account balance
-  const balance = await deployer.provider.getBalance(deployer.address);
-  console.log("Account balance:", hre.ethers.formatEther(balance), hre.network.name === 'polygon' ? 'POL' : 'ETH');
+  const balance = await deployer.getBalance();
+  console.log("Account balance:", hre.ethers.utils.formatEther(balance), hre.network.name === 'polygon' ? 'POL' : 'ETH');
 
   // Sponsor defaults to deployer if not specified
   const sponsor = process.env.SPONSOR || deployer.address;
@@ -42,12 +42,12 @@ async function main() {
   const Agent = await hre.ethers.getContractFactory("Agent");
   const agent = await Agent.deploy(domain, sponsor);
 
-  await agent.waitForDeployment();
-  const contractAddress = await agent.getAddress();
+  await agent.deployed();
+  const contractAddress = agent.address;
 
   console.log("\n✅ Agent contract deployed successfully!");
   console.log("Contract address:", contractAddress);
-  console.log("Transaction hash:", agent.deploymentTransaction().hash);
+  console.log("Transaction hash:", agent.deployTransaction.hash);
   console.log("Domain:", await agent.domain());
   console.log("Sponsor:", await agent.sponsor());
   console.log("Version:", await agent.VERSION());

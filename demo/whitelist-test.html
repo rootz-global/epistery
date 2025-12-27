@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whitelist Test Page</title>
+  <style>
+    :root {
+      --primary: #2d5016;
+      --secondary: #4a7c59;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --border: #dee2e6;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --success: #28a745;
+      --danger: #dc3545;
+      --info: #17a2b8;
+      --warning: #ffc107;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: var(--primary);
+      margin-bottom: 0.5rem;
+    }
+
+    .tagline {
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card h2 {
+      color: var(--primary);
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: 500;
+    }
+
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--secondary);
+    }
+
+    .form-row {
+      display: flex;
+      gap: 1rem;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--secondary);
+    }
+
+    .btn-secondary {
+      background: var(--text-muted);
+      color: white;
+    }
+
+    .btn-secondary:hover {
+      background: #5a6268;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #c82333;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .result {
+      background: #f1f3f5;
+      border-radius: 4px;
+      padding: 1rem;
+      margin-top: 1rem;
+      font-family: 'Courier New', monospace;
+      font-size: 0.875rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .result.success {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .result.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .status-badge.connected {
+      background: var(--success);
+      color: white;
+    }
+
+    .status-badge.disconnected {
+      background: var(--danger);
+      color: white;
+    }
+
+    .wallet-info {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding: 1rem;
+      background: #e9ecef;
+      border-radius: 4px;
+    }
+
+    .wallet-address {
+      font-family: monospace;
+      font-size: 0.875rem;
+      word-break: break-all;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .endpoint-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .endpoint-list li {
+      padding: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .endpoint-list li:last-child {
+      border-bottom: none;
+    }
+
+    .endpoint-list code {
+      background: #e9ecef;
+      padding: 0.125rem 0.25rem;
+      border-radius: 2px;
+      font-size: 0.875rem;
+    }
+
+    .endpoint-list .method {
+      display: inline-block;
+      width: 50px;
+      font-weight: bold;
+      color: var(--info);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Whitelist Test Page</h1>
+    <p class="tagline">Test all whitelist functionality: authentication, check, add, remove, and admin operations</p>
+
+    <!-- Connection Status -->
+    <div class="card">
+      <h2>Connection Status</h2>
+      <div class="wallet-info">
+        <span class="status-badge" id="connection-status">Checking...</span>
+        <div>
+          <strong>Wallet Address:</strong>
+          <div class="wallet-address" id="wallet-address">Not connected</div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="connectWallet()">Connect Wallet</button>
+        <button class="btn btn-secondary" onclick="refreshStatus()">Refresh Status</button>
+      </div>
+      <div id="status-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Check Whitelist -->
+    <div class="card">
+      <h2>Check Whitelist Status</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Check if an address is on a specific list</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>List Name</label>
+          <input type="text" id="check-list" placeholder="e.g., epistery::admin" value="epistery::admin">
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="checkWhitelist()">Check My Access</button>
+        <button class="btn btn-secondary" onclick="checkWhitelistDev()">Check (Dev Mode)</button>
+      </div>
+      <div id="check-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Get Lists -->
+    <div class="card">
+      <h2>Get All Lists</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Retrieve all list names for this domain (admin only)</p>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="getLists()">Get All Lists</button>
+      </div>
+      <div id="lists-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Get List Members -->
+    <div class="card">
+      <h2>Get List Members</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Get all members of a specific list (admin only)</p>
+      <div class="form-group">
+        <label>List Name</label>
+        <input type="text" id="get-list-name" placeholder="e.g., epistery::admin" value="epistery::admin">
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="getListMembers()">Get Members</button>
+      </div>
+      <div id="members-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Add to List -->
+    <div class="card">
+      <h2>Add to List</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Add an address to a list (admin only)</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>List Name</label>
+          <input type="text" id="add-list" placeholder="e.g., epistery::admin" value="epistery::admin">
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input type="text" id="add-address" placeholder="0x...">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Display Name (optional)</label>
+          <input type="text" id="add-name" placeholder="e.g., John Doe">
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="add-role">
+            <option value="0">Guest (0)</option>
+            <option value="1" selected>Member (1)</option>
+            <option value="2">Moderator (2)</option>
+            <option value="3">Admin (3)</option>
+            <option value="4">Owner (4)</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="addToList()">Add to List</button>
+        <button class="btn btn-secondary" onclick="addSelfToList()">Add Myself</button>
+      </div>
+      <div id="add-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Remove from List -->
+    <div class="card">
+      <h2>Remove from List</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Remove an address from a list (admin only)</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>List Name</label>
+          <input type="text" id="remove-list" placeholder="e.g., epistery::admin" value="epistery::admin">
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input type="text" id="remove-address" placeholder="0x...">
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-danger" onclick="removeFromList()">Remove from List</button>
+      </div>
+      <div id="remove-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Request Access -->
+    <div class="card">
+      <h2>Request Access</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Request access to a list (will be reviewed by admin)</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>List Name</label>
+          <input type="text" id="request-list" placeholder="e.g., epistery::admin" value="epistery::admin">
+        </div>
+        <div class="form-group">
+          <label>Message (optional)</label>
+          <input type="text" id="request-message" placeholder="Why do you need access?">
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="requestAccess()">Request Access</button>
+      </div>
+      <div id="request-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Pending Requests -->
+    <div class="card">
+      <h2>Pending Access Requests</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">View and manage pending access requests (admin only)</p>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="getPendingRequests()">Get Pending Requests</button>
+      </div>
+      <div id="pending-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Whitelist Status -->
+    <div class="card">
+      <h2>Whitelist Agent Status</h2>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="getWhitelistStatus()">Get Status</button>
+        <button class="btn btn-secondary" onclick="openAdmin()">Open Admin Page</button>
+      </div>
+      <div id="wl-status-result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Available Endpoints -->
+    <div class="card">
+      <h2>Available Endpoints</h2>
+      <ul class="endpoint-list">
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/check</code> - Check access</li>
+        <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/auth</code> - Authenticate with signature</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/lists</code> - Get all lists (admin)</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/list?list=name</code> - Get list members (admin)</li>
+        <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/add</code> - Add member (admin)</li>
+        <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/remove</code> - Remove member (admin)</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/status</code> - Agent status</li>
+        <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/request-access</code> - Request access</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/pending-requests</code> - Get pending (admin)</li>
+        <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/handle-request</code> - Handle request (admin)</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/admin</code> - Admin UI</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/widget</code> - Widget UI</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Load ethers.js -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+
+  <script type="module">
+    const BASE_PATH = '/.well-known/epistery/whitelist';
+    let currentWallet = null;
+
+    // Helper to show results
+    function showResult(elementId, data, isSuccess = true) {
+      const el = document.getElementById(elementId);
+      el.style.display = 'block';
+      el.className = `result ${isSuccess ? 'success' : 'error'}`;
+      el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    }
+
+    // Connect wallet using epistery witness
+    window.connectWallet = async function() {
+      try {
+        // Try to load witness from epistery
+        const Witness = (await import('/.well-known/epistery/lib/witness.js')).default;
+        // Pass the correct rootPath since we're not loading from within the epistery path
+        const witness = await Witness.connect({ rootPath: '/.well-known/epistery' });
+
+        if (witness.wallet) {
+          currentWallet = {
+            address: witness.wallet.address,
+            publicKey: witness.wallet.publicKey
+          };
+          updateConnectionStatus();
+          showResult('status-result', {
+            status: 'connected',
+            address: currentWallet.address,
+            message: 'Wallet connected successfully'
+          });
+        }
+      } catch (error) {
+        console.error('Connect error:', error);
+        showResult('status-result', { error: error.message }, false);
+      }
+    };
+
+    // Refresh connection status
+    window.refreshStatus = async function() {
+      try {
+        const response = await fetch(`${BASE_PATH}/check`, {
+          credentials: 'include'
+        });
+        const data = await response.json();
+
+        if (data.address) {
+          currentWallet = { address: data.address };
+        }
+
+        updateConnectionStatus();
+        showResult('status-result', data, data.allowed);
+      } catch (error) {
+        showResult('status-result', { error: error.message }, false);
+      }
+    };
+
+    function updateConnectionStatus() {
+      const statusEl = document.getElementById('connection-status');
+      const addressEl = document.getElementById('wallet-address');
+
+      if (currentWallet && currentWallet.address) {
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'status-badge connected';
+        addressEl.textContent = currentWallet.address;
+      } else {
+        statusEl.textContent = 'Not Connected';
+        statusEl.className = 'status-badge disconnected';
+        addressEl.textContent = 'Not connected';
+      }
+    }
+
+    // Check whitelist status
+    window.checkWhitelist = async function() {
+      try {
+        const listName = document.getElementById('check-list').value;
+        const url = new URL(`${BASE_PATH}/check`, window.location.origin);
+        if (listName) url.searchParams.set('list', listName);
+
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        showResult('check-result', data, data.allowed);
+      } catch (error) {
+        showResult('check-result', { error: error.message }, false);
+      }
+    };
+
+    // Check with dev mode (for localhost testing)
+    window.checkWhitelistDev = async function() {
+      try {
+        const listName = document.getElementById('check-list').value;
+        const url = new URL(`${BASE_PATH}/check`, window.location.origin);
+        if (listName) url.searchParams.set('list', listName);
+
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        showResult('check-result', data, true);
+      } catch (error) {
+        showResult('check-result', { error: error.message }, false);
+      }
+    };
+
+    // Get all lists
+    window.getLists = async function() {
+      try {
+        const response = await fetch(`${BASE_PATH}/lists`, { credentials: 'include' });
+        const data = await response.json();
+        showResult('lists-result', data, response.ok);
+      } catch (error) {
+        showResult('lists-result', { error: error.message }, false);
+      }
+    };
+
+    // Get list members
+    window.getListMembers = async function() {
+      try {
+        const listName = document.getElementById('get-list-name').value;
+        const url = new URL(`${BASE_PATH}/list`, window.location.origin);
+        url.searchParams.set('list', listName);
+
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        showResult('members-result', data, response.ok);
+      } catch (error) {
+        showResult('members-result', { error: error.message }, false);
+      }
+    };
+
+    // Add to list
+    window.addToList = async function() {
+      try {
+        const listName = document.getElementById('add-list').value;
+        const address = document.getElementById('add-address').value;
+        const name = document.getElementById('add-name').value;
+        const role = parseInt(document.getElementById('add-role').value);
+
+        const response = await fetch(`${BASE_PATH}/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listName, address, name, role, meta: '' })
+        });
+
+        const data = await response.json();
+        showResult('add-result', data, data.success);
+      } catch (error) {
+        showResult('add-result', { error: error.message }, false);
+      }
+    };
+
+    // Add self to list
+    window.addSelfToList = async function() {
+      if (!currentWallet || !currentWallet.address) {
+        showResult('add-result', { error: 'Please connect wallet first' }, false);
+        return;
+      }
+      document.getElementById('add-address').value = currentWallet.address;
+      addToList();
+    };
+
+    // Remove from list
+    window.removeFromList = async function() {
+      try {
+        const listName = document.getElementById('remove-list').value;
+        const address = document.getElementById('remove-address').value;
+
+        const response = await fetch(`${BASE_PATH}/remove`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listName, address })
+        });
+
+        const data = await response.json();
+        showResult('remove-result', data, data.success);
+      } catch (error) {
+        showResult('remove-result', { error: error.message }, false);
+      }
+    };
+
+    // Request access
+    window.requestAccess = async function() {
+      try {
+        const listName = document.getElementById('request-list').value;
+        const message = document.getElementById('request-message').value;
+        const address = currentWallet?.address || '0x0000000000000000000000000000000000000000';
+
+        const response = await fetch(`${BASE_PATH}/request-access`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ address, listName, message, agentName: 'test-page' })
+        });
+
+        const data = await response.json();
+        showResult('request-result', data, data.success);
+      } catch (error) {
+        showResult('request-result', { error: error.message }, false);
+      }
+    };
+
+    // Get pending requests
+    window.getPendingRequests = async function() {
+      try {
+        const response = await fetch(`${BASE_PATH}/pending-requests`, { credentials: 'include' });
+        const data = await response.json();
+        showResult('pending-result', data, response.ok);
+      } catch (error) {
+        showResult('pending-result', { error: error.message }, false);
+      }
+    };
+
+    // Get whitelist status
+    window.getWhitelistStatus = async function() {
+      try {
+        const response = await fetch(`${BASE_PATH}/status`, { credentials: 'include' });
+        const data = await response.json();
+        showResult('wl-status-result', data, response.ok);
+      } catch (error) {
+        showResult('wl-status-result', { error: error.message }, false);
+      }
+    };
+
+    // Open admin page
+    window.openAdmin = function() {
+      window.open(`${BASE_PATH}/admin`, '_blank');
+    };
+
+    // Auto-connect wallet on page load
+    async function autoConnect() {
+      try {
+        await connectWallet();
+        console.log('[whitelist test] Wallet auto-connected');
+      } catch (error) {
+        console.log('[whitelist test] Auto-connect failed, user can connect manually:', error.message);
+      }
+      refreshStatus();
+    }
+
+    // Initialize on load
+    autoConnect();
+  </script>
+</body>
+</html>

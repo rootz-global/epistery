@@ -1,6 +1,6 @@
 import { BigNumberish, ethers, Wallet } from 'ethers';
 import { Config } from './Config';
-import { DomainConfig } from './types';
+import { DomainConfig, RivetItem, Visibility } from './types';
 import * as AgentArtifact from '../../artifacts/contracts/agent.sol/Agent.json';
 
 export class Utils {
@@ -261,8 +261,11 @@ export class Utils {
     }
   }
 
-  public static async TransferOwnership(clientWallet: Wallet, futureOwnerWalletAddress: string) {
+  public static async TransferOwnership(clientWallet: Wallet, futureOwnerWalletAddress: string, contractAddress?: string) {
     try {
+      const receipts: any[] = [];
+
+      // STEP 1: Always transfer Agent contract ownership
       const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Agent contract address not configured');
@@ -277,32 +280,96 @@ export class Utils {
       // Use helper functions
       const gasPrice = await this.getGasPriceWithBuffer(clientWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
 
-      // Estimate gas for the contract write
-      let gasLimit: ethers.BigNumber;
+      // Estimate gas for Agent contract transferOwnership
+      let agentGasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.transferOwnership(futureOwnerWalletAddress);
-        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
-        console.log(`Contract transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+        agentGasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+        console.log(`Agent transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${agentGasLimit.toString()}`);
       }
       catch (error) {
-        console.warn('Gas estimation for contract transferOwnership failed, using default limit');
-        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+        console.warn('Gas estimation for Agent transferOwnership failed (may have no data), using default limit');
+        agentGasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
 
-      // Call the transferOwnership function with pubKey of future owner
-      const tx = await agentContract.transferOwnership(futureOwnerWalletAddress, {
-        gasLimit: gasLimit,
-        gasPrice: gasPrice
-      });
+      // Call the Agent transferOwnership function
+      try {
+        const agentTx = await agentContract.transferOwnership(futureOwnerWalletAddress, {
+          gasLimit: agentGasLimit,
+          gasPrice: gasPrice
+        });
 
-      console.log(`Data written to Agent contract. Tx: ${tx.hash}`);
-      console.log(`Waiting for confirmation...`);
+        console.log(`Agent ownership transfer initiated. Tx: ${agentTx.hash}`);
+        console.log(`Waiting for confirmation...`);
 
-      const receipt = await tx.wait();
-      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
-      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+        const agentReceipt = await agentTx.wait();
+        console.log(`Agent transfer confirmed in block ${agentReceipt.blockNumber}`);
+        console.log(`Gas used: ${agentReceipt.gasUsed.toString()}`);
 
-      return receipt;
+        receipts.push({
+          contractType: 'Agent',
+          contractAddress: agentContractAddress,
+          receipt: agentReceipt
+        });
+      } catch (error: any) {
+        console.warn(`Agent transfer failed (may have no data to transfer): ${error.message}`);
+        // Don't throw - continue to IdentityContract if it exists
+        receipts.push({
+          contractType: 'Agent',
+          contractAddress: agentContractAddress,
+          error: error.message,
+          skipped: true
+        });
+      }
+
+      // STEP 2: If IdentityContract exists, also transfer IdentityContract ownership
+      if (contractAddress) {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
+        const artifactData = await fs.readFile(artifactPath, 'utf-8');
+        const identityArtifact = JSON.parse(artifactData);
+
+        const identityContract = new ethers.Contract(
+          contractAddress,
+          identityArtifact.abi,
+          clientWallet
+        );
+
+        // Estimate gas for IdentityContract transferOwnership
+        let identityGasLimit: ethers.BigNumber;
+        try {
+          const estimatedGas = await identityContract.estimateGas.transferOwnership(futureOwnerWalletAddress);
+          identityGasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+          console.log(`IdentityContract transferOwnership - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${identityGasLimit.toString()}`);
+        }
+        catch (error) {
+          console.warn('Gas estimation for IdentityContract transferOwnership failed, using default limit');
+          identityGasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+        }
+
+        // Call the IdentityContract transferOwnership function
+        const identityTx = await identityContract.transferOwnership(futureOwnerWalletAddress, {
+          gasLimit: identityGasLimit,
+          gasPrice: gasPrice
+        });
+
+        console.log(`IdentityContract ownership transfer initiated. Tx: ${identityTx.hash}`);
+        console.log(`Waiting for confirmation...`);
+
+        const identityReceipt = await identityTx.wait();
+        console.log(`IdentityContract transfer confirmed in block ${identityReceipt.blockNumber}`);
+        console.log(`Gas used: ${identityReceipt.gasUsed.toString()}`);
+
+        receipts.push({
+          contractType: 'IdentityContract',
+          contractAddress: contractAddress,
+          receipt: identityReceipt
+        });
+      }
+
+      console.log(`Completed ${receipts.length} ownership transfer(s)`);
+      return receipts;
     }
     catch (error) {
       console.error('Error transferring ownership:', error);
@@ -969,5 +1036,358 @@ export class Utils {
       console.error('Error handling approval:', error);
       throw new Error(`Failed to handle approval: ${error}`);
     }
+  }
+
+  // ============================================================================
+  // RIVET ITEM METHODS
+  // Messages and Posts using the new RivetItem structure
+  // ============================================================================
+
+  /**
+   * Send a direct message to another address
+   * @param senderWallet - Wallet of the sender
+   * @param to - Recipient address
+   * @param publicKey - Sender's public key
+   * @param data - Metadata or short content
+   * @param messageDomain - Domain context
+   * @param ipfsHash - IPFS hash of full message content
+   * @returns Transaction receipt
+   */
+  public static async SendMessage(
+    senderWallet: Wallet,
+    to: string,
+    publicKey: string,
+    data: string,
+    messageDomain: string,
+    ipfsHash: string
+  ): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        senderWallet
+      );
+
+      const gasPrice = await this.getGasPriceWithBuffer(senderWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.sendMessage(to, publicKey, data, messageDomain, ipfsHash);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+        console.log(`SendMessage - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      } catch (error) {
+        console.warn('Gas estimation for sendMessage failed, using default limit');
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+      }
+
+      const tx = await agentContract.sendMessage(to, publicKey, data, messageDomain, ipfsHash, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Message sent from ${senderWallet.address} to ${to}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    } catch (error) {
+      console.error('Error sending message:', error);
+      throw new Error(`Failed to send message: ${error}`);
+    }
+  }
+
+  /**
+   * Create a post on a board
+   * @param posterWallet - Wallet of the poster
+   * @param board - Board address (can be own address or another's)
+   * @param publicKey - Poster's public key
+   * @param data - Metadata or short content
+   * @param postDomain - Domain context
+   * @param ipfsHash - IPFS hash of full post content
+   * @param visibility - Public or Private
+   * @returns Transaction receipt
+   */
+  public static async CreatePost(
+    posterWallet: Wallet,
+    board: string,
+    publicKey: string,
+    data: string,
+    postDomain: string,
+    ipfsHash: string,
+    visibility: Visibility
+  ): Promise<any> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        posterWallet
+      );
+
+      const gasPrice = await this.getGasPriceWithBuffer(posterWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
+      let gasLimit: ethers.BigNumber;
+      try {
+        const estimatedGas = await agentContract.estimateGas.createPost(board, publicKey, data, postDomain, ipfsHash, visibility);
+        gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+        console.log(`CreatePost - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
+      } catch (error) {
+        console.warn('Gas estimation for createPost failed, using default limit');
+        gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+      }
+
+      const tx = await agentContract.createPost(board, publicKey, data, postDomain, ipfsHash, visibility, {
+        gasLimit: gasLimit,
+        gasPrice: gasPrice
+      });
+
+      console.log(`Post created on board ${board} by ${posterWallet.address}. Tx: ${tx.hash}`);
+      console.log(`Waiting for confirmation...`);
+
+      const receipt = await tx.wait();
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed.toString()}`);
+
+      return receipt;
+    } catch (error) {
+      console.error('Error creating post:', error);
+      throw new Error(`Failed to create post: ${error}`);
+    }
+  }
+
+  /**
+   * Get conversation messages between the caller and another party
+   * @param provider - Ethereum provider
+   * @param callerAddress - Address of the caller (for callStatic)
+   * @param otherParty - Address of the other participant
+   * @returns Array of RivetItems representing the conversation
+   */
+  public static async GetConversation(
+    provider: ethers.providers.Provider,
+    callerAddress: string,
+    otherParty: string
+  ): Promise<RivetItem[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        provider
+      );
+
+      // Use callStatic to simulate calling from the caller's address
+      const messages = await agentContract.callStatic.getConversation(otherParty, { from: callerAddress });
+
+      console.log(`Found ${messages.length} message(s) in conversation with ${otherParty}`);
+
+      // Convert to plain RivetItem objects
+      return messages.map((msg: any) => ({
+        from: msg.from,
+        to: msg.to,
+        data: msg.data,
+        publicKey: msg.publicKey,
+        domain: msg.domain,
+        ipfsHash: msg.ipfsHash,
+        visibility: msg.visibility,
+        timestamp: msg.timestamp.toNumber()
+      }));
+    } catch (error) {
+      console.error('Error getting conversation:', error);
+      throw new Error(`Failed to get conversation: ${error}`);
+    }
+  }
+
+  /**
+   * Get all conversation IDs for a user
+   * @param provider - Ethereum provider
+   * @param userAddress - Address of the user
+   * @returns Array of conversation IDs (bytes32)
+   */
+  public static async GetUserConversationIds(
+    provider: ethers.providers.Provider,
+    userAddress: string
+  ): Promise<string[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        provider
+      );
+
+      const conversationIds = await agentContract.callStatic.getUserConversationIds({ from: userAddress });
+
+      console.log(`Found ${conversationIds.length} conversation(s) for user ${userAddress}`);
+
+      return conversationIds;
+    } catch (error) {
+      console.error('Error getting user conversation IDs:', error);
+      throw new Error(`Failed to get user conversation IDs: ${error}`);
+    }
+  }
+
+  /**
+   * Get posts from a board
+   * @param provider - Ethereum provider
+   * @param callerAddress - Address of the caller (for visibility filtering)
+   * @param board - Board address to get posts from
+   * @returns Array of RivetItems representing posts
+   */
+  public static async GetPosts(
+    provider: ethers.providers.Provider,
+    callerAddress: string,
+    board: string
+  ): Promise<RivetItem[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        provider
+      );
+
+      // Use callStatic to simulate calling from the caller's address
+      const posts = await agentContract.callStatic.getPosts(board, { from: callerAddress });
+
+      console.log(`Found ${posts.length} post(s) on board ${board}`);
+
+      // Convert to plain RivetItem objects
+      return posts.map((post: any) => ({
+        from: post.from,
+        to: post.to,
+        data: post.data,
+        publicKey: post.publicKey,
+        domain: post.domain,
+        ipfsHash: post.ipfsHash,
+        visibility: post.visibility,
+        timestamp: post.timestamp.toNumber()
+      }));
+    } catch (error) {
+      console.error('Error getting posts:', error);
+      throw new Error(`Failed to get posts: ${error}`);
+    }
+  }
+
+  /**
+   * Get posts from a board with pagination
+   * @param provider - Ethereum provider
+   * @param callerAddress - Address of the caller
+   * @param board - Board address
+   * @param offset - Starting index
+   * @param limit - Maximum number of posts to return
+   * @returns Array of RivetItems representing posts
+   */
+  public static async GetPostsPaginated(
+    provider: ethers.providers.Provider,
+    callerAddress: string,
+    board: string,
+    offset: number,
+    limit: number
+  ): Promise<RivetItem[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        provider
+      );
+
+      const posts = await agentContract.callStatic.getPostsPaginated(board, offset, limit, { from: callerAddress });
+
+      console.log(`Found ${posts.length} post(s) on board ${board} (offset: ${offset}, limit: ${limit})`);
+
+      return posts.map((post: any) => ({
+        from: post.from,
+        to: post.to,
+        data: post.data,
+        publicKey: post.publicKey,
+        domain: post.domain,
+        ipfsHash: post.ipfsHash,
+        visibility: post.visibility,
+        timestamp: post.timestamp.toNumber()
+      }));
+    } catch (error) {
+      console.error('Error getting paginated posts:', error);
+      throw new Error(`Failed to get paginated posts: ${error}`);
+    }
+  }
+
+  /**
+   * Get public keys for an address
+   * @param provider - Ethereum provider
+   * @param address - Address to get public keys for
+   * @returns Array of public keys
+   */
+  public static async GetPublicKeys(
+    provider: ethers.providers.Provider,
+    address: string
+  ): Promise<string[]> {
+    try {
+      const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        provider
+      );
+
+      const publicKeys = await agentContract.getPublicKeys(address);
+
+      console.log(`Found ${publicKeys.length} public key(s) for address ${address}`);
+
+      return publicKeys;
+    } catch (error) {
+      console.error('Error getting public keys:', error);
+      throw new Error(`Failed to get public keys: ${error}`);
+    }
+  }
+
+  /**
+   * Get the conversation ID for two addresses
+   * This is a pure function and doesn't require blockchain access
+   * @param addr1 - First address
+   * @param addr2 - Second address
+   * @returns Deterministic conversation ID
+   */
+  public static GetConversationId(addr1: string, addr2: string): string {
+    // Sort addresses to ensure deterministic order
+    const [min, max] = addr1.toLowerCase() < addr2.toLowerCase()
+      ? [addr1, addr2]
+      : [addr2, addr1];
+
+    return ethers.utils.keccak256(
+      ethers.utils.solidityPack(['address', 'address'], [min, max])
+    );
   }
 }
