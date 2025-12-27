@@ -20,9 +20,10 @@
     "certify": "node cli/index.mjs certify",
     "initialize": "node cli/index.mjs initialize",
     "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify",
-    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network sepolia",
+    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network polygon",
     "verify:agent": "node scripts/verify-agent.js",
     "test": "vitest run",
+    "test:setup": "node scripts/setup-test-env.js",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

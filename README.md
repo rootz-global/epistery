@@ -320,6 +320,18 @@ See [Architecture.md](Architecture.md) for detailed architecture documentation.
 - **Encrypted Key Exchange**: Browser clients use ECDH for secure shared secret establishment
 - **On-Chain Verification**: Whitelist and ownership data stored immutably on blockchain
 
+## Testing
+
+```bash
+# Setup test environment (generates wallets automatically)
+npm run test:setup
+
+# Run tests
+npm test
+```
+
+The setup script creates `.test.env` with generated wallet credentials. For integration tests requiring a deployed contract, add `TEST_CONTRACT_ADDRESS` to `.test.env` after running `npm run deploy:agent`.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details
