@@ -57,8 +57,37 @@ class EpisteryAttach {
       next();
     });
 
-    // Session middleware - restore req.episteryClient from _epistery cookie
+    // Authentication middleware - handle Bot auth and session cookies
     app.use(async (req, res, next) => {
+      // 1. Check for Bot authentication (CLI/programmatic access)
+      if (!req.episteryClient && req.headers.authorization?.startsWith("Bot ")) {
+        try {
+          const authHeader = req.headers.authorization.substring(4);
+          const decoded = Buffer.from(authHeader, "base64").toString("utf8");
+          const payload = JSON.parse(decoded);
+
+          const { address, signature, message } = payload;
+
+          if (address && signature && message) {
+            // Verify the signature using ethers
+            const { ethers } = await import("ethers");
+            const recoveredAddress = ethers.utils.verifyMessage(message, signature);
+
+            if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
+              req.episteryClient = {
+                address: address,
+                authenticated: true,
+                authType: "bot",
+              };
+            }
+          }
+        } catch (error) {
+          console.error("[epistery] Bot auth error:", error.message);
+          // Continue to try other auth methods
+        }
+      }
+
+      // 2. Check for session cookie (_epistery)
       if (!req.episteryClient && req.cookies?._epistery) {
         try {
           const sessionData = JSON.parse(
