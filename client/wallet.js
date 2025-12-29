@@ -1,6 +1,6 @@
 /*
  * Wallet - Base class for client wallets
- * 
+ *
  * Handles wallet creation, persistence, and signing for Epistery
  */
 
@@ -17,17 +17,17 @@ export class Wallet {
     return {
       address: this.address,
       publicKey: this.publicKey,
-      source: this.source
+      source: this.source,
     };
   }
 
   // Factory method to create appropriate wallet type from saved data
   static async fromJSON(data, ethers) {
-    if (data.source === 'web3') {
+    if (data.source === "web3") {
       return await Web3Wallet.fromJSON(data, ethers);
-    } else if (data.source === 'local') {
+    } else if (data.source === "local") {
       return await BrowserWallet.fromJSON(data, ethers);
-    } else if (data.source === 'rivet') {
+    } else if (data.source === "rivet") {
       return await RivetWallet.fromJSON(data, ethers);
     }
     throw new Error(`Unknown wallet source: ${data.source}`);
@@ -35,11 +35,11 @@ export class Wallet {
 
   // Abstract methods - must be implemented by subclasses
   async sign(message) {
-    throw new Error('sign() must be implemented by subclass');
+    throw new Error("sign() must be implemented by subclass");
   }
 
   static async create(ethers) {
-    throw new Error('create() must be implemented by subclass');
+    throw new Error("create() must be implemented by subclass");
   }
 }
 
@@ -47,7 +47,7 @@ export class Wallet {
 export class Web3Wallet extends Wallet {
   constructor() {
     super();
-    this.source = 'web3';
+    this.source = "web3";
     this.signer = null;
     this.provider = null;
   }
@@ -64,7 +64,7 @@ export class Web3Wallet extends Wallet {
     const wallet = new Web3Wallet();
     wallet.address = data.address;
     wallet.publicKey = data.publicKey;
-    
+
     // Attempt to reconnect to Web3 provider
     await wallet.reconnectWeb3(ethers);
     return wallet;
@@ -72,7 +72,7 @@ export class Web3Wallet extends Wallet {
 
   static async create(ethers) {
     const wallet = new Web3Wallet();
-    
+
     if (await wallet.connectWeb3(ethers)) {
       return wallet;
     }
@@ -81,22 +81,22 @@ export class Web3Wallet extends Wallet {
 
   async connectWeb3(ethers) {
     try {
-      if (typeof window !== 'undefined' && (window.ethereum || window.web3)) {
+      if (typeof window !== "undefined" && (window.ethereum || window.web3)) {
         const provider = window.ethereum || window.web3.currentProvider;
-        
+
         // Request account access
-        const accounts = await provider.request({ 
-          method: 'eth_requestAccounts' 
+        const accounts = await provider.request({
+          method: "eth_requestAccounts",
         });
-        
+
         if (accounts && accounts.length > 0) {
           this.address = accounts[0];
           this.provider = new ethers.providers.Web3Provider(provider);
           this.signer = this.provider.getSigner();
-          
+
           // Get public key from first signature
           this.publicKey = await this.derivePublicKeyPlaceholder();
-          
+
           return true;
         }
       }
@@ -108,11 +108,11 @@ export class Web3Wallet extends Wallet {
 
   async reconnectWeb3(ethers) {
     try {
-      if (typeof window !== 'undefined' && (window.ethereum || window.web3)) {
+      if (typeof window !== "undefined" && (window.ethereum || window.web3)) {
         const provider = window.ethereum || window.web3.currentProvider;
         this.provider = new ethers.providers.Web3Provider(provider);
         this.signer = this.provider.getSigner();
-        
+
         // Verify the address matches what we have stored
         const currentAddress = await this.signer.getAddress();
         if (currentAddress.toLowerCase() !== this.address.toLowerCase()) {
@@ -128,22 +128,26 @@ export class Web3Wallet extends Wallet {
 
   async sign(message, ethers) {
     if (!this.signer) {
-      throw new Error('Web3 signer not available');
+      throw new Error("Web3 signer not available");
     }
-    
+
     const signature = await this.signer.signMessage(message);
-    
+
     // Always update public key from signature for Web3 wallets
     if (ethers) {
-      this.publicKey = await this.derivePublicKeyFromSignature(message, signature, ethers);
+      this.publicKey = await this.derivePublicKeyFromSignature(
+        message,
+        signature,
+        ethers,
+      );
     }
-    
+
     return signature;
   }
 
   async derivePublicKeyPlaceholder() {
     // Placeholder until we get a real signature
-    return `0x04${this.address.slice(2)}${'0'.repeat(64)}`;
+    return `0x04${this.address.slice(2)}${"0".repeat(64)}`;
   }
 
   async derivePublicKeyFromSignature(message, signature, ethers) {
@@ -151,7 +155,7 @@ export class Web3Wallet extends Wallet {
       const messageHash = ethers.utils.hashMessage(message);
       return ethers.utils.recoverPublicKey(messageHash, signature);
     } catch (error) {
-      console.error('Failed to derive public key from signature:', error);
+      console.error("Failed to derive public key from signature:", error);
       return this.derivePublicKeyPlaceholder();
     }
   }
@@ -161,7 +165,7 @@ export class Web3Wallet extends Wallet {
 export class BrowserWallet extends Wallet {
   constructor() {
     super();
-    this.source = 'local';
+    this.source = "local";
     this.mnemonic = null;
     this.privateKey = null;
     this.signer = null;
@@ -171,7 +175,7 @@ export class BrowserWallet extends Wallet {
     return {
       ...super.toJSON(),
       mnemonic: this.mnemonic,
-      privateKey: this.privateKey
+      privateKey: this.privateKey,
     };
   }
 
@@ -181,33 +185,33 @@ export class BrowserWallet extends Wallet {
     wallet.publicKey = data.publicKey;
     wallet.mnemonic = data.mnemonic;
     wallet.privateKey = data.privateKey;
-    
+
     // Recreate the signer
     if (wallet.mnemonic) {
       wallet.signer = ethers.Wallet.fromMnemonic(wallet.mnemonic);
     }
-    
+
     return wallet;
   }
 
   static async create(ethers) {
     const wallet = new BrowserWallet();
-    
+
     // Generate new wallet
     const ethersWallet = ethers.Wallet.createRandom();
-    
+
     wallet.address = ethersWallet.address;
-    wallet.mnemonic = ethersWallet.mnemonic?.phrase || '';
+    wallet.mnemonic = ethersWallet.mnemonic?.phrase || "";
     wallet.publicKey = ethersWallet.publicKey;
     wallet.privateKey = ethersWallet.privateKey;
     wallet.signer = ethersWallet;
-    
+
     return wallet;
   }
 
   async sign(message) {
     if (!this.signer) {
-      throw new Error('Browser wallet signer not available');
+      throw new Error("Browser wallet signer not available");
     }
 
     return await this.signer.signMessage(message);
@@ -218,9 +222,9 @@ export class BrowserWallet extends Wallet {
 export class RivetWallet extends Wallet {
   constructor() {
     super();
-    this.source = 'rivet';
+    this.source = "rivet";
     this.keyId = null;
-    this.type = 'Browser'; // Browser, Contract, or Web3
+    this.type = "Browser"; // Browser, Contract, or Web3
     this.label = null;
     this.provider = null;
     this.createdAt = null;
@@ -243,7 +247,7 @@ export class RivetWallet extends Wallet {
       encryptedPrivateKey: this.encryptedPrivateKey,
       contractAddress: this.contractAddress,
       rivetAddress: this.rivetAddress,
-      associations: this.associations
+      associations: this.associations,
     };
   }
 
@@ -252,7 +256,7 @@ export class RivetWallet extends Wallet {
     wallet.address = data.address;
     wallet.publicKey = data.publicKey;
     wallet.keyId = data.keyId;
-    wallet.type = data.type || 'Browser';
+    wallet.type = data.type || "Browser";
     wallet.label = data.label;
     wallet.provider = data.provider;
     wallet.createdAt = data.createdAt;
@@ -270,14 +274,17 @@ export class RivetWallet extends Wallet {
 
     try {
       // Generate unique keyId
-      wallet.keyId = 'rivet-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+      wallet.keyId =
+        "rivet-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
       wallet.createdAt = Date.now();
       wallet.lastUpdated = Date.now();
-      wallet.label = 'Browser Wallet';
+      wallet.label = "Browser Wallet";
 
       // Check if Web Crypto API is available
       if (!window.crypto || !window.crypto.subtle) {
-        console.warn('Web Crypto API not available, falling back to extractable keys');
+        console.warn(
+          "Web Crypto API not available, falling back to extractable keys",
+        );
         // Fallback to regular ethers wallet
         const ethersWallet = ethers.Wallet.createRandom();
         wallet.address = ethersWallet.address;
@@ -289,11 +296,11 @@ export class RivetWallet extends Wallet {
       // Generate non-extractable AES-GCM key for encrypting the secp256k1 private key
       const masterKey = await crypto.subtle.generateKey(
         {
-          name: 'AES-GCM',
-          length: 256
+          name: "AES-GCM",
+          length: 256,
         },
         false, // non-extractable!
-        ['encrypt', 'decrypt']
+        ["encrypt", "decrypt"],
       );
 
       // Store master key in IndexedDB (non-extractable CryptoKey)
@@ -310,39 +317,41 @@ export class RivetWallet extends Wallet {
 
       const encryptedBuffer = await crypto.subtle.encrypt(
         {
-          name: 'AES-GCM',
-          iv: iv
+          name: "AES-GCM",
+          iv: iv,
         },
         masterKey,
-        privateKeyBytes
+        privateKeyBytes,
       );
 
       // Store encrypted private key and IV
       wallet.encryptedPrivateKey = JSON.stringify({
         encrypted: ethers.utils.hexlify(new Uint8Array(encryptedBuffer)),
-        iv: ethers.utils.hexlify(iv)
+        iv: ethers.utils.hexlify(iv),
       });
 
       return wallet;
     } catch (error) {
-      console.error('Failed to create rivet wallet:', error);
+      console.error("Failed to create rivet wallet:", error);
       throw error;
     }
   }
 
   /**
-    * Signs a message only (client-side)
-    *
-    * @param {object} message - blob of data to sign
-    * @param {ethers} ethers - ethers.js instance
-    * @returns {Promise<string>} Signed message as hex string
-    */
+   * Signs a message only (client-side)
+   *
+   * @param {object} message - blob of data to sign
+   * @param {ethers} ethers - ethers.js instance
+   * @returns {Promise<string>} Signed message as hex string
+   */
   async sign(message, ethers) {
     try {
       // Retrieve master key from IndexedDB
       const masterKey = await RivetWallet.getMasterKey(this.keyId);
       if (!masterKey) {
-        throw new Error('Master key not found - rivet may have been created in a different browser context');
+        throw new Error(
+          "Master key not found - rivet may have been created in a different browser context",
+        );
       }
 
       // Decrypt the private key
@@ -352,11 +361,11 @@ export class RivetWallet extends Wallet {
 
       const decryptedBuffer = await crypto.subtle.decrypt(
         {
-          name: 'AES-GCM',
-          iv: ivBytes
+          name: "AES-GCM",
+          iv: ivBytes,
         },
         masterKey,
-        encryptedBytes
+        encryptedBytes,
       );
 
       const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
@@ -367,7 +376,7 @@ export class RivetWallet extends Wallet {
 
       return signature;
     } catch (error) {
-      console.error('Failed to sign message with rivet:', error);
+      console.error("Failed to sign message with rivet:", error);
       throw error;
     }
   }
@@ -384,11 +393,13 @@ export class RivetWallet extends Wallet {
    */
   async signTransaction(unsignedTx, ethers) {
     try {
-      console.log('RivetWallet: Signing transaction');
+      console.log("RivetWallet: Signing transaction");
 
       const masterKey = await RivetWallet.getMasterKey(this.keyId);
       if (!masterKey) {
-        throw new Error('Master key not found - rivet may have been created in a different browser context');
+        throw new Error(
+          "Master key not found - rivet may have been created in a different browser context",
+        );
       }
 
       const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
@@ -397,11 +408,11 @@ export class RivetWallet extends Wallet {
 
       const decryptedBuffer = await crypto.subtle.decrypt(
         {
-          name: 'AES-GCM',
-          iv: ivBytes
+          name: "AES-GCM",
+          iv: ivBytes,
         },
         masterKey,
-        encryptedBytes
+        encryptedBytes,
       );
 
       const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
@@ -413,16 +424,15 @@ export class RivetWallet extends Wallet {
       // Validate that our address matches
       const addressToValidate = this.rivetAddress || this.address;
       if (signer.address.toLowerCase() !== addressToValidate.toLowerCase()) {
-        throw new Error('Decrypted key does not match rivet address');
+        throw new Error("Decrypted key does not match rivet address");
       }
 
       const signedTx = await signer.signTransaction(unsignedTx);
 
-      console.log('RivetWallet: Transaction signed successfully');
+      console.log("RivetWallet: Transaction signed successfully");
       return signedTx;
-    }
-    catch (error) {
-      console.error('Failed to sign transaction with rivet:', error);
+    } catch (error) {
+      console.error("Failed to sign transaction with rivet:", error);
       throw error;
     }
   }
@@ -430,14 +440,14 @@ export class RivetWallet extends Wallet {
   // IndexedDB operations for storing non-extractable CryptoKey
   static async storeMasterKey(keyId, masterKey) {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open('EpisteryRivets', 1);
+      const request = indexedDB.open("EpisteryRivets", 1);
 
       request.onerror = () => reject(request.error);
 
       request.onsuccess = () => {
         const db = request.result;
-        const transaction = db.transaction(['masterKeys'], 'readwrite');
-        const store = transaction.objectStore('masterKeys');
+        const transaction = db.transaction(["masterKeys"], "readwrite");
+        const store = transaction.objectStore("masterKeys");
 
         const putRequest = store.put({ keyId, masterKey });
 
@@ -454,8 +464,8 @@ export class RivetWallet extends Wallet {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains('masterKeys')) {
-          db.createObjectStore('masterKeys', { keyPath: 'keyId' });
+        if (!db.objectStoreNames.contains("masterKeys")) {
+          db.createObjectStore("masterKeys", { keyPath: "keyId" });
         }
       };
     });
@@ -463,14 +473,14 @@ export class RivetWallet extends Wallet {
 
   static async getMasterKey(keyId) {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open('EpisteryRivets', 1);
+      const request = indexedDB.open("EpisteryRivets", 1);
 
       request.onerror = () => reject(request.error);
 
       request.onsuccess = () => {
         const db = request.result;
-        const transaction = db.transaction(['masterKeys'], 'readonly');
-        const store = transaction.objectStore('masterKeys');
+        const transaction = db.transaction(["masterKeys"], "readonly");
+        const store = transaction.objectStore("masterKeys");
 
         const getRequest = store.get(keyId);
 
@@ -487,8 +497,8 @@ export class RivetWallet extends Wallet {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains('masterKeys')) {
-          db.createObjectStore('masterKeys', { keyPath: 'keyId' });
+        if (!db.objectStoreNames.contains("masterKeys")) {
+          db.createObjectStore("masterKeys", { keyPath: "keyId" });
         }
       };
     });
@@ -504,24 +514,30 @@ export class RivetWallet extends Wallet {
    * @param {string} domain - Domain context for the deployment
    * @returns {Promise<string>} Contract address
    */
-  async deployIdentityContract(ethers, providerConfig, domain = 'localhost') {
+  async deployIdentityContract(ethers, providerConfig, domain = "localhost") {
     try {
       // Get rootPath from Witness singleton
-      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+      const rootPath =
+        (typeof Witness !== "undefined" && Witness.instance?.rootPath) || "..";
 
       // Step 1: Prepare unsigned deployment transaction (server funds the wallet)
-      const prepareResponse = await fetch(`${rootPath}/identity/prepare-deploy`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientAddress: this.address,
-          domain: domain
-        })
-      });
+      const prepareResponse = await fetch(
+        `${rootPath}/epistery/identity/prepare-deploy`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientAddress: this.address,
+            domain: domain,
+          }),
+        },
+      );
 
       if (!prepareResponse.ok) {
         const error = await prepareResponse.json();
-        throw new Error(`Failed to prepare deployment: ${error.error || prepareResponse.statusText}`);
+        throw new Error(
+          `Failed to prepare deployment: ${error.error || prepareResponse.statusText}`,
+        );
       }
 
       const { unsignedTransaction, metadata } = await prepareResponse.json();
@@ -530,34 +546,40 @@ export class RivetWallet extends Wallet {
       const signedTx = await this.signTransaction(unsignedTransaction, ethers);
 
       // Step 3: Submit signed transaction to blockchain
-      const submitResponse = await fetch(`${rootPath}/data/submit-signed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signedTransaction: signedTx,
-          operation: 'deployIdentityContract',
-          metadata: metadata
-        })
-      });
+      const submitResponse = await fetch(
+        `${rootPath}/epistery/data/submit-signed`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: "deployIdentityContract",
+            metadata: metadata,
+          }),
+        },
+      );
 
       if (!submitResponse.ok) {
         const error = await submitResponse.json();
-        throw new Error(`Failed to submit deployment: ${error.error || submitResponse.statusText}`);
+        throw new Error(
+          `Failed to submit deployment: ${error.error || submitResponse.statusText}`,
+        );
       }
 
       const receipt = await submitResponse.json();
 
       if (!receipt.contractAddress) {
-        throw new Error('Contract deployment succeeded but no contract address in receipt');
+        throw new Error(
+          "Contract deployment succeeded but no contract address in receipt",
+        );
       }
 
       // Upgrade this rivet to use the contract
       this.upgradeToContract(receipt.contractAddress);
 
       return receipt.contractAddress;
-
     } catch (error) {
-      console.error('Failed to deploy IdentityContract:', error);
+      console.error("Failed to deploy IdentityContract:", error);
       throw error;
     }
   }
@@ -576,7 +598,7 @@ export class RivetWallet extends Wallet {
       targetRivetAddress, // Token is bound to this specific address
       inviterRivetAddress: this.rivetAddress || this.address,
       timestamp: Date.now(),
-      expiresAt: Date.now() + 3600000 // 1 hour
+      expiresAt: Date.now() + 3600000, // 1 hour
     };
 
     // Sign the payload to prove this is a legitimate invitation
@@ -585,7 +607,7 @@ export class RivetWallet extends Wallet {
 
     const token = {
       payload,
-      signature
+      signature,
     };
 
     // Return base64-encoded token
@@ -607,15 +629,21 @@ export class RivetWallet extends Wallet {
 
       // Verify token hasn't expired
       if (Date.now() > payload.expiresAt) {
-        throw new Error('Join token has expired');
+        throw new Error("Join token has expired");
       }
 
       // Get current rivet address
       const myRivetAddress = this.rivetAddress || this.address;
 
       // SECURITY: Verify this token was generated for THIS rivet's address
-      if (payload.targetRivetAddress.toLowerCase() !== myRivetAddress.toLowerCase()) {
-        throw new Error('This join token was not generated for your rivet address. Token is bound to: ' + payload.targetRivetAddress);
+      if (
+        payload.targetRivetAddress.toLowerCase() !==
+        myRivetAddress.toLowerCase()
+      ) {
+        throw new Error(
+          "This join token was not generated for your rivet address. Token is bound to: " +
+            payload.targetRivetAddress,
+        );
       }
 
       // The contract we're joining (from the token)
@@ -624,21 +652,24 @@ export class RivetWallet extends Wallet {
       // Verify the signature from the inviter
       const message = JSON.stringify(payload);
       const recoveredAddress = ethers.utils.verifyMessage(message, signature);
-      if (recoveredAddress.toLowerCase() !== payload.inviterRivetAddress.toLowerCase()) {
-        throw new Error('Invalid join token signature');
+      if (
+        recoveredAddress.toLowerCase() !==
+        payload.inviterRivetAddress.toLowerCase()
+      ) {
+        throw new Error("Invalid join token signature");
       }
 
       // Upgrade this rivet to use the contract as its identity
       this.upgradeToContract(targetContract);
 
-      console.log('Rivet ready to join identity contract:', myRivetAddress);
+      console.log("Rivet ready to join identity contract:", myRivetAddress);
 
       return {
         contractAddress: targetContract,
-        myRivetAddress: myRivetAddress
+        myRivetAddress: myRivetAddress,
       };
     } catch (error) {
-      console.error('Failed to accept join token:', error);
+      console.error("Failed to accept join token:", error);
       throw error;
     }
   }
@@ -651,32 +682,32 @@ export class RivetWallet extends Wallet {
   static generateRivetName() {
     // Detect browser
     const userAgent = navigator.userAgent.toLowerCase();
-    let browser = 'unknown';
+    let browser = "unknown";
 
-    if (userAgent.includes('chrome') && !userAgent.includes('edg')) {
-      browser = 'chrome';
-    } else if (userAgent.includes('firefox')) {
-      browser = 'firefox';
-    } else if (userAgent.includes('safari') && !userAgent.includes('chrome')) {
-      browser = 'safari';
-    } else if (userAgent.includes('edg')) {
-      browser = 'edge';
-    } else if (userAgent.includes('opr') || userAgent.includes('opera')) {
-      browser = 'opera';
+    if (userAgent.includes("chrome") && !userAgent.includes("edg")) {
+      browser = "chrome";
+    } else if (userAgent.includes("firefox")) {
+      browser = "firefox";
+    } else if (userAgent.includes("safari") && !userAgent.includes("chrome")) {
+      browser = "safari";
+    } else if (userAgent.includes("edg")) {
+      browser = "edge";
+    } else if (userAgent.includes("opr") || userAgent.includes("opera")) {
+      browser = "opera";
     }
 
     // Detect OS
-    let os = 'unknown';
-    if (userAgent.includes('win')) {
-      os = 'windows';
-    } else if (userAgent.includes('mac')) {
-      os = 'macos';
-    } else if (userAgent.includes('linux')) {
-      os = 'linux';
-    } else if (userAgent.includes('android')) {
-      os = 'android';
-    } else if (userAgent.includes('iphone') || userAgent.includes('ipad')) {
-      os = 'ios';
+    let os = "unknown";
+    if (userAgent.includes("win")) {
+      os = "windows";
+    } else if (userAgent.includes("mac")) {
+      os = "macos";
+    } else if (userAgent.includes("linux")) {
+      os = "linux";
+    } else if (userAgent.includes("android")) {
+      os = "android";
+    } else if (userAgent.includes("iphone") || userAgent.includes("ipad")) {
+      os = "ios";
     }
 
     // Get hostname
@@ -695,18 +726,23 @@ export class RivetWallet extends Wallet {
     try {
       // Normalize URL - ensure it has a protocol
       let normalizedURL = url.trim();
-      if (!normalizedURL.startsWith('http://') && !normalizedURL.startsWith('https://')) {
+      if (
+        !normalizedURL.startsWith("http://") &&
+        !normalizedURL.startsWith("https://")
+      ) {
         normalizedURL = `https://${normalizedURL}`;
       }
 
       // Remove trailing slash if present
-      normalizedURL = normalizedURL.replace(/\/$/, '');
+      normalizedURL = normalizedURL.replace(/\/$/, "");
 
       // Fetch epistery status from the site
       const response = await fetch(`${normalizedURL}/.well-known/epistery`);
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch epistery info from ${normalizedURL}. Status: ${response.status}`);
+        throw new Error(
+          `Failed to fetch epistery info from ${normalizedURL}. Status: ${response.status}`,
+        );
       }
 
       const data = await response.json();
@@ -715,13 +751,17 @@ export class RivetWallet extends Wallet {
       const rivetAddress = data.client?.walletAddress;
 
       if (!rivetAddress) {
-        throw new Error(`No rivet address found at ${normalizedURL}. The site may not have Epistery enabled or no rivet is connected.`);
+        throw new Error(
+          `No rivet address found at ${normalizedURL}. The site may not have Epistery enabled or no rivet is connected.`,
+        );
       }
 
       return rivetAddress;
     } catch (error) {
-      console.error('Failed to get rivet address from URL:', error);
-      throw new Error(`Unable to get rivet address from "${url}": ${error.message}`);
+      console.error("Failed to get rivet address from URL:", error);
+      throw new Error(
+        `Unable to get rivet address from "${url}": ${error.message}`,
+      );
     }
   }
 
@@ -735,34 +775,46 @@ export class RivetWallet extends Wallet {
    * @param {string} domain - Domain context for the transaction
    * @returns {Promise<void>}
    */
-  async addRivetToContract(rivetAddressToAdd, ethers, providerConfig, rivetName = '', domain = 'localhost') {
+  async addRivetToContract(
+    rivetAddressToAdd,
+    ethers,
+    providerConfig,
+    rivetName = "",
+    domain = "localhost",
+  ) {
     try {
       if (!this.contractAddress) {
-        throw new Error('This rivet is not part of an identity contract');
+        throw new Error("This rivet is not part of an identity contract");
       }
 
       // Get rootPath from Witness singleton
-      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+      const rootPath =
+        (typeof Witness !== "undefined" && Witness.instance?.rootPath) || "..";
 
       // Generate name if not provided (empty string is considered "not provided")
       const finalRivetName = rivetName || RivetWallet.generateRivetName();
 
       // Step 1: Prepare unsigned transaction (server funds the wallet)
-      const prepareResponse = await fetch(`${rootPath}/identity/prepare-add-rivet`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signerAddress: this.rivetAddress || this.address,
-          contractAddress: this.contractAddress,
-          rivetAddressToAdd: rivetAddressToAdd,
-          rivetName: finalRivetName,
-          domain: domain
-        })
-      });
+      const prepareResponse = await fetch(
+        `${rootPath}/identity/prepare-add-rivet`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signerAddress: this.rivetAddress || this.address,
+            contractAddress: this.contractAddress,
+            rivetAddressToAdd: rivetAddressToAdd,
+            rivetName: finalRivetName,
+            domain: domain,
+          }),
+        },
+      );
 
       if (!prepareResponse.ok) {
         const error = await prepareResponse.json();
-        throw new Error(`Failed to prepare add rivet: ${error.error || prepareResponse.statusText}`);
+        throw new Error(
+          `Failed to prepare add rivet: ${error.error || prepareResponse.statusText}`,
+        );
       }
 
       const { unsignedTransaction, metadata } = await prepareResponse.json();
@@ -771,28 +823,37 @@ export class RivetWallet extends Wallet {
       const signedTx = await this.signTransaction(unsignedTransaction, ethers);
 
       // Step 3: Submit signed transaction to blockchain
-      const submitResponse = await fetch(`${rootPath}/data/submit-signed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          signedTransaction: signedTx,
-          operation: 'addRivetToContract',
-          metadata: metadata
-        })
-      });
+      const submitResponse = await fetch(
+        `${rootPath}/epistery/data/submit-signed`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            signedTransaction: signedTx,
+            operation: "addRivetToContract",
+            metadata: metadata,
+          }),
+        },
+      );
 
       if (!submitResponse.ok) {
         const error = await submitResponse.json();
-        throw new Error(`Failed to submit add rivet: ${error.error || submitResponse.statusText}`);
+        throw new Error(
+          `Failed to submit add rivet: ${error.error || submitResponse.statusText}`,
+        );
       }
 
       const receipt = await submitResponse.json();
 
-      console.log('Rivet added to identity contract:', rivetAddressToAdd, 'with name:', finalRivetName);
+      console.log(
+        "Rivet added to identity contract:",
+        rivetAddressToAdd,
+        "with name:",
+        finalRivetName,
+      );
       return receipt;
-
     } catch (error) {
-      console.error('Failed to add rivet to contract:', error);
+      console.error("Failed to add rivet to contract:", error);
       throw error;
     }
   }
@@ -806,20 +867,27 @@ export class RivetWallet extends Wallet {
   async getRivetsInContract(ethers, providerConfig) {
     try {
       if (!this.contractAddress) {
-        throw new Error('This rivet is not part of an identity contract');
+        throw new Error("This rivet is not part of an identity contract");
       }
 
       // Get rootPath from Witness singleton
-      const rootPath = (typeof Witness !== 'undefined' && Witness.instance?.rootPath) || '..';
+      const rootPath =
+        (typeof Witness !== "undefined" && Witness.instance?.rootPath) || "..";
 
       const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
 
       // Load contract artifact
-      const response = await fetch(`${rootPath}/artifacts/IdentityContract.json`);
+      const response = await fetch(
+        `${rootPath}/epistery/artifacts/IdentityContract.json`,
+      );
       const artifact = await response.json();
 
       // Connect to the identity contract (read-only, no signer needed)
-      const contract = new ethers.Contract(this.contractAddress, artifact.abi, provider);
+      const contract = new ethers.Contract(
+        this.contractAddress,
+        artifact.abi,
+        provider,
+      );
 
       try {
         // Try to call getRivetsWithNames() (new contract version)
@@ -828,21 +896,23 @@ export class RivetWallet extends Wallet {
         // Combine addresses and names into objects
         return addresses.map((address, index) => ({
           address: address,
-          name: names[index] || 'Unnamed Rivet'
+          name: names[index] || "Unnamed Rivet",
         }));
       } catch (error) {
         // Fallback to getRivets() for old contracts that don't have names
-        console.warn('Contract does not support getRivetsWithNames(), falling back to getRivets()');
+        console.warn(
+          "Contract does not support getRivetsWithNames(), falling back to getRivets()",
+        );
         const addresses = await contract.getRivets();
 
         // Return addresses with default names
         return addresses.map((address) => ({
           address: address,
-          name: 'Unnamed Rivet (old contract)'
+          name: "Unnamed Rivet (old contract)",
         }));
       }
     } catch (error) {
-      console.error('Failed to get rivets from contract:', error);
+      console.error("Failed to get rivets from contract:", error);
       throw error;
     }
   }
@@ -854,18 +924,18 @@ export class RivetWallet extends Wallet {
    */
   upgradeToContract(contractAddress) {
     if (this.contractAddress) {
-      throw new Error('Rivet is already using an identity contract');
+      throw new Error("Rivet is already using an identity contract");
     }
 
     this.rivetAddress = this.address; // Save original rivet address
     this.address = contractAddress; // Present contract address
     this.contractAddress = contractAddress;
-    this.type = 'Contract';
+    this.type = "Contract";
     this.lastUpdated = Date.now();
   }
 }
 
 // Expose RivetWallet globally for browser access
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.RivetWallet = RivetWallet;
 }

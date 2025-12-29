@@ -105,7 +105,7 @@ export class Epistery {
       const result = await Utils.ReadFromContract(provider, clientWalletInfo.address);
       return result;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -213,7 +213,7 @@ export class Epistery {
         throw new Error("Error while writing to contract. Receipt was null.");
       return ipfsData;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
 
@@ -241,7 +241,7 @@ export class Epistery {
         transfers: receipts
       };
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -302,7 +302,7 @@ export class Epistery {
       if (!receipt) return false;
       return receipt;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -326,7 +326,7 @@ export class Epistery {
       const approvals = await Utils.GetApprovalsByAddress(clientWallet, approverAddress, requestorAddress);
       return approvals;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -344,7 +344,7 @@ export class Epistery {
       const approvals = await Utils.GetAllApprovalsForApprover(provider, approverAddress);
       return approvals;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -362,7 +362,7 @@ export class Epistery {
       const approvals = await Utils.GetAllApprovalsForRequestor(provider, requestorAddress);
       return approvals;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -423,7 +423,7 @@ export class Epistery {
       if (!receipt) return false;
       return receipt;
     }
-    catch(error) {
+    catch (error) {
       throw error;
     }
   }
@@ -855,7 +855,7 @@ export class Epistery {
         signature: serverSignature,
         identified: true,
         authenticated: false,
-        profile:undefined
+        profile: undefined
       };
 
       return response;
@@ -940,7 +940,7 @@ export class Epistery {
     if (!ipfsHash) {
       throw new Error('Failed to upload to IPFS');
     }
-    
+
     // Setup contract for execution
     const agentContractAddress = process.env.AGENT_CONTRACT_ADDRESS;
     if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
@@ -952,7 +952,7 @@ export class Epistery {
       AgentArtifact.abi,
       provider  // Read-only provider, no signer
     );
-    
+
     // Estimate gas for contract/transactions
     let estimatedGas: ethers.BigNumber;
     try {
@@ -1632,8 +1632,11 @@ export class Epistery {
     const artifact = JSON.parse(artifactData);
 
     // Create contract factory to get deployment bytecode (no signer needed for getting deployment tx)
+    // IdentityContract constructor requires: constructor(string memory _name, string memory _domain)
+    // - _name: Identity name
+    // - _domain: Domain where identity is minted
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode);
-    const deployTx = factory.getDeployTransaction();
+    const deployTx = factory.getDeployTransaction(clientAddress, domain);
 
     // Estimate gas for contract deployment
     let estimatedGas: ethers.BigNumber;

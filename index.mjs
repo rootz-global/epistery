@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Expected Agent contract version - must match contract VERSION constant
-export const EXPECTED_CONTRACT_VERSION = "2.0.0";
+export const EXPECTED_CONTRACT_VERSION = "3.0.0";
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {

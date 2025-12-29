@@ -851,7 +851,7 @@ export default class Witness {
 
         // STEP 3: Submit
         const submitResponse = await fetch(
-          `${this.rootPath}/data/submit-signed`,
+          `${this.rootPath}/epistery/data/submit-signed`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
