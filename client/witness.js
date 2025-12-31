@@ -25,8 +25,8 @@ async function ensureEthers() {
     return ethers;
   }
 
-  // Get rootPath from Witness instance if available, otherwise use default
-  const rootPath = Witness.instance?.rootPath || "..";
+  // Get rootPath from Witness instance if available
+  const rootPath = Witness.instance?.rootPath || "";
 
   // Dynamically import ethers from the epistery lib endpoint
   try {
@@ -247,7 +247,7 @@ export default class Witness {
 
   async fetchServerInfo() {
     try {
-      const response = await fetch(this.rootPath, {
+      const response = await fetch(this.rootPath||'/', {
         headers: { Accept: "application/json" },
       });
       if (response.ok) {

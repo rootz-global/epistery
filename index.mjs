@@ -196,7 +196,7 @@ class EpisteryAttach {
   /**
    * Check if an address is on a list for the current server domain
    * @param {string} address - The address to check
-   * @param {string} listName - Name of the list to check
+   * @param {string} listName - Name of the list to check, if null return all for address
    * @returns {Promise<boolean>} True if address is on the list
    */
   async isListed(address, listName) {
