@@ -237,6 +237,47 @@ class EpisteryAttach {
   }
 
   /**
+   * Get all list memberships for a specific address
+   * @param {string} address - The address to look up
+   * @returns {Promise<Array>} Array of membership entries with listName, role, addedAt
+   */
+  async getListsForMember(address) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!address) {
+      throw new Error("Address is required");
+    }
+
+    // Initialize server wallet if not already done
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.GetListsForMember(
+      serverWallet,
+      this.domain.wallet.address,
+      address,
+      contractAddress,
+    );
+  }
+
+  /**
    * Get the contract sponsor (owner) address
    * @returns {Promise<string>} The sponsor's Ethereum address
    */

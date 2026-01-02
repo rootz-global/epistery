@@ -90,7 +90,7 @@ export default function whitelistRoutes(epistery) {
     if (episterySession) {
       try {
         const sessionData = JSON.parse(
-          Buffer.from(episterySession, "base64").toString("utf8")
+          Buffer.from(episterySession, "base64").toString("utf8"),
         );
         if (sessionData && sessionData.rivetAddress) {
           return {
@@ -122,7 +122,7 @@ export default function whitelistRoutes(epistery) {
       // Primary: Check if address is on the epistery::admin list
       const isOnAdminList = await epistery.isListed(
         rivetAddress,
-        "epistery::admin"
+        "epistery::admin",
       );
 
       if (isOnAdminList) {
@@ -267,6 +267,54 @@ export default function whitelistRoutes(epistery) {
     }
   });
 
+  // Lists by address endpoint - get all whitelists an address belongs to
+  // Query params: ?address=0x...
+  router.get("/listsByAddress", async (req, res) => {
+    try {
+      const { address } = req.query;
+
+      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+        return res.status(400).json({
+          error: "Invalid or missing address parameter",
+        });
+      }
+
+      // Get memberships from contract
+      const memberships = await epistery.getListsForMember(address);
+
+      res.json({
+        client: {
+          address: address,
+          whitelists: memberships.map((m) => m.listName),
+          memberships: memberships.map((m) => ({
+            listName: m.listName,
+            role: m.role,
+            roleName: getRoleName(m.role),
+            addedAt: m.addedAt,
+          })),
+          whitelistedBy: epistery.domain?.wallet?.address || null,
+        },
+      });
+    } catch (error) {
+      console.error("[whitelist] Lists by address error:", error);
+      res.status(500).json({
+        error: error.message,
+      });
+    }
+  });
+
+  // Helper function to get role name
+  function getRoleName(role) {
+    const roleNames = {
+      0: "none",
+      1: "read",
+      2: "edit",
+      3: "admin",
+      4: "owner",
+    };
+    return roleNames[role] || "unknown";
+  }
+
   // Auth endpoint - establish session from rivet signature
   router.post("/auth", express.json(), async (req, res) => {
     try {
@@ -305,7 +353,7 @@ export default function whitelistRoutes(epistery) {
         timestamp: Date.now(),
       };
       const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString(
-        "base64"
+        "base64",
       );
 
       res.cookie("_epistery", sessionToken, {
@@ -452,7 +500,7 @@ export default function whitelistRoutes(epistery) {
         address,
         name || "",
         role || 0,
-        meta || ""
+        meta || "",
       );
 
       res.json({
@@ -561,7 +609,7 @@ export default function whitelistRoutes(epistery) {
       const existing = pendingRequests.find(
         (r) =>
           r.address.toLowerCase() === address.toLowerCase() &&
-          r.listName === listName
+          r.listName === listName,
       );
 
       if (existing) {
@@ -659,7 +707,7 @@ export default function whitelistRoutes(epistery) {
       const request = pendingRequests.find(
         (r) =>
           r.address.toLowerCase() === address.toLowerCase() &&
-          r.listName === listName
+          r.listName === listName,
       );
 
       if (!request) {
@@ -681,7 +729,7 @@ export default function whitelistRoutes(epistery) {
             addedMethod: "access-request",
             requestedAt: request.timestamp,
             approvedAt: new Date().toISOString(),
-          })
+          }),
         );
 
         request.status = "approved";
@@ -689,6 +737,7 @@ export default function whitelistRoutes(epistery) {
         request.status = "denied";
       }
 
+      pendingRequests.pop();
       res.json({
         success: true,
         approved,

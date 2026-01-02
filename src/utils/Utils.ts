@@ -700,14 +700,20 @@ export class Utils {
       // Use helper functions
       const gasPrice = await this.getGasPriceWithBuffer(ownerWallet, Utils.GAS_PRICE_BUFFER_PERCENT);
 
-      // Estimate gas for the contract write
+      // Estimate gas for the contract write - this will fail early if contract will revert
       let gasLimit: ethers.BigNumber;
       try {
         const estimatedGas = await agentContract.estimateGas.addToWhitelist(listName, addressToAdd, name, role, meta);
         gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
         console.log(`Contract addToWhitelist - Estimated Gas: ${estimatedGas.toString()}, With Buffer: ${gasLimit.toString()}`);
       }
-      catch (error) {
+      catch (estimateError: any) {
+        // Gas estimation failure often means the transaction will revert
+        // Try to extract the revert reason
+        const revertReason = this.extractRevertReason(estimateError);
+        if (revertReason) {
+          throw new Error(revertReason);
+        }
         console.warn('Gas estimation for contract addToWhitelist failed, using default limit');
         gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
       }
@@ -721,15 +727,81 @@ export class Utils {
       console.log(`Waiting for confirmation...`);
 
       const receipt = await tx.wait();
+
+      // Check if transaction was successful
+      if (receipt.status === 0) {
+        throw new Error('Transaction reverted');
+      }
+
       console.log(`Transaction confirmed in block ${receipt.blockNumber}`);
       console.log(`Gas used: ${receipt.gasUsed.toString()}`);
 
       return receipt;
     }
-    catch (error) {
+    catch (error: any) {
+      // Try to extract a meaningful revert reason from the error
+      const revertReason = this.extractRevertReason(error);
+      if (revertReason) {
+        console.error('Whitelist operation failed:', revertReason);
+        throw new Error(revertReason);
+      }
       console.error('Error adding to whitelist:', error);
-      throw new Error(`Failed to add to whitelist: ${error}`);
+      throw new Error(`Failed to add to whitelist: ${error.message || error}`);
     }
+  }
+
+  /**
+   * Extract revert reason from various error formats
+   */
+  private static extractRevertReason(error: any): string | null {
+    if (!error) return null;
+
+    // Check for common revert reason locations
+    const errorString = error.toString();
+    const errorMessage = error.message || '';
+    const reason = error.reason;
+
+    // Known revert messages from our contract
+    const knownRevertMessages = [
+      'Address already in whitelist',
+      'List name cannot be empty',
+      'Address cannot be zero',
+      'Invalid role',
+      'Address not in whitelist'
+    ];
+
+    // Check if error contains any known revert message
+    for (const msg of knownRevertMessages) {
+      if (errorString.includes(msg) || errorMessage.includes(msg) || reason?.includes(msg)) {
+        return msg;
+      }
+    }
+
+    // Try to decode from error data if available
+    if (error.data && typeof error.data === 'string' && error.data.length > 2) {
+      try {
+        // Error data format: 0x08c379a0 + offset + length + message (for Error(string))
+        if (error.data.startsWith('0x08c379a0')) {
+          const abiCoder = new ethers.utils.AbiCoder();
+          const decoded = abiCoder.decode(['string'], '0x' + error.data.slice(10));
+          if (decoded[0]) return decoded[0];
+        }
+      } catch {
+        // Decoding failed, continue
+      }
+    }
+
+    // Check nested error structures
+    if (error.error) {
+      return this.extractRevertReason(error.error);
+    }
+
+    // Return the reason if it exists and is meaningful
+    if (reason && reason !== 'null' && reason !== null) {
+      return reason;
+    }
+
+    return null;
   }
 
   public static async RemoveFromWhitelist(ownerWallet: Wallet, listName: string, addressToRemove: string, contractAddress?: string): Promise<any> {
@@ -834,6 +906,36 @@ export class Utils {
     catch (error) {
       console.error('Error checking whitelist status:', error);
       throw new Error(`Failed to check whitelist status: ${error}`);
+    }
+  }
+
+  public static async GetListsForMember(wallet: Wallet, ownerAddress: string, memberAddress: string, contractAddress?: string): Promise<any[]> {
+    try {
+      const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
+      if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+        throw new Error('Agent contract address not configured');
+      }
+
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        wallet
+      );
+
+      const memberships = await agentContract.getListsForMember(ownerAddress, memberAddress);
+
+      // Normalize the response
+      const plainMemberships = memberships.map((entry: any) => ({
+        listName: entry.listName,
+        role: entry.role,
+        addedAt: entry.addedAt.toNumber ? entry.addedAt.toNumber() : Number(entry.addedAt)
+      }));
+
+      return plainMemberships;
+    }
+    catch (error) {
+      console.error('Error getting lists for member:', error);
+      throw new Error(`Failed to get lists for member: ${error}`);
     }
   }
 

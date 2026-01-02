@@ -298,6 +298,21 @@
       <div id="members-result" class="result" style="display: none;"></div>
     </div>
 
+    <!-- Get Lists by Address -->
+    <div class="card">
+      <h2>Get Lists by Address</h2>
+      <p style="color: var(--text-muted); margin-bottom: 1rem;">Get all whitelists an address belongs to (with roles and timestamps)</p>
+      <div class="form-group">
+        <label>Address</label>
+        <input type="text" id="lists-by-address" placeholder="0x...">
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="getListsByAddress()">Get Lists for Address</button>
+        <button class="btn btn-secondary" onclick="getListsForSelf()">Get My Lists</button>
+      </div>
+      <div id="lists-by-address-result" class="result" style="display: none;"></div>
+    </div>
+
     <!-- Add to List -->
     <div class="card">
       <h2>Add to List</h2>
@@ -403,6 +418,7 @@
         <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/auth</code> - Authenticate with signature</li>
         <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/lists</code> - Get all lists (admin)</li>
         <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/list?list=name</code> - Get list members (admin)</li>
+        <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/listsByAddress?address=0x...</code> - Get lists for address</li>
         <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/add</code> - Add member (admin)</li>
         <li><span class="method">POST</span> <code>/.well-known/epistery/whitelist/remove</code> - Remove member (admin)</li>
         <li><span class="method">GET</span> <code>/.well-known/epistery/whitelist/status</code> - Agent status</li>
@@ -544,6 +560,36 @@
       } catch (error) {
         showResult('members-result', { error: error.message }, false);
       }
+    };
+
+    // Get lists by address
+    window.getListsByAddress = async function() {
+      try {
+        const address = document.getElementById('lists-by-address').value;
+        if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+          showResult('lists-by-address-result', { error: 'Please enter a valid Ethereum address' }, false);
+          return;
+        }
+
+        const url = new URL(`${BASE_PATH}/listsByAddress`, window.location.origin);
+        url.searchParams.set('address', address);
+
+        const response = await fetch(url, { credentials: 'include' });
+        const data = await response.json();
+        showResult('lists-by-address-result', data, response.ok);
+      } catch (error) {
+        showResult('lists-by-address-result', { error: error.message }, false);
+      }
+    };
+
+    // Get lists for self
+    window.getListsForSelf = async function() {
+      if (!currentWallet || !currentWallet.address) {
+        showResult('lists-by-address-result', { error: 'Please connect wallet first' }, false);
+        return;
+      }
+      document.getElementById('lists-by-address').value = currentWallet.address;
+      getListsByAddress();
     };
 
     // Add to list

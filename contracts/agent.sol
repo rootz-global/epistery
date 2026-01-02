@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 contract Agent {
   // Contract version - increment when ABI or functionality changes
-  string public constant VERSION = "3.0.0";
+  string public constant VERSION = "3.1.1";
 
   // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
   string public domain;
@@ -56,6 +56,16 @@ contract Agent {
 
   // Track which list names an owner has created (for enumeration)
   mapping(address => string[]) private ownerListNames;
+
+  // Struct for tracking a member's list membership with timestamp
+  struct MembershipEntry {
+    string listName;
+    uint8 role;
+    uint256 addedAt;
+  }
+
+  // Track which lists a member address belongs to: owner => member => MembershipEntry[]
+  mapping(address => mapping(address => MembershipEntry[])) private memberMemberships;
 
   /**
    * @dev Constructor sets the immutable domain name and sponsor
@@ -558,19 +568,34 @@ contract Agent {
     require(addressToAdd != address(0), "Address cannot be zero");
     require(role <= 4 || role == 255, "Invalid role: must be 0-4 or 255 (unset)");
 
+    // Check if address is already in the list
+    WhitelistEntry[] storage wl = namedWhitelists[msg.sender][listName];
+    for (uint256 i = 0; i < wl.length; i++) {
+      require(wl[i].addr != addressToAdd, "Address already in whitelist");
+    }
+
     // Track list name for this owner if not already tracked
-    if (namedWhitelists[msg.sender][listName].length == 0) {
+    if (wl.length == 0) {
       ownerListNames[msg.sender].push(listName);
     }
+
+    uint8 effectiveRole = role == 255 ? 0 : role;
 
     WhitelistEntry memory entry = WhitelistEntry({
       addr: addressToAdd,
       name: name,
-      role: role == 255 ? 0 : role,
+      role: effectiveRole,
       meta: meta
     });
 
-    namedWhitelists[msg.sender][listName].push(entry);
+    wl.push(entry);
+
+    // Track membership for reverse lookup
+    memberMemberships[msg.sender][addressToAdd].push(MembershipEntry({
+      listName: listName,
+      role: effectiveRole,
+      addedAt: block.timestamp
+    }));
 
     emit WhitelistModified(msg.sender, listName, addressToAdd, "add", block.timestamp);
   }
@@ -588,6 +613,16 @@ contract Agent {
       if (wl[i].addr == addressToRemove) {
         wl[i] = wl[wl.length - 1];
         wl.pop();
+
+        // Also remove from membership tracking
+        MembershipEntry[] storage memberships = memberMemberships[msg.sender][addressToRemove];
+        for (uint256 j = 0; j < memberships.length; j++) {
+          if (keccak256(bytes(memberships[j].listName)) == keccak256(bytes(listName))) {
+            memberships[j] = memberships[memberships.length - 1];
+            memberships.pop();
+            break;
+          }
+        }
 
         emit WhitelistModified(msg.sender, listName, addressToRemove, "remove", block.timestamp);
         break;
@@ -683,6 +718,17 @@ contract Agent {
       }
     }
     revert("Address not in whitelist");
+  }
+
+  /**
+   * @dev Gets all list memberships for a specific address
+   * Returns all lists the member belongs to under the specified owner
+   * @param owner The owner of the whitelists
+   * @param member The address to look up
+   * @return Array of membership entries with list names, roles, and timestamps
+   */
+  function getListsForMember(address owner, address member) external view returns (MembershipEntry[] memory) {
+    return memberMemberships[owner][member];
   }
 
   /**
