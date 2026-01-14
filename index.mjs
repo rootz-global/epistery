@@ -271,7 +271,6 @@ class EpisteryAttach {
 
     return await Utils.GetListsForMember(
       serverWallet,
-      this.domain.wallet.address,
       address,
       contractAddress,
     );
