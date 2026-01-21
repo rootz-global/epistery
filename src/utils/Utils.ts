@@ -909,7 +909,7 @@ export class Utils {
     }
   }
 
-  public static async GetListsForMember(wallet: Wallet, ownerAddress: string, memberAddress: string, contractAddress?: string): Promise<any[]> {
+  public static async GetListsForMember(wallet: Wallet, memberAddress: string, contractAddress?: string): Promise<any[]> {
     try {
       const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
       if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
@@ -922,7 +922,7 @@ export class Utils {
         wallet
       );
 
-      const memberships = await agentContract.getListsForMember(ownerAddress, memberAddress);
+      const memberships = await agentContract.getListsForMember(memberAddress);
 
       // Normalize the response
       const plainMemberships = memberships.map((entry: any) => ({

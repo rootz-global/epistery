@@ -723,12 +723,11 @@ contract Agent {
   /**
    * @dev Gets all list memberships for a specific address
    * Returns all lists the member belongs to under the specified owner
-   * @param owner The owner of the whitelists
    * @param member The address to look up
    * @return Array of membership entries with list names, roles, and timestamps
    */
-  function getListsForMember(address owner, address member) external view returns (MembershipEntry[] memory) {
-    return memberMemberships[owner][member];
+  function getListsForMember(address member) external view returns (MembershipEntry[] memory) {
+    return memberMemberships[msg.sender][member];
   }
 
   /**
