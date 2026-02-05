@@ -9,7 +9,8 @@ module.exports = {
       optimizer: {
         enabled: true,
         runs: 200
-      }
+      },
+      evmVersion: "paris"  // JOC doesn't support PUSH0 opcode (introduced in shanghai)
     }
   },
   networks: {
