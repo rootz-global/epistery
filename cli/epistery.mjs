@@ -937,7 +937,7 @@ async function performCurl(options) {
       }
 
       if (session && session.cookie) {
-        curlArgs.push("-H", `Cookie: _rhonda_session=${session.cookie}`);
+        curlArgs.push("-H", `Cookie: _epistery=${session.cookie}`);
       } else {
         throw new Error("Failed to obtain session cookie");
       }

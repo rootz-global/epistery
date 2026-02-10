@@ -231,7 +231,7 @@ export class CliWallet {
     // Extract and save session cookie if present
     const cookies = response.headers.get('set-cookie');
     if (cookies) {
-      const sessionMatch = cookies.match(/_rhonda_session=([^;]+)/);
+      const sessionMatch = cookies.match(/_epistery=([^;]+)/);
       if (sessionMatch) {
         const sessionToken = sessionMatch[1];
 
