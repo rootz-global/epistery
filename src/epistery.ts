@@ -1187,8 +1187,12 @@ export class Epistery {
     if (contractAddress) {
       const fs = await import('fs/promises');
       const path = await import('path');
-      const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-      const artifactData = await fs.readFile(artifactPath, 'utf-8');
+      let artifactData: string;
+      try {
+        artifactData = await fs.readFile(path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+      } catch {
+        artifactData = await fs.readFile(path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+      }
       const identityArtifact = JSON.parse(artifactData);
 
       const identityContract = new ethers.Contract(
@@ -1947,8 +1951,12 @@ export class Epistery {
     // Load IdentityContract artifact
     const fs = await import('fs/promises');
     const path = await import('path');
-    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    let artifactData: string;
+    try {
+      artifactData = await fs.readFile(path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+    } catch {
+      artifactData = await fs.readFile(path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+    }
     const artifact = JSON.parse(artifactData);
 
     if (!identityContractAddress) {
@@ -2108,8 +2116,12 @@ export class Epistery {
     // Load IdentityContract artifact
     const fs = await import('fs/promises');
     const path = await import('path');
-    const artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-    const artifactData = await fs.readFile(artifactPath, 'utf-8');
+    let artifactData: string;
+    try {
+      artifactData = await fs.readFile(path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+    } catch {
+      artifactData = await fs.readFile(path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json'), 'utf-8');
+    }
     const artifact = JSON.parse(artifactData);
 
     // Create wallet from mnemonic
