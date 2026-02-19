@@ -129,14 +129,13 @@ class EpisteryAttach {
           req.episteryClient.notabotVerified = notabotScore.verified;
           req.episteryClient.notabotEventCount = notabotScore.eventCount;
 
-          // Also make it available at the documented location
-          if (!req.app.epistery.clientWallet) {
-            req.app.epistery.clientWallet = {};
+          // Make available at the documented location (app.locals.epistery)
+          if (req.app.locals.epistery) {
+            req.app.locals.epistery.clientWallet = Object.assign(
+              req.app.locals.epistery.clientWallet || {},
+              req.episteryClient,
+            );
           }
-          req.app.epistery.clientWallet = Object.assign(
-            req.app.epistery.clientWallet,
-            req.episteryClient,
-          );
         } catch (error) {
           // Log error but don't fail the request
           console.error(
