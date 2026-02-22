@@ -203,8 +203,8 @@ export default class Witness {
       // Verify chain compatibility and switch if needed
       await witness.ensureChainCompatibility();
 
-      // Perform key exchange (skip if skipKeyExchange option is true)
-      if (!options.skipKeyExchange) {
+      // Perform key exchange only if no session exists yet
+      if (!options.skipKeyExchange && !witness.server?.identified) {
         await witness.performKeyExchange();
       }
 
