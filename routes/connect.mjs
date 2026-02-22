@@ -9,6 +9,14 @@ import { Epistery } from "../dist/epistery.js";
 export default function connectRoutes(epistery) {
   const router = express.Router();
 
+  // Session check - returns current identity from cookie (via auth middleware)
+  router.get("/connect", (req, res) => {
+    if (req.episteryClient) {
+      return res.json({ address: req.episteryClient.address });
+    }
+    res.json({});
+  });
+
   // Key exchange endpoint - handles POST requests for key exchange
   router.post("/connect", async (req, res) => {
     try {

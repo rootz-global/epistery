@@ -203,8 +203,8 @@ export default class Witness {
       // Verify chain compatibility and switch if needed
       await witness.ensureChainCompatibility();
 
-      // Perform key exchange only if no session exists yet
-      if (!options.skipKeyExchange && !witness.server?.identified) {
+      // Establish mutual proof of identity
+      if (!options.skipKeyExchange) {
         await witness.performKeyExchange();
       }
 
@@ -355,6 +355,19 @@ export default class Witness {
       // but present the contract address as the identity
       const signingAddress = this.wallet.rivetAddress || this.wallet.address;
       const identityAddress = this.wallet.address;
+
+      // Check if session cookie already identifies this wallet
+      try {
+        const check = await fetch(`${this.rootPath}/connect`, { credentials: "include" });
+        if (check.ok) {
+          const session = await check.json();
+          if (session.address && session.address.toLowerCase() === signingAddress.toLowerCase()) {
+            return;
+          }
+        }
+      } catch (e) {
+        // No valid session, proceed with key exchange
+      }
 
       // Create a message to sign for identity proof
       const challenge = this.generateChallenge();
