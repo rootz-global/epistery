@@ -42,6 +42,14 @@ class EpisteryAttach {
     this.domain = getDomainConfig(domain);
   }
 
+  /**
+   * Get the server wallet as an ethers.js Signer for the current domain.
+   * Used by OAuthServer, MCPServer, and agents that need signing capability.
+   */
+  get signer() {
+    return Utils.GetServerWallet() || null;
+  }
+
   async attach(app, rootPath) {
     this.rootPath = rootPath || "/.well-known/epistery";
     app.locals.epistery = this;
