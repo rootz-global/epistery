@@ -47,7 +47,8 @@ class EpisteryAttach {
    * Used by OAuthServer, MCPServer, and agents that need signing capability.
    */
   get signer() {
-    return Utils.GetServerWallet() || null;
+    if (!this.domainName) return null;
+    return Utils.InitServerWallet(this.domainName) || null;
   }
 
   async attach(app, rootPath) {
