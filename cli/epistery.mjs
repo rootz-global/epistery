@@ -6,6 +6,7 @@
  * Usage:
  *   epistery initialize <domain>         Initialize domain with wallet
  *   epistery curl [options] <url>        Make authenticated HTTP request
+ *   epistery mcp [options] <url>         Stdio MCP bridge with bot-auth
  *   epistery info [domain]               Show domain information
  *   epistery set-default <domain>        Set default domain for CLI
  *
@@ -165,6 +166,9 @@ function showHelp() {
     "  epistery initialize <domain>              Initialize domain with wallet",
   );
   console.log(
+    "  epistery mcp [-w domain] <url>            Stdio MCP bridge with bot-auth",
+  );
+  console.log(
     "  epistery curl [options] <url>             Make authenticated HTTP request",
   );
   console.log(
@@ -225,6 +229,11 @@ function showHelp() {
     "  -p, --port <port>        Server port (for localhost development)",
   );
   console.log("");
+  console.log("mcp options:");
+  console.log(
+    "  -w, --wallet <domain>    Use specific domain wallet (overrides default)",
+  );
+  console.log("");
   console.log("curl options:");
   console.log(
     "  -w, --wallet <domain>    Use specific domain wallet (overrides default)",
@@ -260,6 +269,9 @@ function showHelp() {
   console.log("  epistery requests localhost -p 3001");
   console.log("  epistery approve localhost channel::premium 0x1234... member -p 3001");
   console.log("  epistery deny localhost channel::premium 0x5678... -p 3001");
+  console.log("");
+  console.log("  # MCP bridge (use with Claude Code or any MCP client)");
+  console.log("  claude mcp add --transport stdio geist-social -- epistery mcp https://geist.social");
   console.log("");
   console.log("  # Make authenticated requests");
   console.log("  epistery curl https://example.com/api/data");
@@ -976,6 +988,112 @@ async function performCurl(options) {
   }
 }
 
+/**
+ * MCP stdio bridge — reads JSON-RPC from stdin, POSTs to remote /mcp
+ * with bot-auth, writes responses to stdout.
+ *
+ * Usage: epistery mcp [-w domain] <url>
+ *   claude mcp add --transport stdio my-site -- epistery mcp https://my-site.example
+ */
+async function performMcp(args) {
+  // Parse args: [-w domain] <url>
+  let domain = null;
+  let url = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-w' || arg === '--wallet') {
+      domain = args[++i];
+    } else if (!arg.startsWith('-')) {
+      url = arg;
+    }
+  }
+
+  if (!url) {
+    console.error('Error: URL required');
+    console.error('Usage: epistery mcp [-w domain] <url>');
+    process.exit(1);
+  }
+
+  // Ensure URL ends without trailing slash, append /mcp if not present
+  const mcpUrl = url.replace(/\/+$/, '').endsWith('/mcp')
+    ? url.replace(/\/+$/, '')
+    : url.replace(/\/+$/, '') + '/mcp';
+
+  const wallet = CliWallet.load(domain);
+  const fetch = (await import('node-fetch')).default;
+
+  // All log output to stderr so stdout stays clean for MCP JSON-RPC
+  process.stderr.write(`[epistery-mcp] Bridge: ${wallet.address} -> ${mcpUrl}\n`);
+
+  const readline = await import('readline');
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      // Not valid JSON — ignore
+      continue;
+    }
+
+    const isNotification = msg.id === undefined || msg.id === null;
+
+    try {
+      // Fresh bot-auth header per request (timestamp-based replay protection)
+      const authHeader = await wallet.createBotAuthHeader();
+
+      const res = await fetch(mcpUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(msg)
+      });
+
+      if (res.status === 204) {
+        // No content (notification acknowledged) — nothing to write
+        continue;
+      }
+
+      const body = await res.text();
+
+      if (!res.ok) {
+        // Server error — wrap in JSON-RPC error if this was a request
+        if (!isNotification) {
+          const errResponse = {
+            jsonrpc: '2.0',
+            error: { code: -32000, message: `HTTP ${res.status}: ${body}` },
+            id: msg.id
+          };
+          process.stdout.write(JSON.stringify(errResponse) + '\n');
+        }
+        continue;
+      }
+
+      if (body) {
+        process.stdout.write(body.trim() + '\n');
+      }
+    } catch (err) {
+      // Network error
+      if (!isNotification) {
+        const errResponse = {
+          jsonrpc: '2.0',
+          error: { code: -32000, message: err.message },
+          id: msg.id
+        };
+        process.stdout.write(JSON.stringify(errResponse) + '\n');
+      }
+      process.stderr.write(`[epistery-mcp] Error: ${err.message}\n`);
+    }
+  }
+}
+
 async function main() {
   const command = process.argv[2];
   const rawArgs = process.argv.slice(3);
@@ -994,6 +1112,18 @@ async function main() {
           process.exit(1);
         }
         await initializeDomain(args[0]);
+        break;
+
+      case "mcp":
+        if (rawArgs.length === 0) {
+          console.error("Error: URL required");
+          console.error("Usage: epistery mcp [-w domain] <url>");
+          console.error("");
+          console.error("Stdio MCP bridge with bot-auth. Register with Claude Code:");
+          console.error("  claude mcp add --transport stdio my-site -- epistery mcp https://my-site.example");
+          process.exit(1);
+        }
+        await performMcp(rawArgs);
         break;
 
       case "curl":
