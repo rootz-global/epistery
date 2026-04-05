@@ -57,9 +57,10 @@ class EpisteryAttach {
 
     // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
-      // Use req.headers.host and strip port for reliable subdomain detection
-      // Express v5 req.hostname may not parse subdomains correctly
-      const hostname = req.headers.host?.split(":")[0] || "localhost";
+      // req.hostname respects Express trust-proxy and X-Forwarded-Host,
+      // which is required for internal proxies (MCP loopback fetch).
+      // Falls back to raw Host header for non-proxied requests.
+      const hostname = req.hostname || req.headers.host?.split(":")[0] || "localhost";
       if (req.app.locals.epistery.domain?.name !== hostname) {
         await req.app.locals.epistery.setDomain(hostname);
       }
