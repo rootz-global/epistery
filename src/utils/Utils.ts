@@ -1,6 +1,7 @@
 import { BigNumberish, ethers, Wallet } from 'ethers';
 import { Config } from './Config';
 import { DomainConfig, RivetItem, Visibility } from './types';
+import { chainFor } from '../chains';
 import * as AgentArtifact from '../../artifacts/contracts/agent.sol/Agent.json';
 
 export class Utils {
@@ -87,8 +88,8 @@ export class Utils {
       }
 
       if (domainConfig.wallet) {
-        const provider = new ethers.providers.JsonRpcProvider(domainConfig.provider?.rpc);
-        this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(provider);
+        const chain = chainFor(domainConfig.provider || { chainId: 137, name: 'Polygon Mainnet', rpc: 'https://polygon-rpc.com' });
+        this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(chain.provider);
 
         console.log(`Server wallet initialized for domain: ${domain}`);
         console.log(`Wallet address: ${domainConfig.wallet.address}`);

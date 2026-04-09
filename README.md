@@ -198,13 +198,41 @@ email=you@example.com
 [ipfs]
 url=https://rootz.digital/api/v0
 
-[default.provider]
-chainId=420420422
-name=polkadot-hub-testnet
-rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
-
 [cli]
 default_domain=localhost
+
+# Legacy single provider (still supported):
+[default.provider]
+chainId=137
+name=Polygon Mainnet
+rpc=https://polygon-rpc.com
+
+# Preferred: array of providers with public/private RPC separation.
+# epistery-host uses this to populate the network selection dropdown
+# and to inject private (API-key) RPCs for server-side calls.
+
+[[default.providers]]
+chainId=137
+name=Polygon Mainnet
+publicRpc=https://polygon-rpc.com
+privateRpc=https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
+nativeCurrencyName=POL
+nativeCurrencySymbol=POL
+nativeCurrencyDecimals=18
+
+[[default.providers]]
+chainId=81
+name=Japan Open Chain
+publicRpc=https://rpc-2.japanopenchain.org:8545
+nativeCurrencyName=JOC
+nativeCurrencySymbol=JOC
+nativeCurrencyDecimals=18
+
+# Optional per-chain policy overrides (defaults are in code):
+[default.providers.policy]
+minPriorityFeeGwei=25
+maxFeeMultiplier=2
+gasLimitMultiplier=1.3
 ```
 
 ### Domain Config (`~/.epistery/mydomain.com/config.ini`)
@@ -298,10 +326,42 @@ Epistery follows a plugin architecture that integrates seamlessly with Express.j
 - **Client Libraries** (`/client/*.js`): Browser-side authentication and data wallet tools
 - **CLI** (`/cli/epistery.mjs`): Command-line interface for authenticated requests
 - **Utils** (`/src/utils/`): Configuration, crypto operations, and Aqua protocol implementation
+- **Chains** (`/src/chains/`): Per-chain provider, fee policy, and gas estimation
 
 All endpoints follow RFC 8615 well-known URIs standard for service discovery.
 
 See [Architecture.md](Architecture.md) for detailed architecture documentation.
+
+### Chain Support
+
+Each EVM chain epistery talks to is represented by a `Chain` object that owns the JSON-RPC provider, fee policy, and gas estimation strategy. Built-in chains:
+
+| Chain | ID | Fee Model |
+|-------|----|-----------|
+| Polygon Mainnet | 137 | EIP-1559 with 25 gwei priority floor |
+| Polygon Amoy | 80002 | EIP-1559 with 25 gwei priority floor |
+| Ethereum Mainnet | 1 | Standard EIP-1559 |
+| Sepolia Testnet | 11155111 | Standard EIP-1559 |
+| Japan Open Chain | 81 | Legacy gasPrice with 30 gwei floor |
+
+Use `chainFor()` to get a chain instance from a provider config:
+
+```javascript
+import { chainFor } from 'epistery';
+
+const chain = chainFor(domainConfig.provider);
+
+// Provider with explicit network info (no "could not detect network" errors)
+const wallet = ethers.Wallet.fromMnemonic(mnemonic).connect(chain.provider);
+
+// Per-chain fee data for transaction overrides
+const feeData = await chain.getFeeData();
+// → Polygon: { maxPriorityFeePerGas: 25 gwei, maxFeePerGas: 50 gwei }
+// → JOC:     { gasPrice: 30 gwei }
+// → Ethereum: { maxPriorityFeePerGas: <network>, maxFeePerGas: <network> }
+```
+
+Adding a new chain is a single file — extend `Chain`, override the fee hooks that differ, and call `registerChain()`. No edits to existing code. See [src/chains/README.md](src/chains/README.md) for details.
 
 ## Use Cases
 
