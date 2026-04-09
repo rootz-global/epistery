@@ -1,6 +1,6 @@
 import { Chain, ChainConfig } from './Chain';
 
-type ChainCtor = new (config: ChainConfig) => Chain;
+type ChainCtor = (new (config: ChainConfig) => Chain) & { defaults: Partial<ChainConfig> };
 
 /**
  * Registry of chainId → Chain subclass.
@@ -29,17 +29,47 @@ export function registerChain(chainId: number, ctor: ChainCtor): void {
 }
 
 /**
- * Get a Chain instance for the given provider config. If no subclass is
- * registered for the chainId, returns a generic Chain — which uses pure
- * EIP-1559 with no floors and the standard estimateGas. That works for any
- * well-behaved EVM chain; misbehaving chains need their own subclass.
+ * Get a Chain instance for the given provider config. The caller's config
+ * is merged ON TOP of the subclass's built-in defaults, so only chainId is
+ * strictly required — everything else (name, rpc, currency) comes from the
+ * chain class if not explicitly overridden.
+ *
+ * This means a host installation only needs to set `privateRpc` in
+ * `~/.epistery/config.ini` for chains where the public RPC is insufficient;
+ * all other details live in the chain class.
+ *
+ * If no subclass is registered for the chainId, returns a generic Chain —
+ * which uses pure EIP-1559 with no floors and the standard estimateGas.
  */
 export function chainFor(config: ChainConfig): Chain {
   if (config.chainId == null) {
     throw new Error(`chainFor: provider config missing chainId: ${JSON.stringify(config)}`);
   }
   const Ctor = REGISTRY.get(Number(config.chainId)) || Chain;
-  return new Ctor(config);
+  // Subclass defaults fill in anything the caller didn't specify.
+  const merged: ChainConfig = { ...(Ctor.defaults as ChainConfig), ...config };
+  // If caller provided only `rpc` but chain has a default public RPC,
+  // preserve the public one for UI display.
+  if (!config.publicRpc && Ctor.defaults.rpc) {
+    merged.publicRpc = Ctor.defaults.rpc;
+  }
+  return new Ctor(merged);
+}
+
+/**
+ * Return the built-in chain list — one entry per registered chain, using
+ * each subclass's defaults. This is the authoritative network list for
+ * UI dropdowns. No root config needed.
+ */
+export function registeredChains(): ChainConfig[] {
+  const chains: ChainConfig[] = [];
+  for (const [chainId, Ctor] of REGISTRY) {
+    chains.push({
+      ...(Ctor.defaults as ChainConfig),
+      chainId,
+    });
+  }
+  return chains;
 }
 
 /** Visible for tests / debug. Returns true if a chainId has a registered subclass. */

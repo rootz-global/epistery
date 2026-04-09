@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
-import { chainFor, registerChain, Chain } from "./dist/chains/index.js";
+import { chainFor, registerChain, registeredChains, Chain } from "./dist/chains/index.js";
 import createRoutes from "./routes/index.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -627,4 +627,4 @@ class EpisteryAttach {
   }
 }
 
-export { EpisteryAttach as Epistery, Config, chainFor, registerChain, Chain };
+export { EpisteryAttach as Epistery, Config, chainFor, registerChain, registeredChains, Chain };

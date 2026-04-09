@@ -53,6 +53,14 @@ export interface ChainConfig extends ProviderConfig {
  *   - domain config storage
  */
 export class Chain {
+  /**
+   * Subclasses override `defaults` to carry the canonical network details.
+   * `chainFor({chainId: 137})` merges caller config on top of these defaults
+   * so only the chainId is required — name, public RPC, currency etc. are
+   * all built in.
+   */
+  static defaults: Partial<ChainConfig> = {};
+
   readonly chainId: number;
   readonly name: string;
   readonly rpc: string;                       // private/server-side RPC (with API key if any)
@@ -67,7 +75,7 @@ export class Chain {
       throw new Error(`Chain config missing chainId: ${JSON.stringify(config)}`);
     }
     this.chainId = Number(config.chainId);
-    this.name = config.name;
+    this.name = config.name || '';
     this.rpc = config.privateRpc || config.rpc;
     this.publicRpc = config.publicRpc || config.rpc;
     this.currency = {

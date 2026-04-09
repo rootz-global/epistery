@@ -201,38 +201,28 @@ url=https://rootz.digital/api/v0
 [cli]
 default_domain=localhost
 
-# Legacy single provider (still supported):
+# Which chain the claim-page dropdown selects by default.
+[default]
+defaultChainId=137
+
+# Private RPC overrides, keyed by chainId. Only needed when the chain's
+# built-in public RPC isn't sufficient (rate-limited, needs an API key).
+# Everything else — name, public RPC, currency, fee policy — lives in
+# the chain classes (src/chains/) and doesn't need to be configured.
+
+[default.rpc.137]
+privateRpc=https://polygon-mainnet.infura.io/v3/YOUR_KEY
+
+[default.rpc.1]
+privateRpc=https://mainnet.infura.io/v3/YOUR_KEY
+```
+
+Legacy single-provider format is also supported:
+
+```ini
 [default.provider]
 chainId=137
-name=Polygon Mainnet
-rpc=https://polygon-rpc.com
-
-# Preferred: array of providers with public/private RPC separation.
-# epistery-host uses this to populate the network selection dropdown
-# and to inject private (API-key) RPCs for server-side calls.
-
-[[default.providers]]
-chainId=137
-name=Polygon Mainnet
-publicRpc=https://polygon-rpc.com
-privateRpc=https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY
-nativeCurrencyName=POL
-nativeCurrencySymbol=POL
-nativeCurrencyDecimals=18
-
-[[default.providers]]
-chainId=81
-name=Japan Open Chain
-publicRpc=https://rpc-2.japanopenchain.org:8545
-nativeCurrencyName=JOC
-nativeCurrencySymbol=JOC
-nativeCurrencyDecimals=18
-
-# Optional per-chain policy overrides (defaults are in code):
-[default.providers.policy]
-minPriorityFeeGwei=25
-maxFeeMultiplier=2
-gasLimitMultiplier=1.3
+privateRpc=https://polygon-mainnet.infura.io/v3/YOUR_KEY
 ```
 
 ### Domain Config (`~/.epistery/mydomain.com/config.ini`)
@@ -334,22 +324,26 @@ See [Architecture.md](Architecture.md) for detailed architecture documentation.
 
 ### Chain Support
 
-Each EVM chain epistery talks to is represented by a `Chain` object that owns the JSON-RPC provider, fee policy, and gas estimation strategy. Built-in chains:
+Each EVM chain epistery talks to is represented by a `Chain` object that owns the JSON-RPC provider, fee policy, gas estimation strategy, and default public RPC. No configuration is needed to use a built-in chain — every detail is in the class itself.
 
-| Chain | ID | Fee Model |
-|-------|----|-----------|
-| Polygon Mainnet | 137 | EIP-1559 with 25 gwei priority floor |
-| Polygon Amoy | 80002 | EIP-1559 with 25 gwei priority floor |
-| Ethereum Mainnet | 1 | Standard EIP-1559 |
-| Sepolia Testnet | 11155111 | Standard EIP-1559 |
-| Japan Open Chain | 81 | Legacy gasPrice with 30 gwei floor |
+| Chain | ID | Fee Model | Default RPC |
+|-------|----|-----------|-------------|
+| Polygon Mainnet | 137 | EIP-1559, 25 gwei priority floor | polygon-rpc.com |
+| Polygon Amoy | 80002 | EIP-1559, 25 gwei priority floor | rpc-amoy.polygon.technology |
+| Ethereum Mainnet | 1 | Standard EIP-1559 | eth.llamarpc.com |
+| Sepolia Testnet | 11155111 | Standard EIP-1559 | eth-sepolia.public.blastapi.io |
+| Japan Open Chain | 81 | Legacy gasPrice, 30 gwei floor | rpc-2.japanopenchain.org |
 
-Use `chainFor()` to get a chain instance from a provider config:
+Use `chainFor()` to get a chain instance. Only `chainId` is required — everything else comes from the chain class defaults:
 
 ```javascript
-import { chainFor } from 'epistery';
+import { chainFor, registeredChains } from 'epistery';
 
-const chain = chainFor(domainConfig.provider);
+// Minimal — chain class supplies name, RPC, currency, fee policy
+const chain = chainFor({ chainId: 137 });
+
+// Or with an override — privateRpc for server-side calls with an API key
+const chain = chainFor({ chainId: 137, privateRpc: 'https://polygon-mainnet.infura.io/v3/KEY' });
 
 // Provider with explicit network info (no "could not detect network" errors)
 const wallet = ethers.Wallet.fromMnemonic(mnemonic).connect(chain.provider);
@@ -359,6 +353,9 @@ const feeData = await chain.getFeeData();
 // → Polygon: { maxPriorityFeePerGas: 25 gwei, maxFeePerGas: 50 gwei }
 // → JOC:     { gasPrice: 30 gwei }
 // → Ethereum: { maxPriorityFeePerGas: <network>, maxFeePerGas: <network> }
+
+// Get the full built-in chain list (for UI dropdowns, etc.)
+const chains = registeredChains();
 ```
 
 Adding a new chain is a single file — extend `Chain`, override the fee hooks that differ, and call `registerChain()`. No edits to existing code. See [src/chains/README.md](src/chains/README.md) for details.

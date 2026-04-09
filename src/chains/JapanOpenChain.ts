@@ -16,6 +16,13 @@ import { registerChain } from './registry';
  */
 export class JapanOpenChain extends Chain {
   static chainId = 81;
+  static defaults = {
+    name: 'Japan Open Chain',
+    rpc: 'https://rpc-2.japanopenchain.org:8545',
+    nativeCurrencyName: 'JOC',
+    nativeCurrencySymbol: 'JOC',
+    nativeCurrencyDecimals: 18,
+  };
 
   supportsEIP1559(): boolean {
     return false;

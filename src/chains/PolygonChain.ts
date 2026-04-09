@@ -17,6 +17,13 @@ import { registerChain } from './registry';
  */
 export class PolygonChain extends Chain {
   static chainId = 137;
+  static defaults = {
+    name: 'Polygon Mainnet',
+    rpc: 'https://polygon-rpc.com',
+    nativeCurrencyName: 'POL',
+    nativeCurrencySymbol: 'POL',
+    nativeCurrencyDecimals: 18,
+  };
 
   protected minPriorityFee(): ethers.BigNumber {
     return this.gwei(this.policy.minPriorityFeeGwei ?? 25);
@@ -47,6 +54,13 @@ export class PolygonChain extends Chain {
  */
 export class AmoyChain extends PolygonChain {
   static chainId = 80002;
+  static defaults = {
+    name: 'Polygon Amoy Testnet',
+    rpc: 'https://rpc-amoy.polygon.technology',
+    nativeCurrencyName: 'POL',
+    nativeCurrencySymbol: 'POL',
+    nativeCurrencyDecimals: 18,
+  };
 }
 
 registerChain(PolygonChain.chainId, PolygonChain);
