@@ -415,6 +415,7 @@ export default class Witness {
             provider: this.serverInfo?.provider,
             chainId: this.serverInfo?.chainId,
             rpc: this.serverInfo?.rpc,
+            rpcProxy: this.serverInfo?.rpcProxy,
             nativeCurrency: this.serverInfo?.nativeCurrency,
           };
 
