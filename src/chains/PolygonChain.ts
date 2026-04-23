@@ -19,7 +19,7 @@ export class PolygonChain extends Chain {
   static chainId = 137;
   static defaults = {
     name: 'Polygon Mainnet',
-    rpc: 'https://polygon.drpc.org',
+    rpc: 'https://polygon-bor-rpc.publicnode.com',
     nativeCurrencyName: 'POL',
     nativeCurrencySymbol: 'POL',
     nativeCurrencyDecimals: 18,

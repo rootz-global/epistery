@@ -17,7 +17,8 @@
 
 // Public API
 export { Chain, ChainConfig, ChainFeeData, ChainPolicy } from './Chain';
-export { chainFor, registerChain, hasRegisteredChain, registeredChainIds, registeredChains } from './registry';
+export { chainFor, registerChain, hasRegisteredChain, registeredChainIds, registeredChains, configuredChains, defaultChainId } from './registry';
+// registeredChains: internal use + configuredChains(); not re-exported from index.mjs
 
 // Built-in chains — imported for their registerChain() side effect.
 // Re-exported so callers that want a concrete subclass (e.g. for instanceof

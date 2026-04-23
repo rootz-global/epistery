@@ -1,4 +1,5 @@
 import { Chain, ChainConfig } from './Chain';
+import { Config } from '../utils/Config';
 
 type ChainCtor = (new (config: ChainConfig) => Chain) & { defaults: Partial<ChainConfig> };
 
@@ -70,6 +71,44 @@ export function registeredChains(): ChainConfig[] {
     });
   }
   return chains;
+}
+
+/**
+ * Return the chain list with `privateRpc` overlaid from root config.
+ *
+ * Looks in `~/.epistery/config.ini` for:
+ *   - `[default.rpc.<chainId>] privateRpc = ...`  (per-chain override)
+ *   - `[default.provider] privateRpc / rpc`        (legacy single-chain fallback)
+ *
+ * Chains without a config override are returned unchanged.
+ */
+export function configuredChains(): ChainConfig[] {
+  const config = new Config();
+  const rootData = config.read('/');
+  return registeredChains().map(chain => {
+    const id = String(chain.chainId);
+    const privateRpc = rootData?.default?.rpc?.[id]?.privateRpc
+      || (rootData?.default?.provider && String(rootData.default.provider.chainId) === id
+          ? (rootData.default.provider.privateRpc || rootData.default.provider.rpc)
+          : null);
+    return privateRpc ? { ...chain, privateRpc } : chain;
+  });
+}
+
+/**
+ * Return the configured default chainId from root config.
+ *
+ * Checks `[default] defaultChainId`, then `[default.provider] chainId`,
+ * falling back to Polygon mainnet (137).
+ */
+export function defaultChainId(): string {
+  const config = new Config();
+  const rootData = config.read('/');
+  return String(
+    rootData?.default?.defaultChainId
+    || rootData?.default?.provider?.chainId
+    || '137'
+  );
 }
 
 /** Visible for tests / debug. Returns true if a chainId has a registered subclass. */
