@@ -588,9 +588,14 @@ export default function whitelistRoutes(epistery) {
   });
 
   // Request access endpoint - allows users to request whitelist access
+  // Optional `name` lets the requester propose the human-readable name to
+  // record on their WhitelistEntry. Optional `walletType` (e.g., 'fido')
+  // surfaces in the admin's review meta so they know what kind of device
+  // they're approving — relevant for FIDO multi-device-per-name flows.
   router.post("/request-access", express.json(), async (req, res) => {
     try {
-      const { address, listName, agentName, message } = req.body;
+      const { address, listName, agentName, message, name, walletType } =
+        req.body;
 
       if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
         return res.status(400).json({
@@ -626,6 +631,8 @@ export default function whitelistRoutes(epistery) {
         listName,
         agentName: agentName || "unknown",
         message: message || "",
+        name: typeof name === "string" ? name.slice(0, 128) : "",
+        walletType: typeof walletType === "string" ? walletType : undefined,
         timestamp: new Date().toISOString(),
         status: "pending",
       };
@@ -719,18 +726,24 @@ export default function whitelistRoutes(epistery) {
       }
 
       if (approved) {
-        // Add to whitelist
+        // Admin may override the requester's proposed name via the request body
+        const finalName =
+          typeof req.body.name === "string" ? req.body.name : request.name || "";
+
+        const meta = {
+          addedBy: req.whitelistAuth.rivetAddress,
+          addedMethod: "access-request",
+          requestedAt: request.timestamp,
+          approvedAt: new Date().toISOString(),
+        };
+        if (request.walletType) meta.walletType = request.walletType;
+
         await epistery.addToList(
           listName,
           address,
-          "",
+          finalName,
           role !== undefined ? role : 2, // default to role 2 (write)
-          JSON.stringify({
-            addedBy: req.whitelistAuth.rivetAddress,
-            addedMethod: "access-request",
-            requestedAt: request.timestamp,
-            approvedAt: new Date().toISOString(),
-          }),
+          JSON.stringify(meta),
         );
 
         request.status = "approved";

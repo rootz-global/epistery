@@ -12,6 +12,7 @@ import notabotRoutes from "./notabot.mjs";
 import listRoutes from "./list.mjs";
 import contractRoutes from "./contract.mjs";
 import whitelistRoutes from "./whitelist/index.mjs";
+import fidoRoutes from "./fido.mjs";
 
 /**
  * Creates and configures all Epistery routes
@@ -73,6 +74,9 @@ export default function createRoutes(epistery) {
 
   // Whitelist routes (/whitelist/*)
   router.use("/whitelist", whitelistRoutes(epistery));
+
+  // FIDO routes (/fido/blob — PRF-wrapped rivet private key storage)
+  router.use("/fido", fidoRoutes(epistery));
 
   return router;
 }

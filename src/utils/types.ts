@@ -59,8 +59,8 @@ export interface ClientWalletInfo {
   mnemonic?: string;
   privateKey?: string;
 
-  // Used by RivetWallets
-  walletType?: 'browser' | 'web3' | 'rivet';
+  // Used by RivetWallets / FidoWallets
+  walletType?: 'browser' | 'web3' | 'rivet' | 'fido';
 
   // (For client-side signed operations) This contains the complete signed transaction
   signedTransaction?: string;
