@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 contract Agent {
   // Contract version - increment when ABI or functionality changes
-  string public constant VERSION = "3.1.1";
+  string public constant VERSION = "3.2.0";
 
   // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
   string public domain;
@@ -66,6 +66,14 @@ contract Agent {
 
   // Track which lists a member address belongs to: owner => member => MembershipEntry[]
   mapping(address => mapping(address => MembershipEntry[])) private memberMemberships;
+
+  // Address names: owner => addr => name
+  // The name of an address is a property of the address itself, not of any
+  // particular (address, list) pairing. Roles ("owner", "admin", "read", ...)
+  // belong on whitelist entries; names do not. The same address may carry
+  // different per-list handles in WhitelistEntry.name (legacy / list-role
+  // labels), but its identity name lives here.
+  mapping(address => mapping(address => string)) private addressNames;
 
   /**
    * @dev Constructor sets the immutable domain name and sponsor
@@ -728,6 +736,37 @@ contract Agent {
    */
   function getListsForMember(address member) external view returns (MembershipEntry[] memory) {
     return memberMemberships[msg.sender][member];
+  }
+
+  // ============================================================================
+  // ADDRESS NAMING (decoupled from whitelists / roles)
+  //
+  // Names belong to the address itself, not to any (address, list) join.
+  // Roles are per-list; names are per-address (scoped to an owner / domain).
+  // Set name to "" to clear it.
+  // ============================================================================
+
+  event AddressNameSet(address indexed owner, address indexed addr, string name);
+
+  /**
+   * @dev Set the human-readable name for an address under msg.sender's scope.
+   * @param addr The address to name
+   * @param name The name string (empty string clears)
+   */
+  function setAddressName(address addr, string memory name) external {
+    require(addr != address(0), "Address cannot be zero");
+    addressNames[msg.sender][addr] = name;
+    emit AddressNameSet(msg.sender, addr, name);
+  }
+
+  /**
+   * @dev Resolve an address to its name under a given owner's scope.
+   * @param ownerAddress The naming-scope owner (typically the domain agent wallet)
+   * @param addr The address to resolve
+   * @return The name, or empty string if unset
+   */
+  function getAddressName(address ownerAddress, address addr) external view returns (string memory) {
+    return addressNames[ownerAddress][addr];
   }
 
   /**

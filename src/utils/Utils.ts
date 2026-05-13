@@ -911,10 +911,13 @@ export class Utils {
   }
 
   /**
-   * Resolve an address to a human-readable name from any whitelist entry.
-   * Walks the address's memberships under the given owner (the domain agent),
-   * returning the first non-empty `name` found on a WhitelistEntry.
-   * Assumes admins curate consistent names across the lists a person is on.
+   * Resolve an address to its name under the given owner's naming scope.
+   * Reads `addressNames[ownerAddress][addressToCheck]` from the agent
+   * contract. Returns undefined if no name has been set.
+   *
+   * Names belong to the address itself, not to any (address, list) join —
+   * the legacy `WhitelistEntry.name` field is no longer consulted here.
+   * See agent.sol setAddressName / getAddressName (v3.2.0+).
    */
   public static async ResolveAddressName(wallet: Wallet, ownerAddress: string, addressToCheck: string, contractAddress?: string): Promise<string | undefined> {
     const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
@@ -928,19 +931,44 @@ export class Utils {
       wallet
     );
 
-    const memberships = await agentContract.getListsForMember(addressToCheck);
-    for (const membership of memberships) {
-      try {
-        const entry = await agentContract.getWhitelistEntry(ownerAddress, membership.listName, addressToCheck);
-        if (entry.name && entry.name.length > 0) {
-          return entry.name;
-        }
-      } catch (e) {
-        // getWhitelistEntry reverts if address isn't on the list — keep walking
-        continue;
-      }
+    try {
+      const name: string = await agentContract.getAddressName(ownerAddress, addressToCheck);
+      return name && name.length > 0 ? name : undefined;
+    } catch (e) {
+      // Older agent contracts (<3.2.0) don't have getAddressName — treat as unset
+      return undefined;
     }
-    return undefined;
+  }
+
+  /**
+   * Set the name for an address under msg.sender's (the calling wallet's) scope.
+   * Pass an empty string to clear. Costs gas — caller wallet must be funded.
+   */
+  public static async SetAddressName(wallet: Wallet, addr: string, name: string, contractAddress?: string): Promise<any> {
+    const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      wallet
+    );
+
+    const gasPrice = await this.getGasPriceWithBuffer(wallet, Utils.GAS_PRICE_BUFFER_PERCENT);
+
+    let gasLimit: ethers.BigNumber;
+    try {
+      const estimatedGas = await agentContract.estimateGas.setAddressName(addr, name);
+      gasLimit = this.addGasBuffer(estimatedGas, Utils.GAS_LIMIT_BUFFER_PERCENT);
+    } catch (error) {
+      console.warn('Gas estimation for setAddressName failed, using default limit');
+      gasLimit = ethers.BigNumber.from(Utils.FALLBACK_GAS_LIMIT);
+    }
+
+    const tx = await agentContract.setAddressName(addr, name, { gasPrice, gasLimit });
+    return await tx.wait();
   }
 
   public static async GetListsForMember(wallet: Wallet, memberAddress: string, contractAddress?: string): Promise<any[]> {

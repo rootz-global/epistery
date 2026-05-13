@@ -518,6 +518,65 @@ export default function whitelistRoutes(epistery) {
     }
   });
 
+  // Set address name endpoint (admin only) — decoupled from whitelist entries.
+  // Names belong to the address itself; roles belong on (address, list).
+  router.post("/setName", express.json(), async (req, res) => {
+    try {
+      if (!req.whitelistAuth) {
+        return res.status(401).json({
+          success: false,
+          error: "Not authenticated",
+        });
+      }
+
+      const isAdminUser = await isAdmin(req.whitelistAuth.rivetAddress);
+      if (!isAdminUser) {
+        return res.status(403).json({
+          success: false,
+          error: "Insufficient permissions - requires epistery::admin list",
+        });
+      }
+
+      const { address, name } = req.body;
+
+      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid Ethereum address",
+        });
+      }
+
+      if (typeof name !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: "name must be a string (use empty string to clear)",
+        });
+      }
+
+      await epistery.setAddressName(address, name.slice(0, 128));
+
+      res.json({ success: true, address, name });
+    } catch (error) {
+      console.error("[whitelist] Set name error:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Resolve address name endpoint — public read of the on-chain mapping.
+  router.get("/resolveName", async (req, res) => {
+    try {
+      const address = req.query.address;
+      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+        return res.status(400).json({ error: "Invalid address parameter" });
+      }
+      const name = await epistery.resolveName(address);
+      res.json({ address, name: name || null });
+    } catch (error) {
+      console.error("[whitelist] Resolve name error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Remove member endpoint (admin only)
   router.post("/remove", express.json(), async (req, res) => {
     try {

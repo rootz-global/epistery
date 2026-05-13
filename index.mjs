@@ -342,6 +342,46 @@ class EpisteryAttach {
   }
 
   /**
+   * Set the human-readable name for an address under this domain's scope.
+   * Names belong to the address, not to whitelist entries or roles.
+   * @param {string} address - The address to name
+   * @param {string} name - The name (empty string clears)
+   */
+  async setAddressName(address, name) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!address) {
+      throw new Error("Address is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.SetAddressName(
+      serverWallet,
+      address,
+      name,
+      contractAddress,
+    );
+  }
+
+  /**
    * Get the contract sponsor (owner) address
    * @returns {Promise<string>} The sponsor's Ethereum address
    */
