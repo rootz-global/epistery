@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract Agent {
+import "./IAddressNaming.sol";
+
+contract Agent is IAddressNaming {
   // Contract version - increment when ABI or functionality changes
-  string public constant VERSION = "3.2.0";
+  string public constant VERSION = "3.2.1";
 
   // Domain name set at contract deployment (stored as state variable since strings can't be immutable)
   string public domain;
@@ -753,7 +755,7 @@ contract Agent {
    * @param addr The address to name
    * @param name The name string (empty string clears)
    */
-  function setAddressName(address addr, string memory name) external {
+  function setAddressName(address addr, string memory name) external override {
     require(addr != address(0), "Address cannot be zero");
     addressNames[msg.sender][addr] = name;
     emit AddressNameSet(msg.sender, addr, name);
@@ -765,7 +767,7 @@ contract Agent {
    * @param addr The address to resolve
    * @return The name, or empty string if unset
    */
-  function getAddressName(address ownerAddress, address addr) external view returns (string memory) {
+  function getAddressName(address ownerAddress, address addr) external view override returns (string memory) {
     return addressNames[ownerAddress][addr];
   }
 
