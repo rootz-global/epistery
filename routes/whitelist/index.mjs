@@ -563,17 +563,19 @@ export default function whitelistRoutes(epistery) {
   });
 
   // Resolve address name endpoint — public read of the on-chain mapping.
+  // Returns name: null for any unset / unconfigured case (domains without
+  // an agent contract, addresses without a name set). Opportunistic — no
+  // log noise on the common no-name path.
   router.get("/resolveName", async (req, res) => {
+    const address = req.query.address;
+    if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      return res.status(400).json({ error: "Invalid address parameter" });
+    }
     try {
-      const address = req.query.address;
-      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
-        return res.status(400).json({ error: "Invalid address parameter" });
-      }
       const name = await epistery.resolveName(address);
       res.json({ address, name: name || null });
-    } catch (error) {
-      console.error("[whitelist] Resolve name error:", error);
-      res.status(500).json({ error: error.message });
+    } catch {
+      res.json({ address, name: null });
     }
   });
 
