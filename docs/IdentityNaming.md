@@ -1,57 +1,62 @@
 # Identity Naming: Decoupling Names from Roles and Lists
 
-**Status:** Introduced in `epistery` agent contract v3.2.0 (2026-05-13).
+**Status:** Introduced 2026-05-13 as the first interface in the cross-system epistery contract spec — `IAddressNaming` (`contracts/IAddressNaming.sol`). The epistery package exports the interface; the deployed contracts in each repo (`epistery-host/contracts/DomainAgent.sol`, `rootz-v6/contracts/UniversalTeamRegistryV4.sol`, …) opt in by declaring `is IAddressNaming` and bumping their own VERSION.
 
 ## Principle
 
-The human-readable name of an address is a property of the **address itself**, not of any (address, list) join. Roles ("owner", "admin", "read", ...) belong on whitelist entries; names do not.
+The human-readable name of an address is a property of the **address itself**, not of any (address, list) join. Roles ("owner", "admin", "read", …) belong on whitelist entries; names do not.
 
 ### Why this matters
 
-Earlier versions used `WhitelistEntry.name` as the identity-name source. That had two failure modes:
+Earlier versions used `WhitelistEntry.name` as the identity-name source. Two failure modes:
 
 1. The same address on multiple lists could carry different names — the resolver returned whichever it walked first.
 2. Privileged addresses (the contract sponsor / domain host) often surface in portal UIs as `(auto) Owner` or `(auto) Host` rows with role-label strings in the name slot, marked uneditable. Those addresses became "stranded" — the system couldn't recognize them under the user's real name.
 
-The fix is to give names their own primitive: a `addressNames[owner][addr] → name` mapping, separate from whitelists.
+The fix: give names their own primitive, separate from whitelists, exposed through a shared interface so every contract that needs identity naming implements it the same way.
 
-## Contract surface (agent.sol v3.2.0)
+## The interface (`contracts/IAddressNaming.sol`)
 
 ```solidity
-// Storage
-mapping(address => mapping(address => string)) private addressNames;
-
-// Event
-event AddressNameSet(address indexed owner, address indexed addr, string name);
-
-// Writes (caller's scope: msg.sender is the naming owner — typically the domain wallet)
-function setAddressName(address addr, string memory name) external;
-
-// Reads (specify the owner-scope explicitly)
-function getAddressName(address ownerAddress, address addr) external view returns (string memory);
+interface IAddressNaming {
+    function setAddressName(address addr, string memory name) external;
+    function getAddressName(address ownerAddress, address addr) external view returns (string memory);
+}
 ```
 
 Pass an empty string to `setAddressName` to clear a name. Names are limited only by gas / storage cost; epistery clients clamp to 128 chars at the route layer.
 
+### How implementations differ
+
+The interface accommodates two tenancy models:
+
+| Implementation | Tenancy | Storage | `ownerAddress` arg on read |
+|---|---|---|---|
+| `epistery/contracts/agent.sol` (archetype) | Multi-tenant | `addressNames[msg.sender][addr] → name` | Used to select the naming scope |
+| `epistery-host/contracts/DomainAgent.sol` | Single-tenant (per domain) | `addressNames[addr] → name` | Accepted on the signature for ABI parity; ignored |
+| `rootz-v6/.../UniversalTeamRegistryV4.sol` | (when adopted) | per Steven's design | per Steven's design |
+
+`epistery/contracts/agent.sol` is the **archetype** — a reference implementation, not a deployed contract. The actually-deployed contracts are forks (`DomainAgent.sol`, `UniversalTeamRegistryV4.sol`) that adopt the interface independently.
+
 ### What did NOT change
 
-`WhitelistEntry { addr, name, role, meta }` keeps all four fields. The `name` field on the join is now reinterpreted as a **per-list handle / role-label slot** — it may evolve into a useful per-list display field, but it is no longer the identity name source. The resolver does not read it.
+`WhitelistEntry { addr, name, role, meta }` (and the `ACLEntry` equivalent in `DomainAgent.sol`) keeps all four fields. The per-entry `name` slot is now reinterpreted as a **per-list handle / role-label slot** — it may evolve into a useful per-list display field, but it is no longer the identity name source. The resolver does not read it.
 
-Existing data in `WhitelistEntry.name` is preserved on chain; the only change is that nothing in the auth path consults it for identity.
+Existing data in those `name` fields is preserved on chain; the only change is that nothing in the auth path consults it for identity.
 
-### Older contracts
+### Contracts that haven't adopted yet
 
-Agent contracts deployed before v3.2.0 do not have `getAddressName`. The TypeScript resolver swallows the resulting RPC error and returns `undefined`. Domains running older contracts continue to function — they just have no addresses with resolved names until the contract is upgraded.
+For contracts deployed before `is IAddressNaming` was declared on them, the `getAddressName` call reverts. The TypeScript resolver swallows the resulting RPC error and returns `undefined` — the request still goes through, just without a resolved name. Domains running pre-adoption contracts continue to function; they just have no addresses with names until the contract is upgraded.
 
 ## TypeScript surface
 
 ### `Utils` static methods (`src/utils/Utils.ts`)
 
 ```ts
-// Read — one RPC call, returns undefined if unset or on older contracts
+// Read — one RPC call, returns undefined if unset or on pre-adoption contracts
 Utils.ResolveAddressName(
   wallet: Wallet,
-  ownerAddress: string,        // typically domain wallet address
+  ownerAddress: string,        // the naming-scope owner (typically the domain wallet)
   addressToCheck: string,
   contractAddress?: string,
 ): Promise<string | undefined>;
@@ -64,6 +69,8 @@ Utils.SetAddressName(
   contractAddress?: string,
 ): Promise<any>;
 ```
+
+Both work uniformly against any contract that declares `is IAddressNaming`. The off-chain code holds against the interface signature, not against any particular contract type.
 
 ### `EpisteryAttach` (instance methods on `index.mjs`)
 
@@ -88,7 +95,7 @@ Mounted under the whitelist router (`routes/whitelist/index.mjs`):
 
 `setName` validates `address` (0x-prefixed 40 hex), accepts any string for `name` (empty string clears), and clamps name length to 128 chars.
 
-`resolveName` reads the on-chain mapping under the current domain's scope.
+`resolveName` reads from whichever `IAddressNaming` contract this domain is configured with.
 
 ## Auth middleware
 
@@ -103,30 +110,28 @@ Downstream consumers can read the resolved name from:
 
 The client-side `ClientWalletInfo` interface (`src/utils/types.ts`) has `name?: string` for type completeness.
 
-## Migration
+## Adoption — per fork
 
-For a domain running an existing agent contract:
+The interface ships in the epistery npm package. Each deployed-contract fork adopts on its own cadence:
 
-1. **Recompile + redeploy** the v3.2.0 agent contract for that domain (`npx hardhat compile`, then `npm run deploy:agent` against your target network). Existing `WhitelistEntry` rows are not in the new contract — redeployment is a fresh state unless you carry data over manually.
+### For `epistery-host/contracts/DomainAgent.sol`
 
-2. **Bootstrap names** after redeploy. For each address that should have a name (you, your collaborators, named services), call:
-
-   ```bash
-   curl -X POST https://<your-domain>/.well-known/epistery/whitelist/setName \
-     -H "Cookie: _epistery=<your admin session>" \
-     -H "Content-Type: application/json" \
-     -d '{"address":"0xe75Fc5...", "name":"michael"}'
-   ```
-
-   Or programmatically:
-
+1. `import "epistery/contracts/IAddressNaming.sol";` and declare `is IAddressNaming` on the contract (already done as of v1.4.1).
+2. Add `mapping(address => string) private addressNames;` and implement `setAddressName` / `getAddressName` (already done).
+3. Recompile, redeploy, update `~/.epistery/{domain}/config.ini` to point at the new contract address (the deploy flow in `index.mjs` writes this; the migration helper in `utils/DomainChain.mjs` lifts old `WhitelistEntry.name` values into the new mapping).
+4. Bootstrap names admin-side:
    ```js
    await epistery.setAddressName("0xe75Fc5...", "michael");
    ```
 
-3. **No client changes required** for existing flows — the resolver runs in middleware and surfaces the name wherever `req.episteryClient` is consumed.
+### For `rootz-v6/.../UniversalTeamRegistryV4.sol`
 
-If you want to avoid a redeploy, you can defer: the system continues to function as it did, `req.episteryClient.name` just stays undefined for everyone. The new methods become available the moment the contract is upgraded.
+Steven's call when he wants to. Adoption is:
+1. `import "epistery/contracts/IAddressNaming.sol";` and declare `is IAddressNaming`.
+2. Add the `addressNames` mapping + the two methods. Choose the tenancy model that matches his contract's existing scope (single- or multi-tenant on `msg.sender`).
+3. Redeploy (or use his existing upgrade path).
+
+Off-chain consumers (epistery's `Utils.ResolveAddressName`, anyone using the resolver via the npm package) keep working against either side without code changes.
 
 ## Related changes in the same release
 
@@ -140,3 +145,5 @@ The motivating bug: a user whose desktop is the contract sponsor was being rende
 The structural cause: `WhitelistEntry.name` was overloading two distinct concepts — a per-list role/handle label, and the user's identity name. The same address on different lists could legitimately have different per-list handles, but the user has *one* name. Putting that name on the join was wrong.
 
 The fix is the minimum architectural correction: pull the name off the join, put it on the address, scoped by the domain that's doing the naming. Roles stay where they are. Old data stays where it is. The resolver gets simpler (one RPC call), and privileged-address rendering becomes the portal UI's concern, not the data model's.
+
+The cross-system mechanism is the interface (`IAddressNaming`) — every contract that wants to be a naming source declares conformance. The interface lives in epistery; the implementations live in the forks. No code is shared, no contract inherits from another; alignment is by signature, not by source.
