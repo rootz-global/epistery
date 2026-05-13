@@ -118,10 +118,23 @@ class EpisteryAttach {
       next();
     });
 
-    // Middleware to enrich request with notabot score
+    // Middleware to enrich request with notabot score and resolved name
     app.use(async (req, res, next) => {
       // Check if client info is available (from key exchange or authentication)
       if (req.episteryClient && req.episteryClient.address) {
+        // Resolve address → name from the domain agent whitelists.
+        // Opportunistic — many domains won't have names configured.
+        try {
+          const name = await req.app.locals.epistery.resolveName(
+            req.episteryClient.address,
+          );
+          if (name) {
+            req.episteryClient.name = name;
+          }
+        } catch {
+          // Silent — name is optional
+        }
+
         try {
           // Get identity contract address if available
           // For now, we'll try to get it from query params or headers
@@ -281,6 +294,48 @@ class EpisteryAttach {
 
     return await Utils.GetListsForMember(
       serverWallet,
+      address,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Resolve an address to its human-readable name as known by this domain.
+   * Walks the address's whitelist memberships under the domain agent and
+   * returns the first non-empty `name` field. Returns undefined if no entry
+   * has a name (or the address isn't on any list).
+   * @param {string} address - The address to resolve
+   * @returns {Promise<string | undefined>} The resolved name, or undefined
+   */
+  async resolveName(address) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!address) {
+      throw new Error("Address is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.agent_contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.ResolveAddressName(
+      serverWallet,
+      this.domain.wallet.address,
       address,
       contractAddress,
     );

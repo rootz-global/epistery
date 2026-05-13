@@ -51,6 +51,10 @@ export interface ClientWalletInfo {
   address: string;
   publicKey: string;
 
+  // Resolved from whitelist entries on the domain agent contract
+  // (first non-empty `name` field across the address's memberships)
+  name?: string;
+
   // Used by legacy (browser) data-wallets -- left in for backward compatibility
   mnemonic?: string;
   privateKey?: string;

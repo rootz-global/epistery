@@ -910,6 +910,39 @@ export class Utils {
     }
   }
 
+  /**
+   * Resolve an address to a human-readable name from any whitelist entry.
+   * Walks the address's memberships under the given owner (the domain agent),
+   * returning the first non-empty `name` found on a WhitelistEntry.
+   * Assumes admins curate consistent names across the lists a person is on.
+   */
+  public static async ResolveAddressName(wallet: Wallet, ownerAddress: string, addressToCheck: string, contractAddress?: string): Promise<string | undefined> {
+    const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;
+    if (!agentContractAddress || agentContractAddress === '0x0000000000000000000000000000000000000000') {
+      throw new Error('Agent contract address not configured');
+    }
+
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      wallet
+    );
+
+    const memberships = await agentContract.getListsForMember(addressToCheck);
+    for (const membership of memberships) {
+      try {
+        const entry = await agentContract.getWhitelistEntry(ownerAddress, membership.listName, addressToCheck);
+        if (entry.name && entry.name.length > 0) {
+          return entry.name;
+        }
+      } catch (e) {
+        // getWhitelistEntry reverts if address isn't on the list — keep walking
+        continue;
+      }
+    }
+    return undefined;
+  }
+
   public static async GetListsForMember(wallet: Wallet, memberAddress: string, contractAddress?: string): Promise<any[]> {
     try {
       const agentContractAddress = contractAddress || process.env.AGENT_CONTRACT_ADDRESS;

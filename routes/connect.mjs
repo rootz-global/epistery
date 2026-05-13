@@ -12,7 +12,8 @@ export default function connectRoutes(epistery) {
   // Session check - returns current identity from cookie (via auth middleware)
   router.get("/connect", (req, res) => {
     if (req.episteryClient) {
-      return res.json({ address: req.episteryClient.address });
+      const { address, name } = req.episteryClient;
+      return res.json(name ? { address, name } : { address });
     }
     res.json({});
   });
@@ -44,6 +45,12 @@ export default function connectRoutes(epistery) {
         address: data.clientAddress,
         publicKey: data.clientPublicKey,
       };
+      try {
+        const name = await epistery.resolveName(data.clientAddress);
+        if (name) clientInfo.name = name;
+      } catch {
+        // Name resolution is opportunistic — many domains won't have it configured
+      }
       if (epistery.options.authentication) {
         clientInfo.profile = await epistery.options.authentication.call(
           epistery.options.authentication,

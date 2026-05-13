@@ -48,6 +48,7 @@ export default function whitelistRoutes(epistery) {
         valid: true,
         rivetAddress: req.episteryClient.address,
         publicKey: req.episteryClient.publicKey,
+        name: req.episteryClient.name,
         authenticated: req.episteryClient.authenticated,
         authType: "epistery",
       };
