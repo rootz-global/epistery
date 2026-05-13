@@ -11,8 +11,21 @@ import createRoutes from "./routes/index.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Expected Agent contract version - must match contract VERSION constant
-export const EXPECTED_CONTRACT_VERSION = "3.0.0";
+// Expected Agent contract version — read directly from the source file
+// shipped in this package, so it tracks whatever this build was compiled
+// from. No separate constant to keep in sync.
+export const EXPECTED_CONTRACT_VERSION = (() => {
+  try {
+    const source = fs.readFileSync(
+      path.join(__dirname, "contracts/agent.sol"),
+      "utf8",
+    );
+    const match = source.match(/VERSION\s*=\s*"([^"]+)"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+})();
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
