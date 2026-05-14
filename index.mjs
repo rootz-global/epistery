@@ -75,7 +75,7 @@ class EpisteryAttach {
       // which is required for internal proxies (MCP loopback fetch).
       // Falls back to raw Host header for non-proxied requests.
       const hostname = req.hostname || req.headers.host?.split(":")[0] || "localhost";
-      if (req.app.locals.epistery.domain?.name !== hostname) {
+      if (req.app.locals.epistery.domainName !== hostname) {
         await req.app.locals.epistery.setDomain(hostname);
       }
       next();
