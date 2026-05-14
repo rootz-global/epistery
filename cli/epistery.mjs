@@ -313,7 +313,7 @@ async function initializeDomain(domain) {
       config.setPath(`/${domain}`);
       config.load();
 
-      const contractAddress = config.data?.agent_contract_address;
+      const contractAddress = config.data?.contract_address;
 
       if (
         contractAddress &&

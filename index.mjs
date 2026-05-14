@@ -215,7 +215,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -257,7 +257,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -299,7 +299,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -340,7 +340,7 @@ class EpisteryAttach {
 
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -380,7 +380,7 @@ class EpisteryAttach {
 
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -410,7 +410,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -472,7 +472,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -515,7 +515,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const contractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (!contractAddress) {
       throw new Error("Agent contract address not configured for domain");
@@ -545,7 +545,7 @@ class EpisteryAttach {
     // Get contract address from domain config - reload from disk to get latest
     this.config.setPath(`/${this.domainName}`);
     this.config.load(); // Force reload from disk
-    const agentContractAddress = this.config.data?.agent_contract_address;
+    const agentContractAddress = this.config.data?.contract_address;
     const upgradeNotes = this.config.data?.contract_upgrade_notes;
 
     if (
@@ -636,7 +636,7 @@ class EpisteryAttach {
     // Get contract address from domain config
     this.config.setPath(`/${this.domainName}`);
     const agentContractAddress =
-      this.config.data?.agent_contract_address ||
+      this.config.data?.contract_address ||
       process.env.AGENT_CONTRACT_ADDRESS;
     if (
       !agentContractAddress ||

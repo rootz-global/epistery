@@ -1,6 +1,50 @@
 const hre = require("hardhat");
 const fs = require("fs");
 const path = require("path");
+const ini = require("ini");
+const os = require("os");
+
+/**
+ * Read per-chain policy from ~/.epistery/config.ini under
+ * [default.rpc.<chainId>.policy]. Returns {} if no overrides set.
+ */
+function loadChainPolicy(chainId) {
+  const configPath = path.join(os.homedir(), ".epistery", "config.ini");
+  if (!fs.existsSync(configPath)) return {};
+  const data = ini.decode(fs.readFileSync(configPath, "utf8"));
+  return data?.default?.rpc?.[String(chainId)]?.policy || {};
+}
+
+/**
+ * Build EIP-1559 overrides for Polygon (137) and Amoy (80002): apply the
+ * 25 gwei priority floor, then enforce a configurable ceiling so a base-fee
+ * spike or RPC misreport can't drain the wallet on a single deploy.
+ */
+async function polygonDeployOverrides(provider, policy) {
+  const fd = await provider.getFeeData();
+  const minPriority = hre.ethers.utils.parseUnits(
+    String(policy.minPriorityFeeGwei ?? 25), "gwei"
+  );
+  const networkPriority = fd.maxPriorityFeePerGas || minPriority;
+  const maxPriorityFeePerGas = networkPriority.gt(minPriority) ? networkPriority : minPriority;
+
+  const multiplier = policy.maxFeeMultiplier ?? 2;
+  const minMaxFee = maxPriorityFeePerGas.mul(multiplier);
+  const networkMax = fd.maxFeePerGas || minMaxFee;
+  const maxFeePerGas = networkMax.gt(minMaxFee) ? networkMax : minMaxFee;
+
+  const ceiling = hre.ethers.utils.parseUnits(
+    String(policy.maxFeePerGasGwei ?? 500), "gwei"
+  );
+  if (maxFeePerGas.gt(ceiling)) {
+    throw new Error(
+      `Aborting deploy: network fee ${hre.ethers.utils.formatUnits(maxFeePerGas, "gwei")} gwei ` +
+      `exceeds cap ${hre.ethers.utils.formatUnits(ceiling, "gwei")} gwei. ` +
+      `Raise [default.rpc.<chainId>.policy] maxFeePerGasGwei in ~/.epistery/config.ini if intentional.`
+    );
+  }
+  return { maxFeePerGas, maxPriorityFeePerGas };
+}
 
 /**
  * Deploy Agent contract script
@@ -40,7 +84,23 @@ async function main() {
   // Deploy the Agent contract with constructor parameters
   console.log("\nDeploying Agent contract...");
   const Agent = await hre.ethers.getContractFactory("Agent");
-  const agent = await Agent.deploy(domain, sponsor);
+
+  // Apply fee cap on Polygon family — protects against base-fee spikes or
+  // RPC misreports that would otherwise drain the deployer wallet.
+  const chainId = hre.network.config.chainId;
+  let overrides = {};
+  if (chainId === 137 || chainId === 80002) {
+    const policy = loadChainPolicy(chainId);
+    overrides = await polygonDeployOverrides(deployer.provider, policy);
+    console.log(
+      "Gas overrides: maxFeePerGas=" +
+      hre.ethers.utils.formatUnits(overrides.maxFeePerGas, "gwei") + " gwei, " +
+      "maxPriorityFeePerGas=" +
+      hre.ethers.utils.formatUnits(overrides.maxPriorityFeePerGas, "gwei") + " gwei"
+    );
+  }
+
+  const agent = await Agent.deploy(domain, sponsor, overrides);
 
   await agent.deployed();
   const contractAddress = agent.address;
@@ -70,7 +130,7 @@ async function main() {
       }
 
       // Update contract address for this domain
-      config[domain].agent_contract_address = contractAddress;
+      config[domain].contract_address = contractAddress;
       config[domain].updated_at = new Date().toISOString();
 
       // Save config
@@ -78,7 +138,7 @@ async function main() {
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
       console.log("\n✅ Updated config.json:");
-      console.log(`   ${domain}.agent_contract_address = ${contractAddress}`);
+      console.log(`   ${domain}.contract_address = ${contractAddress}`);
     } catch (error) {
       console.error("\n⚠️  Failed to update config.json:", error.message);
       console.log("You will need to manually update the configuration.");

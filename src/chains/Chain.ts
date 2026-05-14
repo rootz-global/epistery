@@ -20,8 +20,13 @@ export interface ChainPolicy {
   // EIP-1559 floors (in gwei)
   minPriorityFeeGwei?: number;
   maxFeeMultiplier?: number;        // applied to max(networkMax, minPriority * 2)
+  // EIP-1559 ceiling (in gwei) — refuse to send if the chain reports a
+  // base fee above this. Bumping the cap is a manual config change so a
+  // legitimate market spike can't silently drain a wallet.
+  maxFeePerGasGwei?: number;
   // Legacy gas
   minGasPriceGwei?: number;
+  maxGasPriceGwei?: number;         // legacy-chain analogue of maxFeePerGasGwei
   // Gas limit estimation safety
   gasLimitMultiplier?: number;      // applied to estimateGas result
 }

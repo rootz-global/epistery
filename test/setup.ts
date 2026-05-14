@@ -76,7 +76,7 @@ default_domain=localhost
 
   // Write localhost domain config
   const localhostConfig = `domain=localhost
-agent_contract_address=${TEST_CONTRACT_ADDRESS || ''}
+contract_address=${TEST_CONTRACT_ADDRESS || ''}
 
 [wallet]
 address=${TEST_WALLETS.server.address}

@@ -215,4 +215,13 @@ nativeCurrencyDecimals=18
 ;   nativeCurrencyName=Japan Open Chain Token
 ;   nativeCurrencySymbol=JOC
 ;   nativeCurrencyDecimals=18
+;
+; Per-chain fee policy (optional). Bump these only after a market move
+; legitimately pushes the network past the cap; the default is meant to
+; be a circuit-breaker, not a normal operating point.
+;   [default.rpc.137.policy]
+;   maxFeePerGasGwei=500          ; refuse to send if Polygon wants more
+;   minPriorityFeeGwei=25         ; Polygon RPC floor (don't lower)
+;   [default.rpc.81.policy]
+;   maxGasPriceGwei=500           ; legacy-chain analogue (JOC)
 `

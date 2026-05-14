@@ -37,6 +37,18 @@ export class JapanOpenChain extends Chain {
     const floor = this.minGasPrice();
     const networkPrice = fd.gasPrice ?? floor;
     const gasPrice = networkPrice.gt(floor) ? networkPrice : floor;
+
+    // Hard ceiling matching PolygonChain — refuse to send if the chain
+    // wants more than the operator is willing to pay. Default 200 gwei.
+    const ceiling = this.gwei(this.policy.maxGasPriceGwei ?? 500);
+    if (gasPrice.gt(ceiling)) {
+      throw new Error(
+        `JOC gas price ${ethers.utils.formatUnits(gasPrice, 'gwei')} gwei exceeds ` +
+        `cap ${ethers.utils.formatUnits(ceiling, 'gwei')} gwei. ` +
+        `Raise policy.maxGasPriceGwei in config.ini if intentional.`
+      );
+    }
+
     return { gasPrice };
   }
 }

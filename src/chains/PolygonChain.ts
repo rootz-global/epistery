@@ -41,6 +41,18 @@ export class PolygonChain extends Chain {
     const networkMax = fd.maxFeePerGas ?? minMaxFee;
     const maxFeePerGas = networkMax.gt(minMaxFee) ? networkMax : minMaxFee;
 
+    // Hard ceiling: refuse to send if the chain wants more than the operator
+    // is willing to pay. Default 500 gwei is high enough for normal Polygon
+    // congestion but catches anomalies that would drain a wallet on a single
+    // contract deploy. Override via policy.maxFeePerGasGwei in config.ini.
+    const ceiling = this.gwei(this.policy.maxFeePerGasGwei ?? 500);
+    if (maxFeePerGas.gt(ceiling)) {
+      throw new Error(
+        `Polygon fee ${ethers.utils.formatUnits(maxFeePerGas, 'gwei')} gwei exceeds ` +
+        `cap ${ethers.utils.formatUnits(ceiling, 'gwei')} gwei. ` +
+        `Raise policy.maxFeePerGasGwei in config.ini if intentional.`
+      );
+    }
     return { maxPriorityFeePerGas, maxFeePerGas };
   }
 }
