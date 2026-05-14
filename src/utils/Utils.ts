@@ -7,6 +7,10 @@ import * as AgentArtifact from '../../artifacts/contracts/agent.sol/Agent.json';
 export class Utils {
   private static config: Config;
   private static serverWallet: ethers.Wallet| null = null;
+  // Per-domain wallet cache. Without this, every InitServerWallet() call
+  // rebuilds the wallet AND mutates Utils.config via setPath(domain) — racing
+  // across concurrent requests for different domains on a multi-tenant host.
+  private static walletCache: Map<string, ethers.Wallet> = new Map();
 
   // Gas estimation constants
   private static readonly FALLBACK_GAS_LIMIT = 200000;
@@ -51,6 +55,13 @@ export class Utils {
   }
 
   public static InitServerWallet(domain: string = 'localhost'): ethers.Wallet | null {
+    // Fast path: return cached wallet for this domain. Avoids both the
+    // wallet-rebuild cost and the static config setPath mutation.
+    const cached = this.walletCache.get(domain);
+    if (cached) {
+      this.serverWallet = cached;
+      return cached;
+    }
     try {
       if (!this.config) {
         this.config = new Config();
@@ -90,6 +101,7 @@ export class Utils {
       if (domainConfig.wallet) {
         const chain = chainFor(domainConfig.provider || { chainId: 137, name: 'Polygon Mainnet', rpc: 'https://polygon-rpc.com' });
         this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(chain.provider);
+        this.walletCache.set(domain, this.serverWallet);
 
         console.log(`Server wallet initialized for domain: ${domain}`);
         console.log(`Wallet address: ${domainConfig.wallet.address}`);
