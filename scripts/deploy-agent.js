@@ -34,7 +34,7 @@ async function polygonDeployOverrides(provider, policy) {
   const maxFeePerGas = networkMax.gt(minMaxFee) ? networkMax : minMaxFee;
 
   const ceiling = hre.ethers.utils.parseUnits(
-    String(policy.maxFeePerGasGwei ?? 500), "gwei"
+    String(policy.maxFeePerGasGwei ?? 1000), "gwei"
   );
   if (maxFeePerGas.gt(ceiling)) {
     throw new Error(

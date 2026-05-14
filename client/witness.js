@@ -10,6 +10,7 @@ import {
   Web3Wallet,
   BrowserWallet,
   RivetWallet,
+  FidoWallet,
 } from "./wallet.js?v=7";
 import NotabotTracker from "./notabot.js";
 
@@ -1114,6 +1115,34 @@ export default class Witness {
     }
 
     newWallet.label = label || "Browser Wallet";
+
+    // Temporarily set as active wallet to save it
+    const previousWallet = this.wallet;
+    this.wallet = newWallet;
+    this.save();
+
+    // Restore previous wallet if there was one
+    if (previousWallet) {
+      this.wallet = previousWallet;
+    }
+
+    return {
+      id: newWallet.id,
+      address: newWallet.address,
+      source: newWallet.source,
+      label: newWallet.label,
+    };
+  }
+
+  async addFidoWallet(label = null) {
+    await ensureEthers();
+    const newWallet = await FidoWallet.create(ethers, {
+      label: label || "FIDO Wallet",
+    });
+
+    if (!newWallet) {
+      throw new Error("Failed to create FIDO wallet");
+    }
 
     // Temporarily set as active wallet to save it
     const previousWallet = this.wallet;

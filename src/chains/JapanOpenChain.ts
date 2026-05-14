@@ -40,7 +40,7 @@ export class JapanOpenChain extends Chain {
 
     // Hard ceiling matching PolygonChain — refuse to send if the chain
     // wants more than the operator is willing to pay. Default 200 gwei.
-    const ceiling = this.gwei(this.policy.maxGasPriceGwei ?? 500);
+    const ceiling = this.gwei(this.policy.maxGasPriceGwei ?? 1000);
     if (gasPrice.gt(ceiling)) {
       throw new Error(
         `JOC gas price ${ethers.utils.formatUnits(gasPrice, 'gwei')} gwei exceeds ` +
