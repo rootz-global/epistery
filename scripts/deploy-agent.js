@@ -16,6 +16,32 @@ function loadChainPolicy(chainId) {
 }
 
 /**
+ * Build legacy gasPrice overrides for JOC (81): apply the 30 gwei minimum
+ * (JOC RPC enforces this), enforce the same ceiling as Polygon, and force
+ * type=0 so hardhat doesn't construct an EIP-1559 typed tx — JOC doesn't
+ * honor maxFeePerGas/maxPriorityFeePerGas and the tx will sit in mempool.
+ */
+async function jocDeployOverrides(provider, policy) {
+  const fd = await provider.getFeeData();
+  const minPrice = hre.ethers.utils.parseUnits(
+    String(policy.minGasPriceGwei ?? 30), "gwei"
+  );
+  const networkPrice = fd.gasPrice || minPrice;
+  const gasPrice = networkPrice.gt(minPrice) ? networkPrice : minPrice;
+
+  const ceiling = hre.ethers.utils.parseUnits(
+    String(policy.maxGasPriceGwei ?? 1000), "gwei"
+  );
+  if (gasPrice.gt(ceiling)) {
+    throw new Error(
+      `Aborting deploy: JOC gas price ${hre.ethers.utils.formatUnits(gasPrice, "gwei")} gwei ` +
+      `exceeds cap ${hre.ethers.utils.formatUnits(ceiling, "gwei")} gwei.`
+    );
+  }
+  return { gasPrice, type: 0 };
+}
+
+/**
  * Build EIP-1559 overrides for Polygon (137) and Amoy (80002): apply the
  * 25 gwei priority floor, then enforce a configurable ceiling so a base-fee
  * spike or RPC misreport can't drain the wallet on a single deploy.
@@ -85,18 +111,26 @@ async function main() {
   console.log("\nDeploying Agent contract...");
   const Agent = await hre.ethers.getContractFactory("Agent");
 
-  // Apply fee cap on Polygon family — protects against base-fee spikes or
-  // RPC misreports that would otherwise drain the deployer wallet.
+  // Apply fee cap and per-chain tx-type. Without this, hardhat builds an
+  // EIP-1559 tx by default — fine for Polygon, but JOC rejects/drops those
+  // because it only honors legacy gasPrice.
   const chainId = hre.network.config.chainId;
   let overrides = {};
   if (chainId === 137 || chainId === 80002) {
     const policy = loadChainPolicy(chainId);
     overrides = await polygonDeployOverrides(deployer.provider, policy);
     console.log(
-      "Gas overrides: maxFeePerGas=" +
+      "Gas overrides (EIP-1559): maxFeePerGas=" +
       hre.ethers.utils.formatUnits(overrides.maxFeePerGas, "gwei") + " gwei, " +
       "maxPriorityFeePerGas=" +
       hre.ethers.utils.formatUnits(overrides.maxPriorityFeePerGas, "gwei") + " gwei"
+    );
+  } else if (chainId === 81) {
+    const policy = loadChainPolicy(chainId);
+    overrides = await jocDeployOverrides(deployer.provider, policy);
+    console.log(
+      "Gas overrides (legacy): gasPrice=" +
+      hre.ethers.utils.formatUnits(overrides.gasPrice, "gwei") + " gwei"
     );
   }
 
