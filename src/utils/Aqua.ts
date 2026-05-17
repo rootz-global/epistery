@@ -35,6 +35,10 @@ export const Aquafy = async (obj: string, clientWallet:ClientWalletInfo):Promise
       return;
     } */
 
+    if (!clientWallet.mnemonic) {
+      throw new Error('Mnemonic is required for Aqua signing');
+    }
+
     const creds: CredentialsData = {
       mnemonic: clientWallet.mnemonic,
       nostr_sk: "",

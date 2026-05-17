@@ -1,21 +1,31 @@
 {
   "name": "epistery",
-  "version": "1.0.0",
-  "description": "ExpressJS server with TypeScript",
+  "version": "1.5.8",
+  "description": "Epistery brings blockchain capabilities to mundane web tasks like engagement metrics, authentication and commerce of all sorts.",
+  "author": "Rootz Corp.",
+  "license": "MIT",
+  "homepage": "https://epistery.com",
+  "repository": "https://github.com/rootz-global/epistery",
   "main": "index.mjs",
+  "types": "dist/epistery.d.ts",
   "bin": {
     "epistery": "./cli/epistery.mjs"
   },
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node test/server.mjs",
+    "prepare": "npm run build",
+    "start": "npm run build && node demo/server.mjs",
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
     "certify": "node cli/index.mjs certify",
     "initialize": "node cli/index.mjs initialize",
     "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify",
-    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network sepolia",
-    "verify:agent": "node scripts/verify-agent.js"
+    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network polygon",
+    "verify:agent": "node scripts/verify-agent.js",
+    "test": "vitest run",
+    "test:setup": "node scripts/setup-test-env.js",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@types/cookie-parser": "^1.4.9",
@@ -24,18 +34,24 @@
     "aqua-js-sdk": "^3.2.1-44",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.2",
-    "express": "^4.18.2",
+    "epistery": "^1.4.1",
+    "ethers": "^5.8.0",
+    "express": "^5.1.0",
     "ini": "^5.0.0",
     "kubo-rpc-client": "^5.2.0",
     "node-fetch": "^3.3.2",
-    "tsconfig-paths": "^4.2.0",
-    "ethers": "^5.8.0"
+    "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@types/supertest": "^6.0.2",
+    "@vitest/coverage-v8": "^2.1.8",
+    "chai": "^6.2.0",
     "hardhat": "^2.26.3",
     "nodemon": "^3.0.0",
+    "supertest": "^7.0.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^2.1.8"
   }
 }

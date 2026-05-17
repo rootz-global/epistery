@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Access Control Admin</title>
+  <style>
+    :root {
+      /* Primary colors from metric.im */
+      --bg-color: #fffffe;
+      --bg-color-d: #e3e2ea;
+      --bg-color-quiet: #bebdca;
+      --bg-color-quiet-d: #f3f2fa;
+      --text-color: #2c3e50;
+      --text-color-d: #2c3e50;
+      --text-color-quiet: #2c3e50aa;
+      --neutral: #919090;
+      --page-border: #91909050;
+      --action-color: #82b3cb;
+      --action-color-hilite: #5ab8e7;
+
+      /* Rootz green accents */
+      --primary: #2d5016;
+      --secondary: #4a7c59;
+      --accent: #5d8a66;
+      --light-green: #76a56f;
+      --dark: #1a2f0a;
+
+      /* Spacing */
+      --spacer: 12px;
+      --spacer2: 24px;
+      --spacer3: 36px;
+      --spacerhalf: 6px;
+
+      /* Status colors */
+      --status-error: #dc3545;
+      --status-warning: #ffc107;
+      --status-success: #28a745;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'DM Sans', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;
+      color: var(--text-color);
+      background: var(--bg-color);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    header {
+      background: var(--bg-color);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      padding: 1rem 0;
+      flex-shrink: 0;
+    }
+
+    nav {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 var(--spacer2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      text-decoration: none;
+      gap: 10px;
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: var(--primary);
+    }
+
+    .console-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    .console-main {
+      padding: var(--spacer3);
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .console-header {
+      margin-bottom: var(--spacer3);
+    }
+
+    .console-header h1 {
+      font-size: 2.5rem;
+      color: var(--primary);
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .console-tagline {
+      color: var(--text-color-quiet);
+      font-size: 1rem;
+    }
+
+    .console-panel {
+      background: var(--bg-color-quiet-d);
+      border: 1px solid var(--page-border);
+      border-radius: 8px;
+      padding: var(--spacer2);
+      margin-bottom: var(--spacer2);
+    }
+
+    .console-panel h2 {
+      font-size: 1.3rem;
+      color: var(--primary);
+      padding-bottom: var(--spacerhalf);
+      margin-bottom: var(--spacer);
+    }
+
+    .panel-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--spacer);
+    }
+
+    .panel-header-row h2 {
+      margin: 0;
+      padding: 0;
+    }
+
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      margin-top: var(--spacer);
+      padding: var(--spacer2);
+      background: var(--bg-color);
+      border-radius: 8px;
+    }
+
+    .stat-box {
+      text-align: center;
+    }
+
+    .stat-number {
+      font-size: 36px;
+      font-weight: bold;
+      display: block;
+      color: var(--primary);
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text-color-quiet);
+      margin-top: 5px;
+    }
+
+    .add-form {
+      display: flex;
+      gap: var(--spacer);
+      margin-bottom: var(--spacer);
+      flex-wrap: wrap;
+    }
+
+    .add-form input,
+    .add-form select {
+      padding: var(--spacer) var(--spacer);
+      border: 1px solid var(--page-border);
+      border-radius: 4px;
+      font-size: 14px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      transition: border-color 0.2s;
+    }
+
+    .add-form input {
+      font-family: 'Courier New', monospace;
+    }
+
+    .add-form input:focus,
+    .add-form select:focus {
+      outline: none;
+      border-color: var(--action-color);
+    }
+
+    .console-btn {
+      padding: var(--spacer) var(--spacer2);
+      background: var(--action-color);
+      color: var(--bg-color);
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .console-btn:hover {
+      background: var(--action-color-hilite);
+      transform: translateY(-1px);
+    }
+
+    .console-btn:disabled {
+      background: var(--neutral);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .members-list {
+      background: var(--bg-color);
+      border-radius: 6px;
+      border: 1px solid var(--page-border);
+      overflow: hidden;
+    }
+
+    .member-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--spacer);
+      border-bottom: 1px solid var(--page-border);
+      transition: background 0.2s;
+    }
+
+    .member-item:last-child {
+      border-bottom: none;
+    }
+
+    .member-item:hover {
+      background: var(--bg-color-quiet-d);
+    }
+
+    .member-address {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: var(--text-color);
+      word-break: break-all;
+    }
+
+    .member-actions button {
+      padding: var(--spacerhalf) var(--spacer);
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: var(--action-color);
+      color: white;
+    }
+
+    .member-actions button:hover {
+      background: var(--action-color-hilite);
+      transform: translateY(-1px);
+    }
+
+    .member-actions button:disabled {
+      background: var(--neutral);
+      cursor: not-allowed;
+    }
+
+    .icon-svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      vertical-align: middle;
+    }
+
+    .message {
+      padding: var(--spacer);
+      border-radius: 6px;
+      margin-bottom: var(--spacer);
+      border: 1px solid;
+    }
+
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border-color: #c3e6cb;
+    }
+
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border-color: #f5c6cb;
+    }
+
+    .message.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border-color: #bee5eb;
+    }
+
+    .loading {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: var(--spacer);
+    }
+
+    .access-denied {
+      text-align: center;
+      padding: var(--spacer3);
+    }
+
+    .access-denied-icon {
+      font-size: 64px;
+      margin-bottom: var(--spacer);
+    }
+
+    .access-denied h2 {
+      color: var(--status-error);
+      margin: 0 0 var(--spacer) 0;
+    }
+
+    .access-denied p {
+      color: var(--text-color-quiet);
+      margin: 0;
+    }
+
+    .mono {
+      font-family: 'Courier New', monospace;
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal {
+      background: var(--bg-color);
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .modal-header {
+      padding: var(--spacer2);
+      border-bottom: 1px solid var(--page-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      color: var(--primary);
+      font-size: 1.2rem;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: var(--text-color-quiet);
+      padding: 0;
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      text-align: center;
+    }
+
+    .modal-close:hover {
+      color: var(--text-color);
+    }
+
+    .modal-body {
+      padding: var(--spacer2);
+    }
+
+    .modal-field {
+      margin-bottom: var(--spacer2);
+    }
+
+    .modal-field label {
+      display: block;
+      margin-bottom: var(--spacerhalf);
+      color: var(--text-color);
+      font-weight: 500;
+    }
+
+    .modal-field input,
+    .modal-field select {
+      width: 100%;
+      padding: var(--spacer);
+      border: 1px solid var(--page-border);
+      border-radius: 4px;
+      font-size: 14px;
+      background: var(--bg-color);
+      color: var(--text-color);
+    }
+
+    .modal-field input[type="text"] {
+      font-family: 'Courier New', monospace;
+    }
+
+    .modal-field .help-text {
+      font-size: 12px;
+      color: var(--text-color-quiet);
+      margin-top: var(--spacerhalf);
+    }
+
+    .modal-footer {
+      padding: var(--spacer2);
+      border-top: 1px solid var(--page-border);
+      display: flex;
+      gap: var(--spacer);
+      justify-content: flex-end;
+    }
+
+    .modal-footer button {
+      padding: var(--spacer) var(--spacer2);
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .modal-footer .btn-cancel {
+      background: var(--bg-color-d);
+      color: var(--text-color);
+    }
+
+    .modal-footer .btn-cancel:hover {
+      background: var(--bg-color-quiet);
+    }
+
+    .modal-footer .btn-save {
+      background: var(--action-color);
+      color: white;
+    }
+
+    .modal-footer .btn-save:hover {
+      background: var(--action-color-hilite);
+    }
+
+    footer {
+      background: var(--bg-color-d);
+      padding: var(--spacer2) 0;
+      margin-top: auto;
+      border-top: 1px solid var(--page-border);
+    }
+
+    .footer-bottom {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 var(--spacer2);
+      text-align: center;
+      color: var(--text-color-quiet);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/" class="logo">
+        <span class="logo-text">Access Control</span>
+      </a>
+    </nav>
+  </header>
+
+  <main class="console-layout">
+    <div class="console-main">
+      <div class="console-header">
+        <h1>Access Control Admin</h1>
+        <p class="console-tagline">Manage access control lists and member permissions</p>
+      </div>
+
+      <div id="loading-state" class="loading">
+        Loading...
+      </div>
+
+      <div id="access-denied-state" style="display: none;">
+        <section class="console-panel">
+          <div class="access-denied">
+            <div class="access-denied-icon">X</div>
+            <h2>Access Denied</h2>
+            <p>You don't have admin permissions for access control management.</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="admin-content" style="display: none;">
+        <div id="message-container"></div>
+
+        <!-- Stats Panel -->
+        <section class="console-panel">
+          <div class="stats">
+            <div class="stat-box">
+              <span id="member-count" class="stat-number">-</span>
+              <span class="stat-label">Members</span>
+            </div>
+            <div class="stat-box">
+              <span id="server-balance" class="stat-number">-</span>
+              <span class="stat-label">Server Balance (POL)</span>
+            </div>
+          </div>
+          <div style="margin-top: var(--spacer); padding: var(--spacer); background: var(--bg-color); border-radius: 4px; font-size: 13px; color: var(--text-color-quiet);">
+            <strong>Note:</strong> The server wallet pays gas fees for all access control changes. Server wallet: <span id="server-wallet" class="mono" style="color: var(--text-color);">Loading...</span>
+          </div>
+        </section>
+
+        <!-- List Selection Panel -->
+        <section class="console-panel">
+          <h2>Select List</h2>
+          <div class="add-form">
+            <select id="list-selector" style="flex: 1;">
+              <option value="">Loading lists...</option>
+            </select>
+            <button id="new-list-button" class="console-btn">New List</button>
+          </div>
+          <div id="current-list-info" style="margin-top: var(--spacer); padding: var(--spacer); background: var(--bg-color); border-left: 4px solid var(--action-color); border-radius: 4px;"></div>
+        </section>
+
+        <!-- Pending Access Requests Panel -->
+        <section class="console-panel" id="pending-requests-panel">
+          <h2>Pending Access Requests</h2>
+          <div id="pending-requests-container" style="margin-top: var(--spacer);">
+            <div id="pending-requests-items"></div>
+          </div>
+        </section>
+
+        <!-- Add Member Panel -->
+        <section class="console-panel">
+          <h2>Add Member</h2>
+          <div class="add-form">
+            <input type="text" id="add-address-input" placeholder="Ethereum Address (0x...)" style="flex: 2;" />
+            <input type="text" id="add-name-input" placeholder="Display Name (optional)" style="flex: 1;" />
+            <select id="add-role-select">
+              <option value="0">Guest</option>
+              <option value="1" selected>Member</option>
+              <option value="2">Moderator</option>
+              <option value="3">Admin</option>
+              <option value="4">Owner</option>
+            </select>
+            <button id="add-button" class="console-btn">Add Member</button>
+          </div>
+        </section>
+
+        <!-- Members List Panel -->
+        <section class="console-panel">
+          <h2>Members</h2>
+          <div id="members-list" class="members-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-bottom">
+      <p>Powered by Epistery.</p>
+    </div>
+  </footer>
+
+  <!-- Note: ethers.js is loaded via witness.js from the local lib endpoint -->
+
+  <!-- Edit Member Modal -->
+  <div id="edit-modal" class="modal-overlay" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Edit Member</h3>
+        <button class="modal-close" onclick="closeEditModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="edit-address">Address</label>
+          <input type="text" id="edit-address" readonly />
+        </div>
+        <div class="modal-field">
+          <label for="edit-name">Display Name</label>
+          <input type="text" id="edit-name" placeholder="Optional display name" />
+        </div>
+        <div class="modal-field">
+          <label for="edit-role">Role</label>
+          <select id="edit-role">
+            <option value="0">Guest - Read-only access</option>
+            <option value="1">Member - Standard member</option>
+            <option value="2">Moderator - Can moderate content</option>
+            <option value="3">Admin - Full administrative access</option>
+            <option value="4">Owner - Highest level access</option>
+          </select>
+          <div class="help-text">Select the permission level for this member</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeEditModal()">Cancel</button>
+        <button class="btn-save" onclick="saveEdit()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    // Determine base path from current URL
+    const basePath = window.location.pathname.replace(/\/admin$/, '');
+    const episteryPath = basePath.replace(/\/whitelist$/, '');
+
+    // Import Witness for automatic wallet connection
+    const Witness = await import(`${episteryPath}/lib/witness.js`).then(m => m.default);
+
+    let membersList = [];
+    let pendingRequestsList = [];
+    let currentList = `${window.location.hostname}::admin`;
+    let allLists = [];
+    let witness = null;
+
+    // Auto-connect wallet on page load
+    async function autoConnectWallet() {
+      try {
+        witness = await Witness.connect({ rootPath: episteryPath });
+        console.log('[whitelist admin] Wallet connected:', witness.wallet?.address);
+        return true;
+      } catch (error) {
+        console.error('[whitelist admin] Auto-connect failed:', error);
+        return false;
+      }
+    }
+
+    async function checkAccess() {
+      try {
+        const response = await fetch(`${basePath}/check`, {
+          credentials: 'include'
+        });
+        const data = await response.json();
+        return data.allowed;
+      } catch (error) {
+        console.error('Access check failed:', error);
+        return false;
+      }
+    }
+
+    async function loadAllLists() {
+      try {
+        const response = await fetch(`${basePath}/list`, {
+          credentials: 'include'
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          allLists = data.lists || [];
+
+          // Add special lists if they don't exist
+          const specialLists = [
+            'epistery::admin',
+            `${window.location.hostname}::admin`
+          ];
+
+          for (const list of specialLists) {
+            if (!allLists.includes(list)) {
+              allLists.unshift(list);
+            }
+          }
+
+          renderListSelector();
+        }
+      } catch (error) {
+        console.error('[whitelist admin] Failed to load lists:', error);
+      }
+    }
+
+    function renderListSelector() {
+      const selector = document.getElementById('list-selector');
+      selector.innerHTML = allLists.map(listName =>
+        `<option value="${listName}" ${listName === currentList ? 'selected' : ''}>${listName}</option>`
+      ).join('');
+
+      updateListInfo();
+    }
+
+    function updateListInfo() {
+      const info = document.getElementById('current-list-info');
+
+      const listDescriptions = {
+        'epistery::': {
+          icon: '*',
+          title: 'System Namespace',
+          description: 'Global administrative lists that control server-wide permissions.',
+          examples: ['epistery::admin - Can manage all lists on this server']
+        },
+        '::admin': {
+          icon: '#',
+          title: 'Admin Role',
+          description: 'Administrative access to a resource. Format: {resource}::admin',
+          examples: [`${window.location.hostname}::admin - Domain administrators`]
+        },
+        'channel::': {
+          icon: '@',
+          title: 'Channel Namespace',
+          description: 'Application or feature-specific lists.',
+          examples: ['channel::general - General discussion access']
+        }
+      };
+
+      let namespace = 'custom';
+
+      if (currentList === 'epistery::admin') {
+        namespace = 'epistery::';
+      } else if (currentList.endsWith('::admin')) {
+        namespace = '::admin';
+      } else if (currentList.startsWith('channel::')) {
+        namespace = 'channel::';
+      }
+
+      if (namespace === 'custom') {
+        info.innerHTML = `
+          <div style="display: flex; align-items: start; gap: 10px;">
+            <div style="font-size: 24px;">[+]</div>
+            <div style="flex: 1;">
+              <div style="font-weight: 600; margin-bottom: 5px;">Custom Named List</div>
+              <div style="font-size: 13px; color: #666;">
+                Custom namespace for application-specific access control.
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        const listInfo = listDescriptions[namespace];
+        info.innerHTML = `
+          <div style="display: flex; align-items: start; gap: 10px;">
+            <div style="font-size: 24px;">${listInfo.icon}</div>
+            <div style="flex: 1;">
+              <div style="font-weight: 600; margin-bottom: 5px;">${listInfo.title}: <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px; font-size: 12px;">${currentList}</code></div>
+              <div style="font-size: 13px; color: #666;">${listInfo.description}</div>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    async function loadServerInfo() {
+      try {
+        const response = await fetch(`${episteryPath}/`, {
+          headers: { 'Accept': 'application/json' }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const serverWallet = data.server?.walletAddress || 'Unknown';
+          document.getElementById('server-wallet').textContent = serverWallet;
+
+          if (window.ethers && serverWallet !== 'Unknown') {
+            try {
+              // ethers v5 syntax
+              const provider = new ethers.providers.JsonRpcProvider(data.server?.rpc || 'https://polygon-rpc.com');
+              const balance = await provider.getBalance(serverWallet);
+              const balanceInPol = parseFloat(ethers.utils.formatEther(balance)).toFixed(4);
+              document.getElementById('server-balance').textContent = balanceInPol;
+
+              if (parseFloat(balanceInPol) < 0.1) {
+                document.getElementById('server-balance').style.color = 'var(--status-error)';
+                showMessage(`Warning: Server wallet balance is low (${balanceInPol} POL).`, 'error');
+              }
+            } catch (error) {
+              console.error('[whitelist admin] Failed to fetch balance:', error);
+              document.getElementById('server-balance').textContent = 'Error';
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[whitelist admin] Failed to load server info:', error);
+      }
+    }
+
+    async function loadPendingRequests() {
+      try {
+        const response = await fetch(`${basePath}/pending-requests`, {
+          credentials: 'include'
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          pendingRequestsList = data.requests || [];
+          renderPendingRequests();
+        }
+      } catch (error) {
+        console.error('[whitelist admin] Failed to load pending requests:', error);
+      }
+    }
+
+    function renderPendingRequests() {
+      const container = document.getElementById('pending-requests-items');
+      const panel = document.getElementById('pending-requests-panel');
+
+      if (pendingRequestsList.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state" style="padding: var(--spacer);">
+            <p style="color: var(--text-color-quiet);">No pending access requests.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = pendingRequestsList.map(req => {
+        const address = req.address;
+        const listName = req.listName;
+        const message = req.message || '';
+        const timestamp = new Date(req.timestamp).toLocaleString();
+
+        return `
+          <div class="member-item" style="background: #fff8e1; border-left: 4px solid #ffc107;">
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <div class="member-address">${address}</div>
+                <span style="background: #ffc107; color: #333; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                  Pending
+                </span>
+              </div>
+              <div style="font-size: 13px; color: #666;">
+                <strong>List:</strong> ${listName}
+                ${message ? `<br><strong>Message:</strong> ${message}` : ''}
+                <br><strong>Requested:</strong> ${timestamp}
+              </div>
+            </div>
+            <div class="member-actions" style="display: flex; gap: 8px;">
+              <select id="role-${address.replace(/0x/i, '')}" style="padding: 6px; border-radius: 4px; border: 1px solid var(--page-border);">
+                <option value="1">Member</option>
+                <option value="2">Moderator</option>
+                <option value="3">Admin</option>
+              </select>
+              <button onclick="approveRequest('${address}', '${listName}')" style="background: var(--status-success);" title="Approve">Approve</button>
+              <button onclick="denyRequest('${address}', '${listName}')" style="background: var(--status-error);" title="Deny">Deny</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    window.approveRequest = async function(address, listName) {
+      const roleSelect = document.getElementById(`role-${address.replace(/0x/i, '')}`);
+      const role = roleSelect ? parseInt(roleSelect.value) : 1;
+
+      try {
+        const response = await fetch(`${basePath}/handle-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ address, listName, approved: true, role })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage(`Approved ${address}`, 'success');
+          // Reload pending requests and members
+          await loadPendingRequests();
+          await loadMembers();
+        } else {
+          showMessage(data.error || 'Failed to approve', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to approve: ' + error.message, 'error');
+      }
+    };
+
+    window.denyRequest = async function(address, listName) {
+      if (!confirm(`Deny access for ${address}?`)) return;
+
+      try {
+        const response = await fetch(`${basePath}/handle-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ address, listName, approved: false })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage(`Denied ${address}`, 'success');
+          await loadPendingRequests();
+        } else {
+          showMessage(data.error || 'Failed to deny', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to deny: ' + error.message, 'error');
+      }
+    };
+
+    async function loadMembers() {
+      try {
+        const response = await fetch(`${basePath}/list?list=${encodeURIComponent(currentList)}`, {
+          credentials: 'include'
+        });
+
+        if (response.status === 403) {
+          showAccessDenied();
+          return;
+        }
+
+        const data = await response.json();
+
+        if (data.members) {
+          membersList = data.members;
+          renderMembers();
+          updateMemberCount();
+          showAdminContent();
+        } else if (data.lists) {
+          membersList = [];
+          renderMembers();
+          updateMemberCount();
+          showAdminContent();
+        } else if (data.error) {
+          showMessage(data.error, 'error');
+        }
+      } catch (error) {
+        console.error('[whitelist admin] Load error:', error);
+        showMessage('Failed to load members: ' + error.message, 'error');
+      }
+    }
+
+    function renderMembers() {
+      const container = document.getElementById('members-list');
+
+      if (membersList.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">[?]</div>
+            <p>No members yet. Add the first member above.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = membersList.map(entry => {
+        const address = entry.address || entry.addr;
+        const name = entry.name || '';
+        const role = entry.role;
+        const roleName = ['Guest', 'Member', 'Moderator', 'Admin', 'Owner'][role] || 'Unknown';
+        const roleColors = ['#6c757d', '#17a2b8', '#ffc107', '#fd7e14', '#dc3545'];
+        const roleColor = roleColors[role] || '#6c757d';
+
+        // Parse meta to extract addedBy info
+        let addedBy = '';
+        let addedMethod = '';
+        let addedAt = '';
+        if (entry.meta) {
+          try {
+            const metaObj = typeof entry.meta === 'string' ? JSON.parse(entry.meta) : entry.meta;
+            if (metaObj.addedBy) {
+              // Truncate wallet address for display (0x1234...5678)
+              addedBy = metaObj.addedBy.startsWith('0x') && metaObj.addedBy.length === 42
+                ? `${metaObj.addedBy.slice(0, 6)}...${metaObj.addedBy.slice(-4)}`
+                : metaObj.addedBy;
+              if (metaObj.approvedAt) {
+                addedAt = new Date(metaObj.approvedAt).toLocaleDateString();
+              } else if (metaObj.timestamp) {
+                addedAt = new Date(metaObj.timestamp).toLocaleDateString();
+              }
+            }
+            if (metaObj.addedMethod) {
+              addedMethod = metaObj.addedMethod;
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+
+        const methodInfo = addedMethod ? ` via ${addedMethod}` : '';
+        const addedInfo = addedBy ? `<div style="font-size: 11px; color: #888; margin-top: 4px;">Added by: ${addedBy}${methodInfo}${addedAt ? ` on ${addedAt}` : ''}</div>` : '';
+
+        return `
+          <div class="member-item">
+            <div style="flex: 1;">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <div class="member-address">${address}</div>
+                <span style="background: ${roleColor}; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                  ${roleName}
+                </span>
+              </div>
+              ${name ? `<div style="font-size: 13px; color: #495057; font-weight: 500;">${name}</div>` : ''}
+              ${addedInfo}
+            </div>
+            <div class="member-actions" style="display: flex; gap: 8px;">
+              <button onclick="editMember('${address}')" title="Edit member">Edit</button>
+              <button onclick="removeMember('${address}')" title="Remove member">Remove</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateMemberCount() {
+      document.getElementById('member-count').textContent = membersList.length;
+    }
+
+    async function addMember() {
+      const addressInput = document.getElementById('add-address-input');
+      const nameInput = document.getElementById('add-name-input');
+      const roleSelect = document.getElementById('add-role-select');
+      const button = document.getElementById('add-button');
+
+      const address = addressInput.value.trim();
+      const name = nameInput.value.trim();
+      const role = parseInt(roleSelect.value);
+
+      if (!address) {
+        showMessage('Please enter an address', 'error');
+        return;
+      }
+
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+        showMessage('Invalid Ethereum address format', 'error');
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Adding...';
+
+      try {
+        const response = await fetch(`${basePath}/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listName: currentList, address, name, role, meta: '' })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          membersList.push({ address, name, role, meta: '' });
+          renderMembers();
+          updateMemberCount();
+          addressInput.value = '';
+          nameInput.value = '';
+          roleSelect.value = '1';
+          showMessage(`Added ${name || address}`, 'success');
+        } else {
+          showMessage(data.error || 'Failed to add member', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to add member: ' + error.message, 'error');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Add Member';
+      }
+    }
+
+    let currentEditAddress = null;
+    let currentEditMeta = null;
+
+    window.editMember = function(address) {
+      const member = membersList.find(e => (e.address || e.addr)?.toLowerCase() === address.toLowerCase());
+      if (!member) return;
+
+      currentEditAddress = address;
+      currentEditMeta = member.meta || '';
+
+      document.getElementById('edit-address').value = address;
+      document.getElementById('edit-name').value = member.name || '';
+      document.getElementById('edit-role').value = member.role;
+      document.getElementById('edit-modal').style.display = 'flex';
+    };
+
+    window.closeEditModal = function() {
+      document.getElementById('edit-modal').style.display = 'none';
+      currentEditAddress = null;
+      currentEditMeta = null;
+    };
+
+    window.saveEdit = async function() {
+      if (!currentEditAddress) return;
+
+      const newName = document.getElementById('edit-name').value.trim();
+      const newRole = parseInt(document.getElementById('edit-role').value);
+      const saveBtn = document.querySelector('.btn-save');
+
+      try {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        // Remove then re-add
+        await fetch(`${basePath}/remove`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listName: currentList, address: currentEditAddress })
+        });
+
+        const addResponse = await fetch(`${basePath}/add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            listName: currentList,
+            address: currentEditAddress,
+            name: newName,
+            role: newRole,
+            meta: currentEditMeta
+          })
+        });
+
+        const data = await addResponse.json();
+
+        if (data.success) {
+          const index = membersList.findIndex(e => (e.address || e.addr)?.toLowerCase() === currentEditAddress.toLowerCase());
+          if (index !== -1) {
+            membersList[index] = { address: currentEditAddress, name: newName, role: newRole, meta: currentEditMeta };
+          }
+          renderMembers();
+          showMessage(`Updated ${newName || currentEditAddress}`, 'success');
+          closeEditModal();
+        } else {
+          showMessage(data.error || 'Failed to update', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to update: ' + error.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+      }
+    };
+
+    document.getElementById('edit-modal').addEventListener('click', function(e) {
+      if (e.target === this) closeEditModal();
+    });
+
+    window.removeMember = async function(address) {
+      const member = membersList.find(e => (e.address || e.addr)?.toLowerCase() === address.toLowerCase());
+      const displayName = member?.name || address;
+
+      if (!confirm(`Remove ${displayName} from ${currentList}?`)) return;
+
+      try {
+        const response = await fetch(`${basePath}/remove`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ listName: currentList, address })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          membersList = membersList.filter(e => (e.address || e.addr)?.toLowerCase() !== address.toLowerCase());
+          renderMembers();
+          updateMemberCount();
+          showMessage(`Removed ${displayName}`, 'success');
+        } else {
+          showMessage(data.error || 'Failed to remove', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to remove: ' + error.message, 'error');
+      }
+    };
+
+    function showMessage(text, type = 'info') {
+      const container = document.getElementById('message-container');
+      const messageEl = document.createElement('div');
+      messageEl.className = `message ${type}`;
+      messageEl.textContent = text;
+      container.appendChild(messageEl);
+      setTimeout(() => messageEl.remove(), 5000);
+    }
+
+    function showAdminContent() {
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('access-denied-state').style.display = 'none';
+      document.getElementById('admin-content').style.display = 'block';
+    }
+
+    function showAccessDenied() {
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('admin-content').style.display = 'none';
+      document.getElementById('access-denied-state').style.display = 'block';
+    }
+
+    // Event listeners
+    document.getElementById('add-button').addEventListener('click', addMember);
+    document.getElementById('add-address-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') addMember();
+    });
+
+    document.getElementById('list-selector').addEventListener('change', (e) => {
+      currentList = e.target.value;
+      updateListInfo();
+      loadMembers();
+    });
+
+    document.getElementById('new-list-button').addEventListener('click', () => {
+      const listName = prompt('Enter new list name (format: namespace::name)\nExamples:\n- channel::general\n- role::moderators');
+      if (listName && listName.includes('::')) {
+        if (!allLists.includes(listName)) {
+          allLists.push(listName);
+          currentList = listName;
+          renderListSelector();
+          loadMembers();
+        } else {
+          currentList = listName;
+          document.getElementById('list-selector').value = listName;
+          loadMembers();
+        }
+      } else if (listName) {
+        alert('Invalid format. List name must contain "::" (e.g., "channel::general")');
+      }
+    });
+
+    // Initialize
+    async function init() {
+      // Auto-connect wallet first
+      await autoConnectWallet();
+
+      // Then load all data
+      await Promise.all([
+        loadAllLists(),
+        loadMembers(),
+        loadServerInfo(),
+        loadPendingRequests()
+      ]);
+    }
+
+    init();
+  </script>
+</body>
+</html>

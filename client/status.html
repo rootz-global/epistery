@@ -4,18 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <link rel="icon" href="/.well-known/epistery/favicon.ico">
+  <link rel="icon" href="{{epistery.rootPath}}/favicon.ico">
   <title>Epistery Status - {{server.domain}}</title>
   <script type="module">
-    import Witness from '/.well-known/epistery/lib/witness.js';
-    import Export from '/.well-known/epistery/lib/export.js';
+    import Witness from '{{epistery.rootPath}}/lib/witness.js';
+    import Export from '{{epistery.rootPath}}/lib/export.js';
 
     let witness = null;
     
     window.addEventListener('DOMContentLoaded', async () => {
       try {
         // Connect to Epistery and get/create client wallet
-        witness = await Witness.connect();
+        // Determine rootPath from the current page URL
+        const rootPath = '{{epistery.rootPath}}';
+        witness = await Witness.connect({ rootPath });
         
         const status = witness.getStatus();
         
@@ -32,6 +34,9 @@
 
         // Setup wallet management UI
         await setupWalletManagement();
+
+        // Setup Identity Contract UI
+        await setupIdentityContract();
 
         // Set up export wallet functionality
         const exportSection = document.getElementById('export-section');
@@ -141,7 +146,10 @@
               url: location.href
             });
 
-            writeOutput.innerHTML = `
+            // Handle both old (server-side signing) and new (client-side signing) response structures
+            const isClientSideSigning = result.transactionHash && !result.signature;
+
+            let outputHTML = `
               <div class="success">
                 <h4>Write Successful!</h4>
                 <div class="result-section">
@@ -149,30 +157,64 @@
                   <p><strong>Hash:</strong> <code>${result.ipfsHash}</code></p>
                   <p><strong>URL:</strong> <a href="${result.ipfsUrl}" target="_blank">${result.ipfsUrl}</a></p>
                 </div>
+            `;
+
+            if (isClientSideSigning) {
+              // New client-side signing flow
+              outputHTML += `
+                <div class="result-section">
+                  <h5>Blockchain Transaction:</h5>
+                  <p><strong>Transaction Hash:</strong> <code>${result.transactionHash}</code></p>
+                  <p><strong>Block Number:</strong> ${result.blockNumber}</p>
+                  <p><strong>Gas Used:</strong> ${result.gasUsed}</p>
+                  <p><strong>Status:</strong> ${result.status === 1 ? '✅ Success' : '❌ Reverted'}</p>
+                </div>
+                <div class="result-section">
+                  <h5>Client Info:</h5>
+                  <p><strong>Client Address:</strong> <code>${witness.wallet.address}</code></p>
+                  <p><strong>Wallet Type:</strong> ${witness.wallet.source} (client-side signing)</p>
+                </div>
+              `;
+            } else {
+              // Old server-side signing flow
+              outputHTML += `
                 <div class="result-section">
                   <h5>Cryptographic Proof:</h5>
-                  <p><strong>Message Hash:</strong> <code>${result.messageHash}</code></p>
-                  <p><strong>Signature:</strong> <code>${result.signature}</code></p>
-                  <p><strong>Signed By:</strong> <code>${result.signedBy}</code></p>
+                  <p><strong>Message Hash:</strong> <code>${result.messageHash || 'N/A'}</code></p>
+                  <p><strong>Signature:</strong> <code>${result.signature || 'N/A'}</code></p>
+                  <p><strong>Signed By:</strong> <code>${result.signedBy || 'N/A'}</code></p>
                 </div>
                 <div class="result-section">
                   <h5>Metadata:</h5>
-                  <p><strong>Timestamp:</strong> ${result.timestamp}</p>
-                  <p><strong>Client Address:</strong> <code>${result.client.address}</code></p>
-                  <p><strong>Server Domain:</strong> ${result.server.domain}</p>
+                  <p><strong>Timestamp:</strong> ${result.timestamp || 'N/A'}</p>
+                  <p><strong>Client Address:</strong> <code>${result.client?.address || witness.wallet.address}</code></p>
+                  <p><strong>Server Domain:</strong> ${result.server?.domain || 'N/A'}</p>
                 </div>
+              `;
+            }
+
+            // Show raw data if available
+            if (result.data) {
+              outputHTML += `
                 <div class="result-section">
                   <h5>Raw Data:</h5>
                   <pre><code>${JSON.stringify(result.data, null, 2)}</code></pre>
                 </div>
-                ${result.aquaTree ? `
+              `;
+            }
+
+            // Show Aqua Tree if available
+            if (result.aquaTree) {
+              outputHTML += `
                 <div class="result-section">
                   <h5>Aqua Tree:</h5>
                   <pre><code>${JSON.stringify(result.aquaTree, null, 2)}</code></pre>
                 </div>
-                ` : ''}
-              </div>
-            `;
+              `;
+            }
+
+            outputHTML += `</div>`;
+            writeOutput.innerHTML = outputHTML;
 
             writeInput.value = '';
           }
@@ -203,7 +245,18 @@
 
             const result = await witness.readEvent();
 
-            if (!result || !result.messages || result.messages.length === 0) {
+            // Check for no data - handle both null result and empty messages array
+            if (!result || result === null) {
+              readOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Data Found</h4>
+                  <p>No data has been written to the contract for this wallet yet.</p>
+                </div>
+              `;
+              return;
+            }
+
+            if (!result.messages || result.messages.length === 0) {
               readOutput.innerHTML = `
                 <div class="error">
                   <h4>No Data Found</h4>
@@ -385,6 +438,276 @@
             transferButton.textContent = 'Transfer Ownership';
           }
         };
+
+        // Approval System Event Handlers
+        const createApprovalButton = document.getElementById('create-approval-button');
+        const approverInput = document.getElementById('approval-approver-input');
+        const fileInput = document.getElementById('approval-file-input');
+        const approvalDomainInput = document.getElementById('approval-domain-input');
+        const createApprovalOutput = document.getElementById('create-approval-output');
+
+        // Helper function to generate SHA-256 hash from file
+        async function generateFileHash(file) {
+          const arrayBuffer = await file.arrayBuffer();
+          const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          return hashHex;
+        }
+
+        createApprovalButton.onclick = async () => {
+          try {
+            createApprovalButton.disabled = true;
+            createApprovalButton.textContent = 'Creating...';
+            createApprovalOutput.innerHTML = '<div class="loading">Creating request...</div>';
+
+            const approverAddress = approverInput.value.trim();
+            const domain = approvalDomainInput.value.trim();
+            const file = fileInput.files[0];
+
+            if (!approverAddress || !file || !domain) {
+              createApprovalOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Input</h4>
+                  <p>Please fill in all fields and select a file.</p>
+                </div>
+              `;
+              return;
+            }
+
+            if (!/^0x[a-fA-F0-9]{40}$/.test(approverAddress)) {
+              createApprovalOutput.innerHTML = `
+                <div class="error">
+                  <h4>Invalid Address</h4>
+                  <p>Please enter a valid Ethereum address for the approver.</p>
+                </div>
+              `;
+              return;
+            }
+
+            // Generate hash from file
+            const fileName = file.name;
+            const fileHash = await generateFileHash(file);
+
+            const result = await witness.createApprovalEvent(approverAddress, fileName, fileHash, domain);
+            console.log("Result:", result)
+
+            createApprovalOutput.innerHTML = `
+              <div class="success">
+                <h4>Request Created!</h4>
+                <div class="result-section">
+                  <h5>Request Details:</h5>
+                  <p><strong>Approver:</strong> <code>${approverAddress}</code></p>
+                  <p><strong>File Name:</strong> ${fileName}</p>
+                  <p><strong>File Hash:</strong> <code>${fileHash}</code></p>
+                  <p><strong>Domain:</strong> ${domain}</p>
+                </div>
+              </div>
+            `;
+
+            approverInput.value = '';
+            fileInput.value = '';
+          } catch (error) {
+            createApprovalOutput.innerHTML = `
+              <div class="error">
+                <h4>Request Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            createApprovalButton.disabled = false;
+            createApprovalButton.textContent = 'Create Request';
+          }
+        };
+
+        // Global handler for approval actions
+        window.handleApprovalAction = async (requestorAddress, fileName, approved, buttonElement) => {
+          const originalText = buttonElement.textContent;
+          try {
+            buttonElement.disabled = true;
+            buttonElement.textContent = 'Processing...';
+
+            const result = await witness.handleApprovalEvent(requestorAddress, fileName, approved);
+
+            // Refresh the "get all approvals" list if it's currently displayed
+            const getAllApprovalsButton = document.getElementById('get-all-approvals-button');
+            const getAllApprovalsOutput = document.getElementById('get-all-approvals-output');
+            if (getAllApprovalsOutput && getAllApprovalsOutput.innerHTML && getAllApprovalsOutput.innerHTML.includes('success')) {
+              getAllApprovalsButton.click();
+            }
+
+            alert(`Request ${approved ? 'approved' : 'denied'} successfully!`);
+          } catch (error) {
+            alert(`Failed to ${approved ? 'approve' : 'deny'}: ${error.message}`);
+            buttonElement.disabled = false;
+            buttonElement.textContent = originalText;
+          }
+        };
+
+        // Get All Approvals for Current User (As Requestor)
+        const getAllRequestorButton = document.getElementById('get-all-requestor-button');
+        const getAllRequestorOutput = document.getElementById('get-all-requestor-output');
+
+        getAllRequestorButton.onclick = async () => {
+          try {
+            getAllRequestorButton.disabled = true;
+            getAllRequestorButton.textContent = 'Fetching...';
+            getAllRequestorOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
+
+            // Use the rivet address (actual signer) as the requestor
+            const requestorAddress = witness.wallet.rivetAddress || witness.wallet.address;
+
+            const result = await witness.getAllApprovalsForRequestorEvent(requestorAddress);
+
+            if (!result.approvals || result.approvals.length === 0) {
+              getAllRequestorOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Requests Found</h4>
+                  <p>No requests found for your address as requestor.</p>
+                </div>
+              `;
+              return;
+            }
+
+            let approvalsHtml = '';
+            result.approvals.forEach((approval, idx) => {
+              const status = approval.processedAt > 0
+                ? (approval.approved ? '✅ Approved' : '❌ Denied')
+                : '⏳ Pending';
+              const processedDate = approval.processedAt > 0
+                ? new Date(approval.processedAt * 1000).toLocaleString()
+                : 'Not processed yet';
+
+              approvalsHtml += `
+                <div class="message-card">
+                  <div class="message-header">
+                    <span class="message-number">Request #${idx}</span>
+                    <span class="message-status">${status}</span>
+                  </div>
+                  <div class="message-body">
+                    <div class="message-section">
+                      <p><strong>Approver:</strong> <code>${approval.approver}</code></p>
+                      <p><strong>File Name:</strong> ${approval.fileName}</p>
+                      <p><strong>File Hash:</strong> <code>${approval.fileHash}</code></p>
+                      <p><strong>Processed At:</strong> ${processedDate}</p>
+                    </div>
+                  </div>
+                </div>
+              `;
+            });
+
+            getAllRequestorOutput.innerHTML = `
+              <div class="success">
+                <h4>Found ${result.count} Request(s)</h4>
+                <p><strong>Your Address (Requestor):</strong> <code>${requestorAddress}</code></p>
+                <div class="messages-timeline" style="margin-top: 15px;">
+                  ${approvalsHtml}
+                </div>
+              </div>
+            `;
+          } catch (error) {
+            getAllRequestorOutput.innerHTML = `
+              <div class="error">
+                <h4>Fetch Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            getAllRequestorButton.disabled = false;
+            getAllRequestorButton.textContent = 'Get All My Requests';
+          }
+        };
+
+        // Get All Approvals for Current User (As Approver)
+        const getAllApprovalsButton = document.getElementById('get-all-approvals-button');
+        const getAllApprovalsOutput = document.getElementById('get-all-approvals-output');
+
+        getAllApprovalsButton.onclick = async () => {
+          try {
+            getAllApprovalsButton.disabled = true;
+            getAllApprovalsButton.textContent = 'Fetching...';
+            getAllApprovalsOutput.innerHTML = '<div class="loading">Fetching all requests...</div>';
+
+            // Use the rivet address (actual signer) as the approver
+            const approverAddress = witness.wallet.rivetAddress || witness.wallet.address;
+
+            const result = await witness.getAllApprovalsForApproverEvent(approverAddress);
+
+            if (!result.approvals || result.approvals.length === 0) {
+              getAllApprovalsOutput.innerHTML = `
+                <div class="error">
+                  <h4>No Requests Found</h4>
+                  <p>No requests found for your address as approver.</p>
+                </div>
+              `;
+              return;
+            }
+
+            let approvalsHtml = '';
+            result.approvals.forEach((approval, idx) => {
+              const status = approval.processedAt > 0
+                ? (approval.approved ? '✅ Approved' : '❌ Denied')
+                : '⏳ Pending';
+              const processedDate = approval.processedAt > 0
+                ? new Date(approval.processedAt * 1000).toLocaleString()
+                : 'Not processed yet';
+
+              // Show action buttons only if pending (user is always the approver here)
+              const showActions = approval.processedAt === 0;
+
+              approvalsHtml += `
+                <div class="message-card">
+                  <div class="message-header">
+                    <span class="message-number">Request #${idx}</span>
+                    <span class="message-status">${status}</span>
+                  </div>
+                  <div class="message-body">
+                    <div class="message-section">
+                      <p><strong>Requestor:</strong> <code>${approval.requestor}</code></p>
+                      <p><strong>File Name:</strong> ${approval.fileName}</p>
+                      <p><strong>File Hash:</strong> <code>${approval.fileHash}</code></p>
+                      <p><strong>Processed At:</strong> ${processedDate}</p>
+                    </div>
+                    ${showActions ? `
+                    <div class="message-section" style="display: flex; gap: 10px; margin-top: 10px;">
+                      <button class="action-button" onclick="handleApprovalAction('${approval.requestor}', '${approval.fileName}', true, this)">
+                        ✅ Approve
+                      </button>
+                      <button class="action-button danger" onclick="handleApprovalAction('${approval.requestor}', '${approval.fileName}', false, this)">
+                        ✖️ Deny
+                      </button>
+                    </div>
+                    ` : ''}
+                  </div>
+                </div>
+              `;
+            });
+
+            getAllApprovalsOutput.innerHTML = `
+              <div class="success">
+                <h4>Found ${result.count} Request(s)</h4>
+                <p><strong>Your Address (Approver):</strong> <code>${approverAddress}</code></p>
+                <div class="messages-timeline" style="margin-top: 15px;">
+                  ${approvalsHtml}
+                </div>
+              </div>
+            `;
+          } catch (error) {
+            getAllApprovalsOutput.innerHTML = `
+              <div class="error">
+                <h4>Fetch Failed</h4>
+                <p><strong>Error:</strong> ${error.message}</p>
+                <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+              </div>
+            `;
+          } finally {
+            getAllApprovalsButton.disabled = false;
+            getAllApprovalsButton.textContent = 'Get All My Requests';
+          }
+        };
+
         // Wallet Management Functions
         async function setupWalletManagement() {
           const walletList = document.getElementById('wallet-list');
@@ -541,6 +864,488 @@
           // Initial render
           renderWalletList();
         }
+
+        // Identity Contract Functions
+        async function setupIdentityContract() {
+          const identitySection = document.getElementById('identity-contract-section');
+          const identityStatus = document.getElementById('identity-status');
+          const identityOutput = document.getElementById('identity-output');
+          const deployButton = document.getElementById('deploy-identity-button');
+          const generateTokenButton = document.getElementById('generate-join-token-button');
+          const acceptTokenButton = document.getElementById('accept-join-token-button');
+          const joinTokenInputSection = document.getElementById('join-token-input-section');
+          const submitJoinTokenButton = document.getElementById('submit-join-token-button');
+          const joinTokenInput = document.getElementById('join-token-input');
+
+          // Only show for rivet wallets
+          if (witness.wallet?.source !== 'rivet') {
+            identitySection.style.display = 'none';
+            return;
+          }
+
+          identitySection.style.display = 'block';
+
+          // Display current identity status
+          function updateIdentityStatus() {
+            const wallet = witness.wallet;
+
+            if (wallet.contractAddress) {
+              identityStatus.innerHTML = `
+                <h4>✅ Identity Contract Active</h4>
+                <p><strong>Contract Address:</strong> <code>${wallet.contractAddress}</code></p>
+                <p><strong>Rivet Address:</strong> <code>${wallet.rivetAddress || wallet.address}</code></p>
+                <p><strong>Type:</strong> ${wallet.type}</p>
+                <button id="view-rivets-button" class="action-button" style="margin-top: 10px;">👥 View All Rivets</button>
+              `;
+              deployButton.style.display = 'none';
+              generateTokenButton.style.display = 'inline-block';
+              acceptTokenButton.style.display = 'inline-block';
+
+              // Add event listener for view rivets button
+              document.getElementById('view-rivets-button').onclick = async () => {
+                try {
+                  const viewButton = document.getElementById('view-rivets-button');
+                  viewButton.disabled = true;
+                  viewButton.textContent = '⏳ Loading...';
+                  identityOutput.innerHTML = '<div class="loading">Fetching rivets from blockchain...</div>';
+
+                  const providerConfig = {
+                    rpc: witness.serverInfo.rpc,
+                    chainId: witness.serverInfo.chainId
+                  };
+
+                  const rivets = await witness.wallet.getRivetsInContract(window.ethers, providerConfig);
+
+                  let rivetsListHTML = '';
+                  rivets.forEach((rivet, index) => {
+                    const isCurrentRivet = rivet.address.toLowerCase() === (witness.wallet.rivetAddress || witness.wallet.address).toLowerCase();
+                    rivetsListHTML += `
+                      <tr ${isCurrentRivet ? 'class="current-rivet"' : ''}>
+                        <td>${index + 1}</td>
+                        <td><strong>${rivet.name || 'Unnamed Rivet'}</strong></td>
+                        <td><code>${rivet.address}</code></td>
+                        <td>${isCurrentRivet ? '<strong>(This Device)</strong>' : ''}</td>
+                      </tr>
+                    `;
+                  });
+
+                  identityOutput.innerHTML = `
+                    <div class="success">
+                      <h4>👥 Authorized Rivets</h4>
+                      <p>Found <strong>${rivets.length}</strong> rivet(s) authorized to use this identity:</p>
+                      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                        <tr style="background-color: #007bff; color: white;">
+                          <th style="padding: 10px; text-align: left;">#</th>
+                          <th style="padding: 10px; text-align: left;">Name</th>
+                          <th style="padding: 10px; text-align: left;">Rivet Address</th>
+                          <th style="padding: 10px; text-align: left;">Status</th>
+                        </tr>
+                        ${rivetsListHTML}
+                      </table>
+                      <style>
+                        .current-rivet { background-color: #d4edda; }
+                        table tr:not(:first-child) { border-bottom: 1px solid #dee2e6; }
+                        table td { padding: 10px; }
+                      </style>
+                    </div>
+                  `;
+
+                  viewButton.disabled = false;
+                  viewButton.textContent = '👥 View All Rivets';
+                } catch (error) {
+                  identityOutput.innerHTML = `
+                    <div class="error">
+                      <h4>Failed to Load Rivets</h4>
+                      <p><strong>Error:</strong> ${error.message}</p>
+                    </div>
+                  `;
+                  document.getElementById('view-rivets-button').disabled = false;
+                  document.getElementById('view-rivets-button').textContent = '👥 View All Rivets';
+                }
+              };
+            } else {
+              identityStatus.innerHTML = `
+                <h4>📱 Rivet Wallet</h4>
+                <p><strong>Address:</strong> <code>${wallet.address}</code></p>
+                <p><strong>Status:</strong> Not upgraded to Identity Contract</p>
+                <p><i>You can either deploy a new Identity Contract, or join an existing one using a token from another device.</i></p>
+              `;
+              deployButton.style.display = 'inline-block';
+              generateTokenButton.style.display = 'none';
+              acceptTokenButton.style.display = 'inline-block'; // Show join button for fresh rivets!
+            }
+          }
+
+          updateIdentityStatus();
+
+          // Deploy Identity Contract
+          deployButton.onclick = async () => {
+            try {
+              deployButton.disabled = true;
+              deployButton.textContent = '⏳ Deploying...';
+              identityOutput.innerHTML = '<div class="loading">Deploying Identity Contract to blockchain...</div>';
+
+              const providerConfig = {
+                rpc: witness.serverInfo.rpc,
+                chainId: witness.serverInfo.chainId,
+                networkName: witness.serverInfo.provider,
+                nativeCurrency: witness.serverInfo.nativeCurrency
+              };
+
+              const contractAddress = await witness.wallet.deployIdentityContract(window.ethers, providerConfig);
+
+              witness.save(); // Save updated wallet
+              updateIdentityStatus();
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>🎉 Identity Contract Deployed!</h4>
+                  <p><strong>Contract Address:</strong> <code>${contractAddress}</code></p>
+                  <p>Your rivet has been upgraded to a portable identity contract.</p>
+                  <p>You can now generate a join token to add this identity from other devices.</p>
+                </div>
+              `;
+            } catch (error) {
+              // Parse error for better UX
+              let errorHTML = '';
+              const wallet = witness.wallet;
+              const rivetAddress = wallet.rivetAddress || wallet.address;
+
+              // Check for gas price too low error
+              if (error.message && error.message.includes('gas price below minimum')) {
+                // Extract gas tip values
+                let currentTip = 'unknown';
+                let minimumTip = 'unknown';
+
+                const tipMatch = error.message.match(/gas tip cap (\d+), minimum needed (\d+)/);
+                if (tipMatch) {
+                  currentTip = (parseFloat(tipMatch[1]) / 1e9).toFixed(2) + ' Gwei';
+                  minimumTip = (parseFloat(tipMatch[2]) / 1e9).toFixed(2) + ' Gwei';
+                }
+
+                errorHTML = `
+                  <div class="error">
+                    <h4>⛽ Gas Price Too Low</h4>
+                    <p>The transaction gas price is below the network's minimum requirement.</p>
+
+                    <div class="result-section">
+                      <h5>Gas Price Issue:</h5>
+                      <p><strong>Your Gas Tip:</strong> ${currentTip}</p>
+                      <p><strong>Network Minimum:</strong> ${minimumTip}</p>
+                      <p>The network requires a higher gas tip to process this transaction.</p>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Rivet Address:</h5>
+                      <p><code>${rivetAddress}</code></p>
+                      <button onclick="navigator.clipboard.writeText('${rivetAddress}').then(() => alert('Address copied to clipboard!'))" class="action-button">📋 Copy Address</button>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Next Steps:</h5>
+                      <ol>
+                        <li>Send more POL to your rivet address above</li>
+                        <li>Recommended amount: <strong>0.01 POL</strong> (ensures sufficient funds for higher gas)</li>
+                        <li>Wait for transaction confirmation</li>
+                        <li>Click "Deploy Identity Contract" again</li>
+                      </ol>
+                      <p><em>Note: Having more POL allows the wallet to use higher gas prices when needed.</em></p>
+                    </div>
+
+                    <details style="margin-top: 15px;">
+                      <summary>View Technical Details</summary>
+                      <pre><code>${error.message}</code></pre>
+                    </details>
+                  </div>
+                `;
+              } else if (error.message && error.message.includes('insufficient funds')) {
+                // Try to extract gas estimation from error
+                let gasEstimate = 'unknown';
+
+                // Common error patterns
+                const gasMatch = error.message.match(/(\d+)\s*wei/i);
+                if (gasMatch) {
+                  const weiNeeded = gasMatch[1];
+                  const ethNeeded = (parseFloat(weiNeeded) / 1e18).toFixed(6);
+                  gasEstimate = `${ethNeeded} POL (${weiNeeded} wei)`;
+                }
+
+                errorHTML = `
+                  <div class="error">
+                    <h4>💰 Insufficient Funds</h4>
+                    <p>Your rivet wallet does not have enough funds to deploy the Identity Contract.</p>
+
+                    <div class="result-section">
+                      <h5>Rivet Address:</h5>
+                      <p><code>${rivetAddress}</code></p>
+                      <button onclick="navigator.clipboard.writeText('${rivetAddress}').then(() => alert('Address copied to clipboard!'))" class="action-button">📋 Copy Address</button>
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Network:</h5>
+                      <p><strong>Chain:</strong> ${witness.serverInfo.provider || 'Unknown'}</p>
+                      <p><strong>Chain ID:</strong> ${witness.serverInfo.chainId || 'Unknown'}</p>
+                      ${gasEstimate !== 'unknown' ? `<p><strong>Estimated Cost:</strong> ~${gasEstimate}</p>` : ''}
+                    </div>
+
+                    <div class="result-section">
+                      <h5>Next Steps:</h5>
+                      <ol>
+                        <li>Copy the rivet address above</li>
+                        <li>Send POL (Polygon Amoy testnet tokens) to this address</li>
+                        <li>Recommended amount: <strong>0.01 POL</strong> (includes gas + buffer)</li>
+                        <li>Wait for transaction confirmation</li>
+                        <li>Click "Deploy Identity Contract" again</li>
+                      </ol>
+                    </div>
+
+                    <details style="margin-top: 15px;">
+                      <summary>View Technical Details</summary>
+                      <pre><code>${error.message}</code></pre>
+                    </details>
+                  </div>
+                `;
+              } else {
+                errorHTML = `
+                  <div class="error">
+                    <h4>Deployment Failed</h4>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+                  </div>
+                `;
+              }
+
+              identityOutput.innerHTML = errorHTML;
+            } finally {
+              deployButton.disabled = false;
+              deployButton.textContent = '🚀 Deploy Identity Contract';
+            }
+          };
+
+          // Add Rivet to Identity (new secure flow)
+          generateTokenButton.onclick = async () => {
+            // Show input form for URL or address
+            identityOutput.innerHTML = `
+              <div class="input-section">
+                <h4>➕ Add Rivet to Identity</h4>
+                <p>Enter the website URL or rivet address of the device you want to add:</p>
+                <input type="text" id="rivet-target-input"
+                  placeholder="e.g., localhost:3000 or 0x742d35..."
+                  style="width: 100%; padding: 10px; margin: 10px 0; font-family: monospace;">
+                <p class="info-text">
+                  💡 <strong>Tip:</strong> Enter a website URL to automatically fetch that site's rivet address,
+                  or paste the rivet address directly.
+                </p>
+                <button id="submit-target-button" class="action-button">🔗 Generate Token & Authorize</button>
+                <button onclick="document.getElementById('identity-output').innerHTML = ''" class="action-button" style="background: #666;">Cancel</button>
+              </div>
+            `;
+
+            // Handle the submit
+            document.getElementById('submit-target-button').onclick = async () => {
+              try {
+                const submitButton = document.getElementById('submit-target-button');
+                const targetInput = document.getElementById('rivet-target-input').value.trim();
+
+                if (!targetInput) {
+                  throw new Error('Please enter a URL or rivet address');
+                }
+
+                submitButton.disabled = true;
+                submitButton.textContent = '⏳ Processing...';
+
+                // Determine if input is a URL or address
+                let targetAddress;
+                const isAddress = /^0x[a-fA-F0-9]{40}$/.test(targetInput);
+
+                if (isAddress) {
+                  targetAddress = targetInput;
+                  identityOutput.innerHTML = '<div class="loading">Using provided rivet address...</div>';
+                } else {
+                  // It's a URL - fetch the rivet address
+                  identityOutput.innerHTML = `<div class="loading">Fetching rivet address from ${targetInput}...</div>`;
+                  targetAddress = await window.RivetWallet.getRivetAddressFromURL(targetInput);
+                }
+
+                // Generate token bound to this specific address
+                identityOutput.innerHTML = '<div class="loading">Generating join token for: ' + targetAddress + '</div>';
+                const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+                const token = await witness.wallet.generateJoinToken(targetAddress, contractAddress, window.ethers);
+
+                // Immediately authorize the rivet on-chain
+                identityOutput.innerHTML = '<div class="loading">Authorizing rivet on blockchain...</div>';
+                const providerConfig = {
+                  rpc: witness.serverInfo.rpc,
+                  chainId: witness.serverInfo.chainId
+                };
+                await witness.wallet.addRivetToContract(targetAddress, window.ethers, providerConfig);
+
+                // Success - show the token
+                identityOutput.innerHTML = `
+                  <div class="success">
+                    <h4>✅ Rivet Authorized!</h4>
+                    <p><strong>Target Rivet:</strong> <code>${targetAddress}</code></p>
+                    <p>The rivet has been authorized on the blockchain. Now send this token to the other device:</p>
+                    <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
+                    <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                    <p class="info-text">
+                      The other device should use "Add Rivet from Token" to accept this invitation.
+                      Token expires in 1 hour and can only be used by the target rivet.
+                    </p>
+                  </div>
+                `;
+              } catch (error) {
+                identityOutput.innerHTML = `
+                  <div class="error">
+                    <h4>Failed to Add Rivet</h4>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                    <button onclick="document.getElementById('generate-join-token-button').click()" class="action-button">Try Again</button>
+                  </div>
+                `;
+              }
+            };
+          };
+
+          // Show join token input
+          acceptTokenButton.onclick = () => {
+            joinTokenInputSection.style.display = 'block';
+          };
+
+          // Accept join token
+          submitJoinTokenButton.onclick = async () => {
+            try {
+              submitJoinTokenButton.disabled = true;
+              submitJoinTokenButton.textContent = '⏳ Processing...';
+              identityOutput.innerHTML = '<div class="loading">Verifying join token and upgrading rivet...</div>';
+
+              const token = joinTokenInput.value.trim();
+              if (!token) {
+                throw new Error('Please enter a join token');
+              }
+
+              const result = await witness.wallet.acceptJoinToken(token, window.ethers);
+
+              witness.save(); // Save updated wallet
+              updateIdentityStatus();
+
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>✅ Ready to Join!</h4>
+                  <p>This rivet has been upgraded to use the identity contract.</p>
+                  <p><strong>Your Rivet Address:</strong> <code>${result.myRivetAddress}</code></p>
+                  <button onclick="navigator.clipboard.writeText('${result.myRivetAddress}').then(() => alert('Address copied!'))" class="action-button">📋 Copy Address</button>
+                  <div class="result-section">
+                    <h5>Next Step:</h5>
+                    <p>Go back to your other device and provide this rivet address to complete the join process.</p>
+                    <p>The other device (which deployed the contract) needs to add this address to authorize it.</p>
+                  </div>
+                </div>
+              `;
+
+              joinTokenInput.value = '';
+              joinTokenInputSection.style.display = 'none';
+            } catch (error) {
+              identityOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Accept Token</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                </div>
+              `;
+            } finally {
+              submitJoinTokenButton.disabled = false;
+              submitJoinTokenButton.textContent = 'Add Rivet to Identity';
+            }
+          };
+
+          // Add rivet to contract
+          const addRivetSection = document.getElementById('add-rivet-section');
+          const addRivetButton = document.getElementById('add-rivet-button');
+          const rivetAddressInput = document.getElementById('rivet-address-input');
+
+          // Show add-rivet section if wallet has a contract
+          if (witness.wallet?.contractAddress) {
+            addRivetSection.style.display = 'block';
+          }
+
+          addRivetButton.onclick = async () => {
+            try {
+              addRivetButton.disabled = true;
+              addRivetButton.textContent = '⏳ Adding...';
+              identityOutput.innerHTML = '<div class="loading">Checking authorization status...</div>';
+
+              const rivetAddressToAdd = rivetAddressInput.value.trim();
+              if (!rivetAddressToAdd) {
+                throw new Error('Please enter a rivet address');
+              }
+
+              // Validate Ethereum address format
+              if (!/^0x[a-fA-F0-9]{40}$/.test(rivetAddressToAdd)) {
+                throw new Error('Invalid Ethereum address format');
+              }
+
+              const providerConfig = {
+                rpc: witness.serverInfo.rpc,
+                chainId: witness.serverInfo.chainId
+              };
+
+              // Check if rivet is already authorized
+              const rivetsInContract = await witness.wallet.getRivetsInContract(window.ethers, providerConfig);
+              const alreadyAuthorized = rivetsInContract.some(r =>
+                r.address.toLowerCase() === rivetAddressToAdd.toLowerCase()
+              );
+
+              if (alreadyAuthorized) {
+                identityOutput.innerHTML = `
+                  <div class="error">
+                    <h4>⚠️ Already Authorized</h4>
+                    <p>Rivet <code>${rivetAddressToAdd}</code> is already authorized on this identity contract.</p>
+                    <p>You can generate a new join token for this rivet without re-authorizing it on the blockchain.</p>
+                    <button onclick="document.getElementById('identity-output').innerHTML = ''" class="action-button" style="background: #666; margin-top: 10px;">Close</button>
+                  </div>
+                `;
+                return;
+              }
+
+              // Step 1: Authorize the rivet on-chain
+              identityOutput.innerHTML = '<div class="loading">Authorizing rivet on blockchain...</div>';
+              await witness.wallet.addRivetToContract(rivetAddressToAdd, window.ethers, providerConfig);
+
+              // Step 2: Generate join token for the rivet
+              identityOutput.innerHTML = '<div class="loading">Generating join token...</div>';
+              const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+              const token = await witness.wallet.generateJoinToken(rivetAddressToAdd, contractAddress, window.ethers);
+
+              // Step 3: Display success with token
+              identityOutput.innerHTML = `
+                <div class="success">
+                  <h4>✅ Rivet Authorized!</h4>
+                  <p><strong>Rivet Address:</strong> <code>${rivetAddressToAdd}</code></p>
+                  <p>The rivet has been authorized on the blockchain. Send this token to the other device to complete the join:</p>
+                  <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
+                  <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                  <div class="result-section">
+                    <h5>Next Step:</h5>
+                    <p>On the other device, go to the status page and click <strong>"📥 Add Rivet from Token"</strong>, then paste this token to complete the join process.</p>
+                    <p class="info-text">Token expires in 1 hour and can only be used by the authorized rivet.</p>
+                  </div>
+                </div>
+              `;
+
+              rivetAddressInput.value = '';
+            } catch (error) {
+              identityOutput.innerHTML = `
+                <div class="error">
+                  <h4>Failed to Add Rivet</h4>
+                  <p><strong>Error:</strong> ${error.message}</p>
+                  <pre><code>${error.stack || 'No stack trace available'}</code></pre>
+                </div>
+              `;
+            } finally {
+              addRivetButton.disabled = false;
+              addRivetButton.textContent = 'Authorize Rivet';
+            }
+          };
+        }
       }
       catch (error) {
         console.error('Failed to initialize Epistery:', error);
@@ -627,6 +1432,20 @@
       .action-button:disabled { background-color: #6c757d; cursor: not-allowed; }
       .action-button.danger { background-color: #dc3545; }
       .action-button.danger:hover { background-color: #c82333; }
+
+      /* Identity Contract Styles */
+      .identity-contract-section { background-color: #f0fff4; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #28a745; }
+      .identity-status { background-color: white; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #28a745; }
+      .identity-status code { background-color: #f1f3f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+      .identity-actions { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
+      #join-token-input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+      
+      /* Approval System Styles */
+      .approval-section { background-color: #f3e5f5; padding: 20px; border-radius: 5px; margin: 20px 0; border: 2px solid #9c27b0; }
+      .approval-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 3px; margin: 10px 0; font-size: 14px; box-sizing: border-box; }
+      .approval-button { background-color: #9c27b0; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 10px; }
+      .approval-button:hover { background-color: #7b1fa2; }
+      .approval-button:disabled { background-color: #6c757d; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -659,6 +1478,35 @@
         </div>
 
         <div id="wallet-management-output"></div>
+    </div>
+
+    <div id="identity-contract-section" class="identity-contract-section" style="display: none;">
+        <h2>Identity Contract</h2>
+        <p><i>Upgrade your rivet to a portable identity that works across devices and browsers.</i></p>
+        <p>An Identity Contract lets you bind multiple rivets together into a single, unified identity.</p>
+
+        <div id="identity-status" class="identity-status"></div>
+
+        <div class="identity-actions">
+            <button id="deploy-identity-button" class="action-button">🚀 Deploy Identity Contract</button>
+            <button id="generate-join-token-button" class="action-button" style="display: none;">🔗 Generate Join Token</button>
+            <button id="accept-join-token-button" class="action-button" style="display: none;">📥 Add Rivet from Token</button>
+        </div>
+
+        <div id="join-token-input-section" style="display: none; margin-top: 20px;">
+            <p><strong>Enter join token from another device:</strong></p>
+            <input type="text" id="join-token-input" class="write-input" placeholder="Paste join token here..." />
+            <button id="submit-join-token-button" class="action-button">Process Join Token</button>
+        </div>
+
+        <div id="add-rivet-section" style="display: none; margin-top: 20px;">
+            <p><strong>Add a rivet address to this identity contract:</strong></p>
+            <p><em>(After another device accepts your join token, paste their rivet address here)</em></p>
+            <input type="text" id="rivet-address-input" class="write-input" placeholder="Paste rivet address (0x...)" />
+            <button id="add-rivet-button" class="action-button">Authorize Rivet</button>
+        </div>
+
+        <div id="identity-output"></div>
     </div>
 
     <div id="export-section" class="export-section" style="display: none;">
@@ -699,6 +1547,31 @@
         <input type="text" id="transfer-input" class="transfer-input" placeholder="0x..." />
         <button id="transfer-button" class="transfer-button">Transfer Ownership</button>
         <div id="transfer-output"></div>
+    </div>
+
+    <h2>Request System Test</h2>
+    <div class="approval-section">
+        <h3>Create Request</h3>
+        <p>Request review from another wallet address for a file:</p>
+        <input type="text" id="approval-approver-input" class="approval-input" placeholder="Approver Address (0x...)" />
+        <input type="file" id="approval-file-input" class="approval-input" />
+        <input type="text" id="approval-domain-input" class="approval-input" placeholder="Domain (e.g., localhost)" value="localhost" />
+        <button id="create-approval-button" class="approval-button">Create Request</button>
+        <div id="create-approval-output"></div>
+    </div>
+
+    <div class="approval-section" style="margin-top: 20px; background-color: #fff3e0; border: 2px solid #ff9800;">
+        <h3>Get My Requests</h3>
+        <p>Retrieve all requests you have made to reviewers:</p>
+        <button id="get-all-requestor-button" class="approval-button" style="background-color: #ff9800;">Get My Requests</button>
+        <div id="get-all-requestor-output"></div>
+    </div>
+
+    <div class="approval-section" style="margin-top: 20px; background-color: #e8f5e9; border: 2px solid #4caf50;">
+        <h3>Get Pending Requests</h3>
+        <p>Retrieve all requests where you are the reviewer:</p>
+        <button id="get-all-approvals-button" class="approval-button" style="background-color: #4caf50;">Get Pending Requests</button>
+        <div id="get-all-approvals-output"></div>
     </div>
 
     <h2>Timestamp</h2>

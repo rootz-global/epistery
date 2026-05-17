@@ -1,13 +1,31 @@
-import express from 'express';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { Epistery } from "./dist/epistery.js";
-import { Utils } from './dist/utils/Utils.js';
-import { Config } from './dist/utils/Config.js';
+import { Utils } from "./dist/utils/Utils.js";
+import { Config } from "./dist/utils/Config.js";
+import { chainFor, registerChain, configuredChains, defaultChainId, Chain } from "./dist/chains/index.js";
+import createRoutes from "./routes/index.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Expected Agent contract version — read directly from the source file
+// shipped in this package, so it tracks whatever this build was compiled
+// from. No separate constant to keep in sync.
+export const EXPECTED_CONTRACT_VERSION = (() => {
+  try {
+    const source = fs.readFileSync(
+      path.join(__dirname, "contracts/agent.sol"),
+      "utf8",
+    );
+    const match = source.match(/VERSION\s*=\s*"([^"]+)"/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+})();
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
@@ -24,7 +42,7 @@ class EpisteryAttach {
     this.options = options;
     this.domain = null;
     this.domainName = null;
-    this.config = new Config()
+    this.config = new Config();
   }
 
   static async connect(options) {
@@ -38,348 +56,683 @@ class EpisteryAttach {
     this.domain = getDomainConfig(domain);
   }
 
-  async attach(app) {
+  /**
+   * Get the server wallet as an ethers.js Signer for the current domain.
+   * Used by OAuthServer, MCPServer, and agents that need signing capability.
+   */
+  get signer() {
+    if (!this.domainName) return null;
+    return Utils.InitServerWallet(this.domainName) || null;
+  }
+
+  async attach(app, rootPath) {
+    this.rootPath = rootPath || "/.well-known/epistery";
     app.locals.epistery = this;
 
+    // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
-      if (req.app.locals.epistery.domain?.name !== req.hostname) {
-        await req.app.locals.epistery.setDomain(req.hostname);
+      // req.hostname respects Express trust-proxy and X-Forwarded-Host,
+      // which is required for internal proxies (MCP loopback fetch).
+      // Falls back to raw Host header for non-proxied requests.
+      const hostname = req.hostname || req.headers.host?.split(":")[0] || "localhost";
+      if (req.app.locals.epistery.domainName !== hostname) {
+        await req.app.locals.epistery.setDomain(hostname);
+      }
+      next();
+    });
+
+    // Authentication middleware - handle Bot auth and session cookies
+    app.use(async (req, res, next) => {
+      // 1. Check for Bot authentication (CLI/programmatic access)
+      if (!req.episteryClient && req.headers.authorization?.startsWith("Bot ")) {
+        try {
+          const authHeader = req.headers.authorization.substring(4);
+          const decoded = Buffer.from(authHeader, "base64").toString("utf8");
+          const payload = JSON.parse(decoded);
+
+          const { address, signature, message } = payload;
+
+          if (address && signature && message) {
+            // Verify the signature using ethers
+            const { ethers } = await import("ethers");
+            const recoveredAddress = ethers.utils.verifyMessage(message, signature);
+
+            if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
+              req.episteryClient = {
+                address: address,
+                authenticated: true,
+                authType: "bot",
+              };
+            }
+          }
+        } catch (error) {
+          console.error("[epistery] Bot auth error:", error.message);
+          // Continue to try other auth methods
+        }
+      }
+
+      // 2. Check for session cookie (_epistery)
+      if (!req.episteryClient && req.cookies?._epistery) {
+        try {
+          const sessionData = JSON.parse(
+            Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
+          );
+          if (sessionData && sessionData.rivetAddress) {
+            req.episteryClient = {
+              address: sessionData.rivetAddress,
+              publicKey: sessionData.publicKey,
+              authenticated: sessionData.authenticated || false,
+            };
+          }
+        } catch (e) {
+          // Invalid session cookie, ignore
+        }
+      }
+      next();
+    });
+
+    // Middleware to enrich request with notabot score and resolved name
+    app.use(async (req, res, next) => {
+      // Check if client info is available (from key exchange or authentication)
+      if (req.episteryClient && req.episteryClient.address) {
+        // Resolve address → name from the domain agent whitelists.
+        // Opportunistic — many domains won't have names configured.
+        try {
+          const name = await req.app.locals.epistery.resolveName(
+            req.episteryClient.address,
+          );
+          if (name) {
+            req.episteryClient.name = name;
+          }
+        } catch {
+          // Silent — name is optional
+        }
+
+        try {
+          // Get identity contract address if available
+          // For now, we'll try to get it from query params or headers
+          const identityContractAddress =
+            req.query.identityContract || req.headers["x-identity-contract"];
+
+          // Retrieve notabot score
+          const notabotScore = await Epistery.getNotabotScore(
+            req.episteryClient.address,
+            identityContractAddress,
+          );
+
+          // Enrich client info with notabot data
+          req.episteryClient.notabotPoints = notabotScore.points;
+          req.episteryClient.notabotLastUpdate = notabotScore.lastUpdate;
+          req.episteryClient.notabotVerified = notabotScore.verified;
+          req.episteryClient.notabotEventCount = notabotScore.eventCount;
+
+          // Make available at the documented location (app.locals.epistery)
+          if (req.app.locals.epistery) {
+            req.app.locals.epistery.clientWallet = Object.assign(
+              req.app.locals.epistery.clientWallet || {},
+              req.episteryClient,
+            );
+          }
+        } catch (error) {
+          // Log error but don't fail the request
+          console.error(
+            "[Epistery] Failed to retrieve notabot score:",
+            error.message,
+          );
+        }
       }
       next();
     });
 
     // Mount routes - RFC 8615 compliant well-known URI
-    app.use('/.well-known/epistery', this.routes());
+    app.use(this.rootPath, this.routes());
   }
 
   /**
-   * Get the whitelist for the current server domain
-   * @returns {Promise<string[]>} Array of whitelisted addresses
+   * Get a list for the current server domain
+   * @param {string} listName - Name of the list (e.g., "example.com::admin")
+   * @returns {Promise<Array>} Array of list entries
    */
-  async getWhitelist() {
+  async getList(listName) {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
+    }
+
+    if (!listName) {
+      throw new Error("List name is required");
     }
 
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.GetWhitelist(
       serverWallet,
       this.domain.wallet.address,
-      this.domainName
+      listName,
+      contractAddress,
     );
   }
 
   /**
-   * Check if an address is whitelisted for the current server domain
+   * Check if an address is on a list for the current server domain
    * @param {string} address - The address to check
-   * @returns {Promise<boolean>} True if address is whitelisted
+   * @param {string} listName - Name of the list to check, if null return all for address
+   * @returns {Promise<boolean>} True if address is on the list
    */
-  async isWhitelisted(address) {
+  async isListed(address, listName) {
     if (!this.domain?.wallet) {
-      throw new Error('Server wallet not initialized for domain');
+      throw new Error("Server wallet not initialized for domain");
     }
 
     if (!this.domainName) {
-      throw new Error('Domain name not set');
+      throw new Error("Domain name not set");
+    }
+
+    if (!listName) {
+      throw new Error("List name is required");
     }
 
     // Initialize server wallet if not already done
     const serverWallet = Utils.InitServerWallet(this.domainName);
     if (!serverWallet) {
-      throw new Error('Server wallet not connected');
+      throw new Error("Server wallet not connected");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
     }
 
     return await Utils.IsWhitelisted(
       serverWallet,
       this.domain.wallet.address,
-      this.domainName,
-      address
+      listName,
+      address,
+      contractAddress,
     );
   }
 
-  routes() {
-    const router = express.Router();
+  /**
+   * Get all list memberships for a specific address
+   * @param {string} address - The address to look up
+   * @returns {Promise<Array>} Array of membership entries with listName, role, addedAt
+   */
+  async getListsForMember(address) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
 
-    // Client library files
-    const library = {
-      "client.js": path.resolve(__dirname, "client/client.js"),
-      "witness.js": path.resolve(__dirname, "client/witness.js"),
-      "wallet.js": path.resolve(__dirname, "client/wallet.js"),
-      "export.js": path.resolve(__dirname, "client/export.js"),
-      "ethers.js": path.resolve(__dirname, "client/ethers.js"),
-      "ethers.min.js": path.resolve(__dirname, "client/ethers.min.js")
-    };
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
 
-    // Serve client library files
-    router.get('/lib/:module', (req, res) => {
-      const modulePath = library[req.params.module];
-      if (!modulePath) return res.status(404).send('Library not found');
+    if (!address) {
+      throw new Error("Address is required");
+    }
 
-      if (!fs.existsSync(modulePath)) return res.status(404).send('File not found');
+    // Initialize server wallet if not already done
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
 
-      const ext = modulePath.slice(modulePath.lastIndexOf('.') + 1);
-      const contentTypes = {
-        'js': 'text/javascript',
-        'mjs': 'text/javascript',
-        'css': 'text/css',
-        'html': 'text/html',
-        'json': 'application/json'
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.GetListsForMember(
+      serverWallet,
+      address,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Resolve an address to its human-readable name as known by this domain.
+   * Walks the address's whitelist memberships under the domain agent and
+   * returns the first non-empty `name` field. Returns undefined if no entry
+   * has a name (or the address isn't on any list).
+   * @param {string} address - The address to resolve
+   * @returns {Promise<string | undefined>} The resolved name, or undefined
+   */
+  async resolveName(address) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!address) {
+      throw new Error("Address is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.ResolveAddressName(
+      serverWallet,
+      this.domain.wallet.address,
+      address,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Set the human-readable name for an address under this domain's scope.
+   * Names belong to the address, not to whitelist entries or roles.
+   * @param {string} address - The address to name
+   * @param {string} name - The name (empty string clears)
+   */
+  async setAddressName(address, name) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!address) {
+      throw new Error("Address is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.SetAddressName(
+      serverWallet,
+      address,
+      name,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Get the contract sponsor (owner) address
+   * @returns {Promise<string>} The sponsor's Ethereum address
+   */
+  async getSponsor() {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    // Get provider from domain config
+    const providerConfig = this.config.data?.provider;
+    if (!providerConfig || !providerConfig.rpc) {
+      throw new Error("Provider not configured for domain");
+    }
+
+    // Create ethers provider and contract
+    const { ethers } = await import("ethers");
+    const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
+
+    // Load contract ABI using fs like other methods in this file
+    const AgentArtifact = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+        "utf8",
+      ),
+    );
+
+    const contract = new ethers.Contract(
+      contractAddress,
+      AgentArtifact.abi,
+      provider,
+    );
+
+    return await contract.sponsor();
+  }
+
+  /**
+   * Add an address to a named list
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address to add
+   * @param {string} name - Display name
+   * @param {number} role - Role (0-4)
+   * @param {string} meta - Metadata JSON string
+   */
+  async addToList(listName, address, name = "", role = 0, meta = "") {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!listName) {
+      throw new Error("List name is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.AddToWhitelist(
+      serverWallet,
+      listName,
+      address,
+      name,
+      role,
+      meta,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Remove an address from a named list
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address to remove
+   */
+  async removeFromList(listName, address) {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    if (!listName) {
+      throw new Error("List name is required");
+    }
+
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
+
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const contractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (!contractAddress) {
+      throw new Error("Agent contract address not configured for domain");
+    }
+
+    return await Utils.RemoveFromWhitelist(
+      serverWallet,
+      listName,
+      address,
+      contractAddress,
+    );
+  }
+
+  /**
+   * Check if the deployed contract needs upgrade
+   * @returns {Promise<Object>} Version comparison result
+   */
+  async checkContractVersion() {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
+
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
+
+    // Get contract address from domain config - reload from disk to get latest
+    this.config.setPath(`/${this.domainName}`);
+    this.config.load(); // Force reload from disk
+    const agentContractAddress = this.config.data?.contract_address;
+    const upgradeNotes = this.config.data?.contract_upgrade_notes;
+
+    if (
+      !agentContractAddress ||
+      agentContractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      return {
+        needsUpgrade: true,
+        reason: "no_contract",
+        deployedVersion: null,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: null,
+        notes: upgradeNotes,
       };
+    }
 
-      if (contentTypes[ext]) {
-        res.set('Content-Type', contentTypes[ext]);
-      }
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
 
-      res.sendFile(modulePath);
-    });
+    try {
+      // Load contract ABI - use readFileSync since dynamic import with assertions is problematic
+      const AgentArtifact = JSON.parse(
+        fs.readFileSync(
+          path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+          "utf8",
+        ),
+      );
 
-    router.get('/status', (req, res) => {
-      const domain = req.hostname;
-      const serverWallet = this.domain;
+      const { ethers } = await import("ethers");
+      const agentContract = new ethers.Contract(
+        agentContractAddress,
+        AgentArtifact.abi,
+        serverWallet,
+      );
 
-      const templatePath = path.resolve(__dirname, 'client/status.html');
-      if (!fs.existsSync(templatePath)) {
-        return res.status(404).send('Status template not found');
-      }
-
-      let template = fs.readFileSync(templatePath, 'utf8');
-
-      // Template replacement
-      template = template.replace(/\{\{server\.domain\}\}/g, domain);
-      template = template.replace(/\{\{server\.walletAddress\}\}/g, serverWallet?.wallet?.address || '');
-      template = template.replace(/\{\{server\.provider\}\}/g, serverWallet?.provider?.name || '');
-      template = template.replace(/\{\{server\.chainId\}\}/g, serverWallet?.provider?.chainId?.toString() || '');
-      template = template.replace(/\{\{timestamp\}\}/g, new Date().toISOString());
-
-      res.send(template);
-    });
-
-    // Main status endpoint (simplified path)
-    router.get('/', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
-    });
-
-    // API routes using the 'src/epistery.ts' defined functions
-    router.get('/api/status', (req, res) => {
-      const serverWallet = this.domain;
-
-      if (!serverWallet) {
-        return res.status(500).json({ error: 'Server wallet not found' });
-      }
-
-      const status = Epistery.getStatus({}, serverWallet);
-      res.json(status);
-    });
-
-    // Key exchange endpoint - handles POST requests for key exchange
-    router.post('/connect', express.json(), async (req, res) => {
+      // Try to get VERSION from contract
+      let deployedVersion = null;
       try {
-        const serverWallet = this.domain;
-
-        if (!serverWallet?.wallet) {
-          return res.status(500).json({ error: 'Server wallet not found' });
-        }
-
-        // Handle key exchange request
-        const keyExchangeResponse = await Epistery.handleKeyExchange(req.body, serverWallet.wallet);
-
-        if (!keyExchangeResponse) {
-          return res.status(401).json({ error: 'Key exchange failed - invalid client credentials' });
-        }
-        const clientInfo = {
-          address: req.body.clientAddress.toLowerCase(), // Normalize to lowercase for consistent handling
-          publicKey:req.body.clientPublicKey
-        }
-        if (this.options.authentication) {
-          clientInfo.profile = await this.options.authentication.call(this.options.authentication,clientInfo);
-          clientInfo.authenticated = !!clientInfo.profile;
-          console.log('[epistery] Authentication result:', {
-            address: clientInfo.address,
-            hasProfile: !!clientInfo.profile,
-            authenticated: clientInfo.authenticated,
-            hasCallback: !!this.options.onAuthenticated
-          });
-        }
-        req.episteryClient = clientInfo;
-
-        // Call onAuthenticated hook if provided
-        if (this.options.onAuthenticated && clientInfo.authenticated) {
-          console.log('[epistery] Calling onAuthenticated callback');
-          await this.options.onAuthenticated(clientInfo, req, res);
-        }
-
-        res.json(Object.assign(keyExchangeResponse,{profile:clientInfo.profile,authenticated:clientInfo.authenticated}));
+        deployedVersion = await agentContract.VERSION();
       } catch (error) {
-        console.error('Key exchange error:', error);
-        res.status(500).json({ error: 'Internal server error during key exchange' });
+        // Contract doesn't have VERSION field (old version)
+        deployedVersion = "1.0.0"; // Assume old version
       }
-    });
 
-    router.get('/create', (req, res) => {
-      const wallet = Epistery.createWallet();
-      res.json({ wallet });
-    });
+      const needsUpgrade = deployedVersion !== EXPECTED_CONTRACT_VERSION;
 
-    router.post('/data/write', express.json(), async (req, res) => {
-      try {
-        const { clientWalletInfo, data } = req.body;
+      return {
+        needsUpgrade,
+        reason: needsUpgrade ? "version_mismatch" : "up_to_date",
+        deployedVersion,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: agentContractAddress,
+        notes: upgradeNotes,
+      };
+    } catch (error) {
+      return {
+        needsUpgrade: true,
+        reason: "check_failed",
+        error: error.message,
+        deployedVersion: null,
+        expectedVersion: EXPECTED_CONTRACT_VERSION,
+        contractAddress: agentContractAddress,
+        notes: upgradeNotes,
+      };
+    }
+  }
 
-        if (!clientWalletInfo || !data) {
-          return res.status(400).json({ error: 'Missing client wallet or data' });
-        }
+  /**
+   * Get all list names for the current domain
+   * @returns {Promise<string[]>} Array of list names
+   */
+  async getLists() {
+    if (!this.domain?.wallet) {
+      throw new Error("Server wallet not initialized for domain");
+    }
 
-        // Set the domain for the write operation
-        //process.env.SERVER_DOMAIN = req.hostname;
+    if (!this.domainName) {
+      throw new Error("Domain name not set");
+    }
 
-        const result = await Epistery.write(clientWalletInfo, data);
-        if (!result) {
-          return res.status(500).json({ error: 'Write operation failed' });
-        }
+    const serverWallet = Utils.InitServerWallet(this.domainName);
+    if (!serverWallet) {
+      throw new Error("Server wallet not connected");
+    }
 
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Write error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+    // Get contract address from domain config
+    this.config.setPath(`/${this.domainName}`);
+    const agentContractAddress =
+      this.config.data?.contract_address ||
+      process.env.AGENT_CONTRACT_ADDRESS;
+    if (
+      !agentContractAddress ||
+      agentContractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      throw new Error("Agent contract address not configured for domain");
+    }
 
-    router.post('/data/read', express.json(), async (req, res) => {
-      try {
-        const { clientWalletInfo } = req.body;
+    const AgentArtifact = JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
+        "utf8",
+      ),
+    );
 
-        if (!clientWalletInfo) {
-          return res.status(400).json({ error: 'Missing client wallet' });
-        }
+    const { ethers } = await import("ethers");
+    const agentContract = new ethers.Contract(
+      agentContractAddress,
+      AgentArtifact.abi,
+      serverWallet,
+    );
 
-        const result = await Epistery.read(clientWalletInfo);
-        if (!result) {
-          return res.status(204);
-        }
+    const listNames = await agentContract.getListNames(
+      this.domain.wallet.address,
+    );
+    return listNames;
+  }
 
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Read error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+  /**
+   * Update a list entry
+   * @param {string} listName - Name of the list
+   * @param {string} address - Ethereum address
+   * @param {string} name - Display name
+   * @param {number} role - Role (0-4)
+   * @param {string} meta - Metadata JSON string
+   */
+  async updateEntry(listName, address, name, role, meta) {
+    // For now, update is done by removing and re-adding
+    await this.removeFromList(listName, address);
+    await this.addToList(listName, address, name, role, meta);
+  }
 
-    router.put('/data/ownership', express.json(), async (req, res) => {
-      try {
-        const { clientWalletInfo, futureOwnerWalletAddress } = req.body;
+  /**
+   * Build status JSON object
+   * @returns {Object} Status object with server, client, and ipfs info
+   */
+  buildStatus() {
+    const serverWallet = this.domain;
 
-        if (!clientWalletInfo || !futureOwnerWalletAddress) {
-          return res.status(400).json({ error: 'Missing either client wallet or future owner address.' });
-        }
+    return {
+      server: {
+        walletAddress: serverWallet?.wallet?.address || null,
+        publicKey: serverWallet?.wallet?.publicKey || null,
+        provider: serverWallet?.provider?.name || "Polygon Mainnet",
+        chainId: serverWallet?.provider?.chainId?.toString() || "137",
+        rpc: serverWallet?.provider?.rpc || "https://polygon-rpc.com",
+        nativeCurrency: {
+          symbol: serverWallet?.provider?.nativeCurrency?.symbol || "POL",
+          name: serverWallet?.provider?.nativeCurrency?.name || "POL",
+          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18,
+        },
+      },
+      client: {},
+      ipfs: {
+        url: process.env.IPFS_URL || "https://rootz.digital/api/v0",
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
 
-        const result = await Epistery.transferOwnership(clientWalletInfo, futureOwnerWalletAddress);
-        if (!result) {
-          return res.status(500).json({ error: 'Transfer ownership failed' });
-        }
-
-        res.json(result);
-      }
-      catch (error) {
-        console.error('Transfer ownership error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Domain initialization endpoint - use to set up domain with custom provider
-    router.post('/domain/initialize', express.json(), async (req, res) => {
-      try {
-        const domain = req.hostname;
-        const { provider } = req.body;
-
-        console.log(`[debug] Domain initialization request for: ${domain}`);
-        console.log(`[debug] Provider payload:`, JSON.stringify(provider, null, 2));
-        console.log(`[debug] Full request body:`, JSON.stringify(req.body, null, 2));
-
-        if (!provider || !provider.name || !provider.chainId || !provider.rpcUrl) {
-          console.log(`[debug] Validation failed: provider=${!!provider}, name=${!!provider?.name}, chainId=${!!provider?.chainId}, rpcUrl=${!!provider?.rpcUrl}`);
-          return res.status(400).json({ error: 'Invalid provider configuration' });
-        }
-
-        // Check if domain already exists
-        let domainConfig = Utils.GetDomainInfo(domain);
-        if (!domainConfig) domainConfig = {domain: domain,pending:true};
-        if (!domainConfig.provider) domainConfig.provider = {
-          chainId: provider.chainId,
-          name: provider.name,
-          rpc: provider.rpcUrl
-        }
-
-        // Create domain config with custom provider (marked as pending)
-        const config = Utils.GetConfig();
-
-        config.saveDomain(domain, domainConfig);
-        console.log(`Initialized domain ${domain} with provider ${provider.name} (pending)`);
-
-        res.json({ status: 'success', message: 'Domain initialized with custom provider' });
-
-      } catch (error) {
-        console.error('Domain initialization error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Whitelist endpoints
-    router.get('/whitelist', async (req, res) => {
-      try {
-        const whitelist = await this.getWhitelist();
-        res.json({
-          domain: this.domainName,
-          owner: this.domain.wallet.address,
-          whitelist: whitelist,
-          count: whitelist.length
-        });
-      }
-      catch (error) {
-        console.error('Get whitelist error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    router.get('/whitelist/check/:address', async (req, res) => {
-      try {
-        const { address } = req.params;
-        const isWhitelisted = await this.isWhitelisted(address);
-        res.json({
-          address: address,
-          isWhitelisted: isWhitelisted,
-          domain: this.domainName
-        });
-      }
-      catch (error) {
-        console.error('Check whitelist error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // // Status and service projection
-    // router.get('/', (req, res) => {
-    //
-    // })
-
-    return router;
+  /**
+   * Creates and returns the router with all Epistery routes
+   *
+   * Route structure (all mounted under /.well-known/epistery/):
+   *   /                     - Status (JSON/HTML)
+   *   /status               - Status page (HTML)
+   *   /lib/:module          - Client library files
+   *   /artifacts/:file      - Contract artifacts
+   *   /connect              - Key exchange
+   *   /create               - Create wallet
+   *   /auth/*               - Authentication & domain claiming
+   *   /data/*               - Data read/write/ownership
+   *   /approval/*           - Approval system
+   *   /identity/*           - Identity contract management
+   *   /domain/*             - Domain initialization
+   *   /notabot/*            - Notabot scoring
+   *   /lists                - Get all lists
+   *   /list                 - Get specific list
+   *   /list/check/:address  - Check list membership
+   *   /contract/*           - Contract version info
+   *
+   * @returns {express.Router}
+   */
+  routes() {
+    return createRoutes(this);
   }
 }
 
-export { EpisteryAttach as Epistery };
+export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configuredChains, defaultChainId, Chain };
