@@ -43,6 +43,67 @@ export class Wallet {
   static async create(ethers) {
     throw new Error("create() must be implemented by subclass");
   }
+
+  // Peer encryption (ECDH + AES-256-GCM) — optional capability. Wallets
+  // that hold their private key in a closure (RivetWallet, FidoWallet,
+  // BrowserWallet) implement these so plaintext callers never see the key.
+  // Wire format: secp256k1 ECDH → SHA-256 → AES-GCM(iv:12, tag:16). The
+  // shared secret + private key live only inside the implementing closure.
+  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
+    throw new Error(`${this.source} wallet does not support peer encryption`);
+  }
+
+  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
+    throw new Error(`${this.source} wallet does not support peer decryption`);
+  }
+}
+
+// Shared implementation: given a raw private key (briefly in scope) and a
+// peer's uncompressed secp256k1 public key, perform ECDH and return a 256-bit
+// AES-GCM CryptoKey. The shared secret never leaves this function.
+// Compatible with apps/dashboard-5.0/ecdh-crypto.js: same SHA-256(sharedSecret)
+// derivation, so messages can flow between wallets and external clients.
+async function _deriveAesKeyFromPriv(privateKeyHex, peerPublicKeyHex, ethers) {
+  const signingKey = new ethers.utils.SigningKey(privateKeyHex);
+  const sharedSecretHex = signingKey.computeSharedSecret(peerPublicKeyHex);
+  const secretBytes = ethers.utils.arrayify(sharedSecretHex);
+  const keyMaterial = await crypto.subtle.digest("SHA-256", secretBytes);
+  return await crypto.subtle.importKey(
+    "raw",
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function _aesGcmEncrypt(aesKey, plaintextBytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ctWithTag = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, tagLength: 128 },
+      aesKey,
+      plaintextBytes,
+    ),
+  );
+  return {
+    ciphertext: ctWithTag.slice(0, -16),
+    iv,
+    tag: ctWithTag.slice(-16),
+  };
+}
+
+async function _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes) {
+  const ctWithTag = new Uint8Array(ciphertextBytes.length + tagBytes.length);
+  ctWithTag.set(ciphertextBytes, 0);
+  ctWithTag.set(tagBytes, ciphertextBytes.length);
+  return new Uint8Array(
+    await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ivBytes, tagLength: 128 },
+      aesKey,
+      ctWithTag,
+    ),
+  );
 }
 
 // Web3 Wallet (MetaMask, etc.)
@@ -217,6 +278,20 @@ export class BrowserWallet extends Wallet {
     }
 
     return await this.signer.signMessage(message);
+  }
+
+  // BrowserWallet stores privateKey openly (legacy, fallback mode) — provide
+  // peer encryption for parity with Rivet/Fido so callers can use one API.
+  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
+    if (!this.privateKey) throw new Error("BrowserWallet has no privateKey");
+    const aesKey = await _deriveAesKeyFromPriv(this.privateKey, peerPublicKey, ethers);
+    return await _aesGcmEncrypt(aesKey, plaintextBytes);
+  }
+
+  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
+    if (!this.privateKey) throw new Error("BrowserWallet has no privateKey");
+    const aesKey = await _deriveAesKeyFromPriv(this.privateKey, peerPublicKey, ethers);
+    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
 }
 
@@ -437,6 +512,46 @@ export class RivetWallet extends Wallet {
       console.error("Failed to sign transaction with rivet:", error);
       throw error;
     }
+  }
+
+  // ECDH + AES-GCM encrypt for peer. Private key briefly decrypted in this
+  // closure, used to derive the shared AES key, then goes out of scope.
+  // Mirrors signTransaction's lifecycle exactly.
+  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
+    const masterKey = await RivetWallet.getMasterKey(this.keyId);
+    if (!masterKey) {
+      throw new Error(
+        "Master key not found - rivet may have been created in a different browser context",
+      );
+    }
+    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
+      masterKey,
+      ethers.utils.arrayify(encrypted),
+    );
+    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
+    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
+    // privateKey goes out of scope at function return; nothing keeps a ref.
+    return await _aesGcmEncrypt(aesKey, plaintextBytes);
+  }
+
+  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
+    const masterKey = await RivetWallet.getMasterKey(this.keyId);
+    if (!masterKey) {
+      throw new Error(
+        "Master key not found - rivet may have been created in a different browser context",
+      );
+    }
+    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
+      masterKey,
+      ethers.utils.arrayify(encrypted),
+    );
+    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
+    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
+    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
 
   // IndexedDB operations for storing non-extractable CryptoKey
@@ -1217,6 +1332,21 @@ export class FidoWallet extends Wallet {
       throw new Error("Decrypted key does not match FidoWallet address");
     }
     return await signer.signTransaction(unsignedTx);
+  }
+
+  // ECDH + AES-GCM peer encryption. Private key is unwrapped by the
+  // FIDO authenticator via _decryptPrivateKey, used to derive the shared
+  // AES key, then goes out of scope at return — same lifecycle as sign().
+  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
+    const privateKey = await this._decryptPrivateKey(ethers);
+    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
+    return await _aesGcmEncrypt(aesKey, plaintextBytes);
+  }
+
+  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
+    const privateKey = await this._decryptPrivateKey(ethers);
+    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
+    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
 
   // Submit a whitelist access request for this rivet address.
