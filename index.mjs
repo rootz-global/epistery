@@ -65,6 +65,67 @@ class EpisteryAttach {
     return Utils.InitServerWallet(this.domainName) || null;
   }
 
+  /**
+   * Resolve a session from any HTTP-like request — works in the express
+   * middleware path (where `req.cookies` is populated by cookie-parser) and
+   * in raw contexts like a WebSocket upgrade (where only `req.headers.cookie`
+   * is available). Mirrors the auth pathways the attach() middleware uses,
+   * minus the notabot/name enrichment, which stays a middleware-only concern.
+   *
+   * Returns {address, publicKey, authenticated, authType} or null.
+   */
+  async resolveClient(req) {
+    // 1. Bot auth (CLI / programmatic)
+    if (req?.headers?.authorization?.startsWith("Bot ")) {
+      try {
+        const authHeader = req.headers.authorization.substring(4);
+        const decoded = Buffer.from(authHeader, "base64").toString("utf8");
+        const payload = JSON.parse(decoded);
+        const { address, signature, message } = payload;
+        if (address && signature && message) {
+          const { ethers } = await import("ethers");
+          const recoveredAddress = ethers.utils.verifyMessage(message, signature);
+          if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
+            return { address, authenticated: true, authType: "bot" };
+          }
+        }
+      } catch (error) {
+        console.error("[epistery] Bot auth error:", error.message);
+      }
+    }
+
+    // 2. Session cookie (_epistery). Prefer the express-parsed jar; fall
+    // back to parsing the raw Cookie header so WS upgrades work too.
+    let cookieValue = req?.cookies?._epistery;
+    if (!cookieValue && req?.headers?.cookie) {
+      for (const part of req.headers.cookie.split(";")) {
+        const trimmed = part.trim();
+        const eq = trimmed.indexOf("=");
+        if (eq < 1) continue;
+        if (trimmed.slice(0, eq) !== "_epistery") continue;
+        cookieValue = decodeURIComponent(trimmed.slice(eq + 1));
+        break;
+      }
+    }
+    if (cookieValue) {
+      try {
+        const sessionData = JSON.parse(
+          Buffer.from(cookieValue, "base64").toString("utf8"),
+        );
+        if (sessionData?.rivetAddress) {
+          return {
+            address: sessionData.rivetAddress,
+            publicKey: sessionData.publicKey,
+            authenticated: sessionData.authenticated || false,
+          };
+        }
+      } catch {
+        // Invalid session cookie — fall through to null.
+      }
+    }
+    return null;
+  }
+
   async attach(app, rootPath) {
     this.rootPath = rootPath || "/.well-known/epistery";
     app.locals.epistery = this;
