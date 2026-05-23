@@ -44,6 +44,118 @@ async function ensureEthers() {
   }
 }
 
+// --- Orphaned-rivet recovery -------------------------------------------------
+// A RivetWallet is split across two per-origin stores: the rivet record
+// (keyId + AES-encrypted private key) in localStorage["epistery"], and the
+// non-extractable AES master key that decrypts it in IndexedDB
+// (EpisteryRivets/masterKeys, keyed by keyId). Browsers evict IndexedDB far
+// more aggressively than localStorage, so the master key can vanish while the
+// rivet record survives. sign() then throws "Master key not found" on every
+// connect(), and connect() never self-heals because it only mints a fresh
+// rivet when there is NO wallet at all (see `if (!witness.wallet)` below).
+//
+// reset_master_key() is the manual recovery path: it finds rivet records whose
+// master key is missing and removes those records so the next page load mints
+// a fresh device key for this origin. It is intentionally NOT called from
+// connect() — advise affected users to run reset_master_key() in the console
+// until the impact of auto-healing is understood.
+//
+// Scope note: IndexedDB and localStorage are siloed per ORIGIN (scheme + host
+// + port), stricter than cookies. This only ever touches the current origin;
+// it cannot affect any other site. The cost is a NEW device address for THIS
+// origin — anything bound to the old address here (follows, previously-signed
+// messages) will not carry over.
+async function reset_master_key({ confirm = true } = {}) {
+  const raw = localStorage.getItem("epistery");
+  if (!raw) {
+    console.log(
+      "[reset_master_key] No epistery storage on this origin — nothing to reset. Reload to mint a fresh device key.",
+    );
+    return { removed: 0, healthy: 0 };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    console.warn(
+      "[reset_master_key] epistery storage is corrupt JSON; clearing it.",
+      e,
+    );
+    localStorage.removeItem("epistery");
+    setTimeout(() => location.reload(), 250);
+    return { removed: -1, healthy: 0 };
+  }
+
+  // Support both the legacy single-wallet shape and the multi-wallet shape.
+  const isMulti = Array.isArray(data.wallets);
+  const entries = isMulti
+    ? data.wallets
+    : data.wallet
+      ? [{ id: "legacy", wallet: data.wallet }]
+      : [];
+
+  const orphaned = [];
+  let healthy = 0;
+  for (const entry of entries) {
+    const wal = entry.wallet || entry;
+    if (!wal || wal.source !== "rivet") continue;
+    const masterKey = wal.keyId
+      ? await RivetWallet.getMasterKey(wal.keyId)
+      : null;
+    if (masterKey) {
+      healthy++;
+    } else {
+      orphaned.push({ id: entry.id, keyId: wal.keyId, address: wal.address });
+    }
+  }
+
+  if (orphaned.length === 0) {
+    console.log(
+      `[reset_master_key] No orphaned rivets found (${healthy} healthy). Nothing to do.`,
+    );
+    return { removed: 0, healthy };
+  }
+
+  console.log(
+    `[reset_master_key] Found ${orphaned.length} orphaned rivet(s) — master key missing from IndexedDB:`,
+    orphaned,
+  );
+
+  if (confirm && typeof window?.confirm === "function") {
+    const ok = window.confirm(
+      `Epistery: ${orphaned.length} device key(s) on ${location.host} can't be unlocked — ` +
+        `the browser evicted their master key. Reset will mint a NEW device address for this site only. Continue?`,
+    );
+    if (!ok) {
+      console.log("[reset_master_key] Cancelled — no changes made.");
+      return { removed: 0, healthy, cancelled: true };
+    }
+  }
+
+  if (isMulti) {
+    const orphanIds = new Set(orphaned.map((o) => o.id));
+    data.wallets = data.wallets.filter((w) => !orphanIds.has(w.id));
+    if (orphanIds.has(data.defaultWalletId)) {
+      data.defaultWalletId = data.wallets[0]?.id || null;
+    }
+    localStorage.setItem("epistery", JSON.stringify(data));
+  } else {
+    // Legacy shape: the single wallet is the orphan.
+    localStorage.removeItem("epistery");
+  }
+
+  console.log(
+    `[reset_master_key] Removed ${orphaned.length} orphaned rivet(s) (${healthy} healthy kept). Reloading to mint a fresh device key…`,
+  );
+  setTimeout(() => location.reload(), 250);
+  return { removed: orphaned.length, healthy };
+}
+
+if (typeof window !== "undefined") {
+  window.reset_master_key = reset_master_key;
+}
+
 export default class Witness {
   constructor(rootPath) {
     if (Witness.instance) return Witness.instance;
@@ -1160,6 +1272,162 @@ export default class Witness {
       source: newWallet.source,
       label: newWallet.label,
     };
+  }
+
+  // Bind this origin's local rivet to an existing IdentityContract owned by
+  // the user at another epistery host (defaults to epistery.io). This is the
+  // cross-host counterpart of the in-browser `acceptJoinToken` flow — the
+  // ferry that lets a user pick an authorized rivet on epistery.io to sign a
+  // join token for a fresh rivet on `acme-host.example`.
+  //
+  // Flow:
+  //   1. Ensure we have a local RivetWallet to register as the new rivet.
+  //      If the current default isn't a Browser-type rivet, mint a fresh one.
+  //   2. Open <issuerUrl>/auth in a popup, passing audience + nonce + the
+  //      local rivet address as `targetRivetAddress`. The issuer's auth page
+  //      drives `prepareAddRivetToContract` + `addRivet` on chain AND has
+  //      the user's authorized rivet sign a join token bound to this rivet.
+  //   3. Receive the base64 join token via postMessage. Call
+  //      `localRivet.acceptJoinToken(joinToken)` — that verifies the
+  //      signature, calls `upgradeToContract(contractAddress)`, and now the
+  //      local rivet presents the contract address as its identity.
+  //   4. Re-run key exchange so the host's server sees the new identity.
+  async bindToEpisteryIdentity({
+    issuerUrl = "https://epistery.io",
+  } = {}) {
+    await ensureEthers();
+
+    // Step 1: ensure a local rivet that isn't already bound to a contract.
+    let localRivet = this.wallet;
+    const haveUsableRivet =
+      localRivet &&
+      localRivet.source === "rivet" &&
+      !localRivet.contractAddress;
+    if (!haveUsableRivet) {
+      localRivet = await RivetWallet.create(ethers);
+      localRivet.label = "Browser Wallet";
+      this.wallet = localRivet;
+      this.save();
+    }
+
+    // Step 2: open the issuer's auth popup and await the join token.
+    const nonce = ethers.utils.hexlify(ethers.utils.randomBytes(16));
+    const audience = location.host;
+    const { joinToken, identityName, identityDomain, contractAddress, chainId } =
+      await this._runEpisteryAuth(issuerUrl, {
+        audience,
+        nonce,
+        target_rivet: localRivet.address,
+      });
+
+    if (!joinToken) {
+      throw new Error("Issuer did not return a join token");
+    }
+
+    // Step 3: accept the token. acceptJoinToken verifies the signature
+    // against the inviter's claim, then upgrades this rivet to present the
+    // contract address (see RivetWallet.acceptJoinToken + upgradeToContract).
+    await localRivet.acceptJoinToken(joinToken, ethers);
+
+    // Best-effort metadata from the issuer — handy for the UI but the
+    // authoritative identity is the contract on-chain.
+    if (identityName) localRivet.label = identityDomain
+      ? `${identityName}@${identityDomain}`
+      : identityName;
+    this.save();
+
+    // Step 4: re-run key exchange so the host learns the new identity.
+    // performKeyExchange now sees wallet.address == contractAddress and
+    // wallet.rivetAddress == the original rivet, and posts both.
+    //
+    // The issuer's addRivet tx may still be confirming when we land here —
+    // the host's /connect verifies on-chain isAuthorized, which won't pass
+    // until the tx mines (~30s on Polygon). Retry with backoff so the
+    // binding is robust without forcing the issuer to block on confirmation.
+    let lastErr = null;
+    const delays = [0, 5000, 10000, 15000, 20000, 30000]; // ~80s total
+    for (const delay of delays) {
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+      try {
+        await this.performKeyExchange();
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        // Only retry on 401-ish (server rejected the contract claim).
+        // Other errors (network, etc.) also retry — cheap and bounded.
+      }
+    }
+    if (lastErr) throw lastErr;
+
+    return {
+      id: localRivet.id,
+      address: localRivet.address,         // = contract
+      rivetAddress: localRivet.rivetAddress,
+      source: localRivet.source,
+      label: localRivet.label,
+      identityName: identityName || null,
+      identityDomain: identityDomain || null,
+      contractAddress: contractAddress || localRivet.contractAddress,
+      chainId: chainId || null,
+    };
+  }
+
+  // Open <issuerUrl>/auth in a popup and await a postMessage result.
+  // The issuer's auth page posts `{type:"epistery-auth", joinToken, ...}`
+  // back to this window when the user has approved and the inviter rivet
+  // has signed a join token. Rejects on issuer error or popup close.
+  async _runEpisteryAuth(issuerUrl, params) {
+    const url = new URL("/auth", issuerUrl);
+    for (const [k, v] of Object.entries(params)) {
+      url.searchParams.set(k, v);
+    }
+    const expectedOrigin = new URL(issuerUrl).origin;
+    const popup = window.open(
+      url.toString(),
+      "epistery-auth",
+      "width=480,height=720,resizable=yes,scrollbars=yes",
+    );
+    if (!popup) {
+      throw new Error(
+        `Popup blocked. Allow popups for ${location.host} to add an Epistery Identity.`,
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        settled = true;
+        window.removeEventListener("message", onMessage);
+        clearInterval(closeWatcher);
+      };
+      const onMessage = (event) => {
+        if (event.origin !== expectedOrigin) return;
+        const msg = event.data;
+        if (!msg || msg.type !== "epistery-auth") return;
+        if (msg.error) {
+          cleanup();
+          try { popup.close(); } catch (e) {}
+          reject(new Error(msg.error));
+          return;
+        }
+        // The issuer posts whatever fields it has; callers care about
+        // joinToken at minimum. Pass the whole payload through.
+        cleanup();
+        try { popup.close(); } catch (e) {}
+        resolve(msg);
+      };
+      window.addEventListener("message", onMessage);
+
+      // If the user closes the window before completing, surface that.
+      const closeWatcher = setInterval(() => {
+        if (settled) return;
+        if (popup.closed) {
+          cleanup();
+          reject(new Error("Epistery auth window closed before completing"));
+        }
+      }, 500);
+    });
   }
 
   async setDefaultWallet(walletId) {

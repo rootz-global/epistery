@@ -113,8 +113,13 @@ class EpisteryAttach {
           Buffer.from(cookieValue, "base64").toString("utf8"),
         );
         if (sessionData?.rivetAddress) {
+          const hasContract = !!sessionData.contractAddress;
           return {
-            address: sessionData.rivetAddress,
+            address: hasContract
+              ? sessionData.contractAddress
+              : sessionData.rivetAddress,
+            signerAddress: sessionData.rivetAddress,
+            contractAddress: sessionData.contractAddress || null,
             publicKey: sessionData.publicKey,
             authenticated: sessionData.authenticated || false,
           };
@@ -179,8 +184,18 @@ class EpisteryAttach {
             Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
           );
           if (sessionData && sessionData.rivetAddress) {
+            // If the session was established with a contract-backed rivet
+            // (i.e. /connect verified IdentityContract.isAuthorized), surface
+            // the contract as the canonical identity and keep the rivet as
+            // signerAddress. Plain Tier 1 sessions (no contract) keep
+            // address == rivet — back-compat.
+            const hasContract = !!sessionData.contractAddress;
             req.episteryClient = {
-              address: sessionData.rivetAddress,
+              address: hasContract
+                ? sessionData.contractAddress
+                : sessionData.rivetAddress,
+              signerAddress: sessionData.rivetAddress,
+              contractAddress: sessionData.contractAddress || null,
               publicKey: sessionData.publicKey,
               authenticated: sessionData.authenticated || false,
             };

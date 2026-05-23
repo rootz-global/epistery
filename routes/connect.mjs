@@ -1,5 +1,15 @@
 import express from "express";
+import { createRequire } from "module";
 import { Epistery } from "../dist/epistery.js";
+
+const require = createRequire(import.meta.url);
+const ethers = require("ethers");
+
+// Subset of IdentityContract used to verify a rivet's membership claim.
+// Both V2 and V3 IdentityContract expose isAuthorized(address).
+const IDENTITY_AUTHORIZED_ABI = [
+  "function isAuthorized(address) view returns (bool)",
+];
 
 /**
  * Connect routes - key exchange and wallet creation
@@ -41,8 +51,56 @@ export default function connectRoutes(epistery) {
           error: "Key exchange failed - invalid client credentials",
         });
       }
+
+      // If the client presents a contract-backed identity (Tier 2), verify
+      // on-chain that the signing rivet is actually one of the contract's
+      // authorized rivets. This is what closes the cross-host trust loop —
+      // the witness can claim any contract address, but the chain is truth.
+      //
+      // Provider: use the host's domain RPC. v0 assumes the IdentityContract
+      // lives on the same chain as the host. Cross-chain identity is a
+      // future concern.
+      let verifiedContractAddress = null;
+      const claimedContract = data.contractAddress || data.identityAddress;
+      if (claimedContract) {
+        try {
+          const rpcUrl =
+            serverWallet?.provider?.privateRpc ||
+            serverWallet?.provider?.rpc ||
+            process.env.CHAIN_RPC_URL;
+          if (!rpcUrl) {
+            return res.status(500).json({
+              error: "No chain RPC configured to verify identity contract",
+            });
+          }
+          const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+          const identity = new ethers.Contract(
+            claimedContract,
+            IDENTITY_AUTHORIZED_ABI,
+            provider,
+          );
+          const isAuth = await identity.isAuthorized(data.clientAddress);
+          if (!isAuth) {
+            return res.status(401).json({
+              error:
+                "Identity contract does not authorize this rivet (isAuthorized returned false)",
+            });
+          }
+          verifiedContractAddress = claimedContract;
+        } catch (e) {
+          console.error("[connect] Identity contract verification failed:", e.message);
+          return res.status(401).json({
+            error: `Identity contract verification failed: ${e.message}`,
+          });
+        }
+      }
+
       const clientInfo = {
-        address: data.clientAddress,
+        // For verified contract sessions, present the contract as the
+        // canonical identity. The rivet remains accessible as signerAddress.
+        address: verifiedContractAddress || data.clientAddress,
+        signerAddress: data.clientAddress,
+        contractAddress: verifiedContractAddress,
         publicKey: data.clientPublicKey,
       };
       try {
@@ -60,9 +118,13 @@ export default function connectRoutes(epistery) {
       }
       req.episteryClient = clientInfo;
 
-      // Create session cookie with rivet identity
+      // Create session cookie. Rivet address always recorded; contract
+      // address only when we just verified it on-chain. Downstream middleware
+      // (index.mjs) surfaces contractAddress as req.episteryClient.address
+      // when present.
       const sessionData = {
         rivetAddress: data.clientAddress,
+        contractAddress: verifiedContractAddress || null,
         publicKey: data.clientPublicKey,
         authenticated: clientInfo.authenticated || false,
         timestamp: new Date().toISOString(),
