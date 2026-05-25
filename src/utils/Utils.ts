@@ -72,10 +72,21 @@ export class Utils {
 
       const domainConfig = this.config.data.domain ? this.config.data : {domain: domain};
 
-      // Get default provider if not set
+      // Get default provider if not set.
+      //
+      // epistery-host (multi-domain) keeps the shared default at
+      // root [default.provider]; hosted domains may override it.
+      // Single-domain consumers (epistery/app, /chat, /scan) put their
+      // provider at the root [provider] section — there is no
+      // "default" because there's only one domain. Fall back through
+      // both so we never leave domainConfig.provider as a JS undefined
+      // (which Config.save would persist as the literal text
+      // "provider=undefined", and which on reload becomes a truthy
+      // string that bypasses the `||` fallback below at chainFor).
       if (!domainConfig.provider) {
         this.config.setPath('/');
-        domainConfig.provider = this.config.data.default?.provider;
+        domainConfig.provider =
+          this.config.data.default?.provider ?? this.config.data.provider;
         this.config.setPath(domain); // Switch back to domain
       }
 
@@ -90,6 +101,15 @@ export class Utils {
           publicKey: wallet.publicKey,
           privateKey: wallet.privateKey,
         };
+
+        // Strip any keys still undefined before persist — Config.save()
+        // serializes undefined as the literal string "undefined", which
+        // becomes truthy on reload and trips downstream consumers (the
+        // chainFor throw we chased). Belt-and-suspenders against any
+        // other field that could be undefined here in the future.
+        for (const k of Object.keys(domainConfig) as Array<keyof typeof domainConfig>) {
+          if (domainConfig[k] === undefined) delete domainConfig[k];
+        }
 
         this.config.data = domainConfig;
         this.config.save();
