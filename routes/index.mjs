@@ -8,7 +8,6 @@ import dataRoutes from "./data.mjs";
 import approvalRoutes from "./approval.mjs";
 import identityRoutes from "./identity.mjs";
 import domainRoutes from "./domain.mjs";
-import notabotRoutes from "./notabot.mjs";
 import listRoutes from "./list.mjs";
 import contractRoutes from "./contract.mjs";
 import whitelistRoutes from "./whitelist/index.mjs";
@@ -29,7 +28,6 @@ import fidoRoutes from "./fido.mjs";
  *   /approval/*           - Approval system
  *   /identity/*           - Identity contract management
  *   /domain/*             - Domain initialization
- *   /notabot/*            - Notabot scoring
  *   /lists                - Get all lists
  *   /list                 - Get specific list
  *   /list/check/:address  - Check list membership
@@ -62,9 +60,6 @@ export default function createRoutes(epistery) {
 
   // Domain routes (/domain/*)
   router.use("/domain", domainRoutes(epistery));
-
-  // Notabot routes (/notabot/*)
-  router.use("/notabot", notabotRoutes(epistery));
 
   // List routes (/lists, /list, /list/check/:address)
   router.use(listRoutes(epistery));

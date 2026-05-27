@@ -60,16 +60,10 @@ export interface ClientWalletInfo {
   privateKey?: string;
 
   // Used by RivetWallets / FidoWallets
-  walletType?: 'browser' | 'web3' | 'rivet' | 'fido';
+  walletType?: 'web3' | 'rivet' | 'fido';
 
   // (For client-side signed operations) This contains the complete signed transaction
   signedTransaction?: string;
-
-  // Notabot score (populated by middleware from identity contract)
-  notabotPoints?: number;
-  notabotLastUpdate?: number;
-  notabotVerified?: boolean;
-  notabotEventCount?: number;
 }
 
 export interface EpisteryStatus {
@@ -261,51 +255,4 @@ export interface SubmitSignedTransactionResponse {
   gasUsed: string;
   status: number;  // 1 = success, 0 = reverted
   receipt: any;    // Full ethers receipt object
-}
-
-/**
- * Notabot System Types
- * Based on US Patent 11,120,469 "Browser Proof of Work"
- */
-
-/**
- * Single event in the notabot chain
- */
-export interface NotabotEvent {
-  timestamp: number;
-  entropyScore: number;        // 0.0 - 1.0
-  eventType: string;            // 'mouse_entropy', 'scroll_pattern', etc.
-  previousHash: string;
-  hash: string;
-  signature: string;            // Signed by rivet private key
-}
-
-/**
- * Commitment stored on-chain in identity contract
- */
-export interface NotabotCommitment {
-  totalPoints: number;
-  chainHead: string;            // Hash of most recent event
-  eventCount: number;
-  lastUpdate: number;           // Timestamp
-}
-
-/**
- * Full notabot score with verification data
- */
-export interface NotabotScore {
-  points: number;
-  eventCount: number;
-  lastUpdate: number;
-  verified: boolean;            // Whether chain has been verified
-  commitment?: NotabotCommitment;
-  eventChain?: NotabotEvent[];  // Optional full chain for verification
-}
-
-/**
- * Request to commit notabot score to chain
- */
-export interface NotabotCommitRequest {
-  commitment: NotabotCommitment;
-  eventChain: NotabotEvent[];   // For server verification
 }

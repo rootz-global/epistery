@@ -70,7 +70,7 @@ class EpisteryAttach {
    * middleware path (where `req.cookies` is populated by cookie-parser) and
    * in raw contexts like a WebSocket upgrade (where only `req.headers.cookie`
    * is available). Mirrors the auth pathways the attach() middleware uses,
-   * minus the notabot/name enrichment, which stays a middleware-only concern.
+   * minus the name enrichment, which stays a middleware-only concern.
    *
    * Returns {address, publicKey, authenticated, authType} or null.
    */
@@ -207,7 +207,7 @@ class EpisteryAttach {
       next();
     });
 
-    // Middleware to enrich request with notabot score and resolved name
+    // Middleware to enrich request with the resolved name
     app.use(async (req, res, next) => {
       // Check if client info is available (from key exchange or authentication)
       if (req.episteryClient && req.episteryClient.address) {
@@ -222,39 +222,6 @@ class EpisteryAttach {
           }
         } catch {
           // Silent — name is optional
-        }
-
-        try {
-          // Get identity contract address if available
-          // For now, we'll try to get it from query params or headers
-          const identityContractAddress =
-            req.query.identityContract || req.headers["x-identity-contract"];
-
-          // Retrieve notabot score
-          const notabotScore = await Epistery.getNotabotScore(
-            req.episteryClient.address,
-            identityContractAddress,
-          );
-
-          // Enrich client info with notabot data
-          req.episteryClient.notabotPoints = notabotScore.points;
-          req.episteryClient.notabotLastUpdate = notabotScore.lastUpdate;
-          req.episteryClient.notabotVerified = notabotScore.verified;
-          req.episteryClient.notabotEventCount = notabotScore.eventCount;
-
-          // Make available at the documented location (app.locals.epistery)
-          if (req.app.locals.epistery) {
-            req.app.locals.epistery.clientWallet = Object.assign(
-              req.app.locals.epistery.clientWallet || {},
-              req.episteryClient,
-            );
-          }
-        } catch (error) {
-          // Log error but don't fail the request
-          console.error(
-            "[Epistery] Failed to retrieve notabot score:",
-            error.message,
-          );
         }
       }
       next();
@@ -798,7 +765,6 @@ class EpisteryAttach {
    *   /approval/*           - Approval system
    *   /identity/*           - Identity contract management
    *   /domain/*             - Domain initialization
-   *   /notabot/*            - Notabot scoring
    *   /lists                - Get all lists
    *   /list                 - Get specific list
    *   /list/check/:address  - Check list membership

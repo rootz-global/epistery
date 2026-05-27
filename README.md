@@ -2,399 +2,312 @@
 
 _Epistemology is the study of knowledge. An Epistery, it follows, is a place to share the knowledge of knowledge._
 
-**Epistery** is blockchain-based middleware that provides websites and applications with decentralized authentication, data ownership verification, and trusted data exchange. It serves as a neutral foundation for web applications to identify users, verify data provenance, and conduct digital business without relying on centralized gatekeepers.
+**Epistery is the identity and trust foundation for web applications.** It gives a
+host one thing it can trust on every request — a cryptographically proven address —
+and the on-chain primitives to decide what that address may do. Everything else
+(apps, sessions, content) is built *on top of* epistery and must not re-implement
+what epistery owns.
 
-## What Does Epistery Do?
+> **Status — under audit (2026-05-27).** This README is the **sealed contract**:
+> it defines what epistery is responsible for, what it is not, and its interface.
+> Code is held to this document. A dated **[Known divergences](#known-divergences-audit)**
+> section at the end lists where the implementation currently fails the contract.
+> If behavior and this document disagree, that is a bug in the code, not the doc.
 
-Epistery establishes a transactional wallet for both browser and server along with the session handshake. This provides:
+---
 
-- **Decentralized Authentication**: Wallet-based user authentication using cryptographic signatures
-- **Data Wallets**: Blockchain smart contracts for data ownership, encryption, sharing, and transfer
-- **Whitelist Management**: On-chain access control for domains and users
-- **CLI Tools**: Command-line interface for authenticated API requests using bot mode
-- **Client Libraries**: Browser-based wallet and authentication tools
-- **Configuration Management**: Path-based filesystem-like API for secure configuration storage
+## Responsibility (what epistery OWNS)
 
->*NOTE:* The client wallet (signing key) is held in localStorage under strict domain rules unless the user presents
-> a selected wallet from a web3 plugin
+Epistery is the **single owner** of:
 
-## Quick Start
+1. **Identity** — proving *who* a request is from. The proof is a wallet signature,
+   carried either by a short-lived signed session cookie (`_epistery`, established
+   via the `/connect` handshake) or a per-request `Bot` signature. The result is a
+   trusted **address** on `req.episteryClient`.
+2. **Identity binding** — relating a device key (rivet) to an **IdentityContract**,
+   verified on-chain (`isAuthorized`). When bound, epistery presents the *contract*
+   as the identity.
+3. **Authorization primitive** — on-chain **lists** mapping an address to a numeric
+   **role/level**. The host asks "what level is this address?" and gets a number.
+4. **Key custody (client)** — generating and protecting the user's signing key in
+   the browser (non-extractable, see [Key custody](#identity--key-custody)).
+5. **Domain/server wallet & config** — the host's own wallet and the path-based
+   `~/.epistery` configuration.
 
-### Installation
+No consumer may bypass, re-derive, or duplicate any of these. In particular: a
+downstream service **never** trusts a client-supplied identity header, **never**
+re-implements identity resolution, and **never** invents its own ACL when the
+on-chain list role already answers the question.
 
-```bash
-npm install epistery
-```
+---
 
-### Server Setup
+## What Epistery DOES
 
-Initialize a domain to create its blockchain wallet:
+- **Authenticates every request** to a trusted address (`req.episteryClient`), via
+  signed session cookie or `Bot` signature.
+- **Mints/loads wallets** for browser (rivet / FIDO / web3) and server (per-domain).
+- **Binds a device to an IdentityContract** and verifies that binding on-chain.
+- **Manages on-chain lists** (address → numeric role) and a name registry
+  (address ↔ name).
+- **Provides data wallets** — on-chain ownership records with client-signed writes
+  and ownership transfer (`/data/*`, prepare→submit-signed pattern).
+- **Provides an approval workflow** for access requests (`/approval/*`, `/whitelist/*`).
+- **Exposes a CLI** for stateless bot-authenticated requests and admin tasks.
+- **Serves client libraries** (`/lib/*`) and contract artifacts (`/artifacts/*`).
 
-```bash
-npx epistery initialize mydomain.com
-```
+## What Epistery does NOT do
 
-Integrate Epistery into your Express application:
+- **Does not store application data.** Apps own their storage; epistery records
+  ownership/provenance and identity, not your documents.
+- **Does not define application- or session-level ACLs.** It provides the
+  address→role primitive; consumers *read* a level, they do not build a parallel
+  membership system.
+- **Does not accept a client's claim of identity.** The only identity is the one
+  epistery itself proved (`req.episteryClient`). There is no "I am contract X"
+  header. Claims of contract identity are verified on-chain at `/connect`.
+- **Does not let downstream code adjudicate auth.** Re-deriving identity or
+  re-checking signatures outside epistery is a contract violation.
+
+---
+
+## The trust contract: `req.episteryClient`
+
+The attach middleware sets exactly this on each request (or leaves it `undefined`):
+
+| Field             | Meaning                                                                 |
+|-------------------|-------------------------------------------------------------------------|
+| `address`         | **The identity.** The IdentityContract address when the wallet is bound; otherwise the rivet (device) address. This is what downstream uses. |
+| `signerAddress`   | The rivet that actually signed (the device key). Present when bound.    |
+| `contractAddress` | The bound IdentityContract, or `null`.                                  |
+| `publicKey`       | The signer's public key.                                                |
+| `authenticated`   | Whether the session/handshake completed.                                |
+| `authType`        | `"bot"` for `Bot`-signed requests; cookie-based otherwise.              |
+| `name`            | Resolved on-chain name, if any (enrichment).                            |
+| `notabot*`        | Notabot score enrichment, if available.                                 |
+
+**Rule for consumers:** treat `address` as the principal. The *type* (rivet vs.
+contract vs. bot) is available but is rarely your concern. To authorize, resolve a
+level for `address` from the active contract's lists.
 
 ```javascript
-import express from 'express';
-import https from 'https';
-import { Epistery } from 'epistery';
-
-const app = express();
-
-// Connect and attach epistery
-const epistery = await Epistery.connect();
-await epistery.setDomain('mydomain.com');
-await epistery.attach(app);
-
-// Optional: Add authentication callback
-const episteryWithAuth = await Epistery.connect({
-  authentication: async (clientInfo) => {
-    // clientInfo.address contains the wallet address
-    // Return user profile or null
-    return await getUserProfile(clientInfo.address);
-  },
-  onAuthenticated: async (clientInfo, req, res) => {
-    // Called after successful authentication
-    console.log('User authenticated:', clientInfo.address);
-  }
-});
-
-// Start your server
-const https_server = https.createServer(epistery.config.SNI, app);
-https_server.listen(443);
-```
-
-This automatically mounts RFC 8615-compliant routes under `/.well-known/epistery/`:
-- `/.well-known/epistery` - Server wallet status (JSON)
-- `/.well-known/epistery/status` - Human-readable status page
-- `/.well-known/epistery/connect` - Client key exchange endpoint
-- `/.well-known/epistery/data/*` - Data wallet operations
-- `/.well-known/epistery/whitelist` - Access control endpoints
-
-## Core Features
-
-### 1. Authentication
-
-Epistery provides cryptographic authentication using Ethereum wallets:
-
-**Client-side:**
-```javascript
-// Load client library in your HTML
-<script src="/.well-known/epistery/lib/client.js"></script>
-<script>
-  const client = new EpisteryClient();
-  await client.connect();  // Automatic key exchange
-  console.log('Connected as:', client.address);
-</script>
-```
-
-**Server-side:**
-```javascript
-// Access authenticated client in routes
-app.get('/profile', (req, res) => {
-  if (req.episteryClient?.authenticated) {
-    res.json({ address: req.episteryClient.address });
-  } else {
-    res.status(401).json({ error: 'Not authenticated' });
-  }
+app.get('/thing', (req, res) => {
+  const me = req.episteryClient;            // the ONLY source of identity
+  if (!me?.authenticated) return res.status(401).end();
+  // authorize by level from the on-chain list — do not invent your own ACL
 });
 ```
 
-### 2. Data Wallets
+---
 
-Data wallets are blockchain smart contracts that provide ownership, encryption, sharing, and transfer capabilities for any data. They combine on-chain ownership records with off-chain storage:
+## Identity & key custody
 
-```javascript
-// Client creates data wallet
-const dataWallet = await client.write({
-  title: 'My Document',
-  content: 'Document content...',
-  metadata: { tags: ['important'] }
-});
+The browser signing key is created and protected by epistery. Custody depends on
+wallet type:
 
-// Read data wallet
-const data = await client.read();
+| Wallet         | Key custody                                                                                 | Security property |
+|----------------|---------------------------------------------------------------------------------------------|-------------------|
+| **RivetWallet** (default) | secp256k1 private key **encrypted at rest** by a **non-extractable** AES-GCM `CryptoKey` held in IndexedDB (WebCrypto). Only ciphertext + a key id are persisted. | The signing key cannot be exported — the core "unextractable device key" property. |
+| **FidoWallet** | Rivet key wrapped by a WebAuthn PRF secret (Secure Enclave); blob optionally backed up server-side via `/fido/blob` (survives iOS ITP eviction). | Key release gated by platform authenticator. |
+| **Web3Wallet** | External plugin (e.g. MetaMask) holds the key.                                              | Custody is the plugin's. |
+| **BrowserWallet** | **Legacy.** Private key stored directly.                                                 | **Plaintext — not secure. See divergences.** |
 
-// Transfer ownership to another address
-await client.transferOwnership(newOwnerAddress);
-```
+Server/domain wallets live in `~/.epistery/<domain>/config.ini` (0600).
 
-**Data Wallet Features:**
-- **Blockchain Contracts**: Each data wallet is a smart contract on-chain
-- **Encryption**: Data can be encrypted before storage
-- **Sharing**: Grant read/write access to specific addresses
-- **Transferable**: Ownership can be transferred to other wallets
-- **IPFS Storage**: Content stored on IPFS by default, with hashes on-chain
-- **Provenance Tracking**: Full ownership and modification history on-chain
+> The unextractable-key guarantee holds **only** on the RivetWallet (and FIDO)
+> path with WebCrypto available. The fallback and legacy paths persist plaintext —
+> see [Known divergences](#known-divergences-audit).
 
-### 3. Whitelist Management
+### The `/connect` handshake & contract binding
 
-Control who can access your domain using on-chain whitelists:
+1. The client `Witness` signs a challenge with its rivet and POSTs to `/connect`
+   with `clientAddress` (rivet), optional `identityAddress`/`contractAddress`.
+2. The server verifies the signature. If a contract is claimed, it calls
+   `IdentityContract.isAuthorized(rivet)` **on-chain** — the chain is truth.
+3. On success it issues the signed `_epistery` cookie, recording the rivet and (if
+   verified) the contract. The auth middleware then surfaces the contract as
+   `req.episteryClient.address`.
 
-```javascript
-// Check if address is whitelisted
-const isAllowed = await epistery.isWhitelisted('0x1234...');
+A rivet is bound to a contract client-side via `wallet.upgradeToContract(contract)`
+(the wallet then presents the contract as its `address`, keeping the rivet as
+`rivetAddress`), followed by a fresh key exchange.
 
-// Get full whitelist
-const whitelist = await epistery.getWhitelist();
-```
+---
 
-Whitelist data is stored on the blockchain and managed through your domain's wallet.
+## Authorization: on-chain lists & roles
 
-### 4. CLI Tools
+Authorization is a **single number** per address, read from the active contract's
+on-chain lists. The system convention:
 
-The Epistery CLI enables authenticated API requests from the command line using bot authentication (stateless, signs each request):
+| Level | Role  |
+|-------|-------|
+| 0     | none  |
+| 1     | read  |
+| 2     | edit  |
+| 3     | admin |
 
-```bash
-# Initialize a CLI wallet
-epistery initialize localhost
-epistery set-default localhost
+Server API: `getList`, `getLists`, `isListed`, `getListsForMember(address)`,
+`addToList(listName, address, name, role, meta)`, `removeFromList`, `updateEntry`.
+HTTP: `/lists`, `/list`, `/list/check/:address`, and the managed `/whitelist/*`
+surface (with an embeddable widget + admin UI). Consumers resolve a level and gate
+on it; they do not store their own membership.
 
-# Make authenticated GET request
-epistery curl https://api.example.com/data
+---
 
-# PUT request with JSON data (note single quotes)
-epistery curl -X PUT -d '{"title":"Test","body":"Content"}' https://api.example.com/wiki/Test
+## HTTP interface
 
-# Use specific wallet
-epistery curl -w production.example.com https://api.example.com/data
+Mounted under `rootPath` (default `/.well-known/epistery`, RFC 8615):
 
-# Verbose output for debugging
-epistery curl -v https://api.example.com/data
-```
+| Path | Methods | Purpose |
+|------|---------|---------|
+| `/`, `/status` | GET | Server wallet status (JSON / HTML) |
+| `/lib/:module` | GET | Client libraries (`witness.js`, `client.js`, …) |
+| `/artifacts/:file` | GET | Contract ABIs/artifacts |
+| `/connect` | GET / POST | Session check / key-exchange handshake (sets `_epistery`) |
+| `/create` | GET | Wallet creation helper |
+| `/auth/account/claim`, `/auth/dns/claim`, `/auth/account/check-admin` | GET/POST | Domain claiming & admin checks |
+| `/data/write`, `/read`, `/ownership`, `/message`, `/conversation(s)`, `/conversation-id`, `/post(s)`, `/public-keys/:address`, `/prepare-write`, `/prepare-transfer-ownership`, `/submit-signed` | GET/POST/PUT | Data-wallet ops (client signs → server submits) |
+| `/approval/create`, `/get`, `/get-all`, `/get-all-requestor`, `/handle`, `/prepare-create`, `/prepare-handle` | POST | Approval workflow |
+| `/identity/prepare-deploy`, `/prepare-add-rivet` | POST | Deploy an IdentityContract / authorize a rivet |
+| `/domain/initialize` | POST | Initialize a domain wallet |
+| `/notabot/commit`, `/score/:rivetAddress` | GET/POST | Notabot human-likelihood scoring |
+| `/lists`, `/list`, `/list/check/:address` | GET | On-chain list/role reads |
+| `/contract/version` | GET | IdentityContract version info |
+| `/whitelist/*` | GET/POST | List/ACL management UI, check/add/remove/setName/resolveName, request-access + handling |
+| `/fido/blob`, `/blob/:credentialId` | POST/GET | PRF-wrapped rivet key backup |
 
-Perfect for:
-- Testing authenticated endpoints
-- Building automation scripts
-- Creating bots and agents
-- CI/CD integration
+---
 
-**CLI uses bot authentication** - each request is independently signed with the wallet's private key, no session management required.
-
-See [CLI.md](CLI.md) for complete CLI documentation.
-
-## Configuration
-
-Epistery uses a path-based configuration system stored in `~/.epistery/` with a filesystem-like API:
-
-```
-~/.epistery/
-├── config.ini                    # Root config (profile, IPFS, defaults)
-├── mydomain.com/
-│   └── config.ini                # Domain config (wallet, provider)
-└── .ssl/
-    └── mydomain.com/             # SSL certificates (optional)
-```
-
-### Root Config (`~/.epistery/config.ini`)
-
-```ini
-[profile]
-name=Your Name
-email=you@example.com
-
-[ipfs]
-url=https://rootz.digital/api/v0
-
-[cli]
-default_domain=localhost
-
-# Which chain the claim-page dropdown selects by default.
-[default]
-defaultChainId=137
-
-# Private RPC overrides, keyed by chainId. Only needed when the chain's
-# built-in public RPC isn't sufficient (rate-limited, needs an API key).
-# Everything else — name, public RPC, currency, fee policy — lives in
-# the chain classes (src/chains/) and doesn't need to be configured.
-
-[default.rpc.137]
-privateRpc=https://polygon-mainnet.infura.io/v3/YOUR_KEY
-
-[default.rpc.1]
-privateRpc=https://mainnet.infura.io/v3/YOUR_KEY
-```
-
-Legacy single-provider format is also supported:
-
-```ini
-[default.provider]
-chainId=137
-privateRpc=https://polygon-mainnet.infura.io/v3/YOUR_KEY
-```
-
-### Domain Config (`~/.epistery/mydomain.com/config.ini`)
-
-```ini
-[domain]
-domain=mydomain.com
-
-[wallet]
-address=0x...
-mnemonic=word word word...
-publicKey=0x04...
-privateKey=0x...
-
-[provider]
-chainId=420420422
-name=polkadot-hub-testnet
-rpc=https://testnet-passet-hub-eth-rpc.polkadot.io
-```
-
-The Config class provides a path-based API that works like navigating a filesystem - set a path, load data, modify it, and save. This makes configuration management simple and predictable across all Epistery applications.
-
-## Advanced Usage
-
-### Custom Authentication
-
-Integrate with your existing user system:
+## Server API
 
 ```javascript
+import { Epistery, Config } from 'epistery';
+
 const epistery = await Epistery.connect({
-  authentication: async (clientInfo) => {
-    // clientInfo: { address, publicKey }
-
-    // Look up user in your database
-    const user = await db.users.findOne({
-      walletAddress: clientInfo.address
-    });
-
-    if (!user) return null;
-
-    // Return profile data
-    return {
-      id: user.id,
-      username: user.username,
-      permissions: user.permissions
-    };
-  },
-  onAuthenticated: async (clientInfo, req, res) => {
-    // Called after successful authentication
-    // clientInfo includes: address, publicKey, profile, authenticated
-
-    // Set up session, log authentication, etc.
-    req.session.userId = clientInfo.profile.id;
-  }
+  authentication:  async (clientInfo) => { /* return profile or null */ },
+  onAuthenticated: async (clientInfo, req, res) => { /* post-auth hook */ },
 });
+await epistery.setDomain('mydomain.com');
+await epistery.attach(app);              // mounts middleware + routes under rootPath
 ```
 
-### Configuration Management
+`Epistery` (exported as `EpisteryAttach`): `connect`, `setDomain`, `attach`,
+`resolveClient(req)` (auth resolution for non-middleware contexts, e.g. WebSocket
+upgrades), the list methods above, `resolveName`/`setAddressName`, `getSponsor`,
+`checkContractVersion`, `buildStatus`, `routes`.
 
-Use Epistery's Config class for secure, path-based configuration:
+Also exported: `Config`, `chainFor`, `registerChain`, `configuredChains`,
+`defaultChainId`, `Chain`.
+
+### Config
+
+Path-based ini config under `~/.epistery` (`src/utils/Config.ts`):
 
 ```javascript
 import { Config } from 'epistery';
-
-const config = new Config('epistery');
-
-// Navigate filesystem-like paths
-config.setPath('/');
+const config = new Config();
+config.setPath('/');            // ~/.epistery/config.ini  (root)
 config.load();
 config.data.profile.email = 'user@example.com';
 config.save();
-
-// Domain-specific config
-config.setPath('/mydomain.com');
-config.load();
-config.data.verified = true;
-config.save();
-
-// Arbitrary paths
-config.setPath('/.ssl/mydomain.com');
-config.load();
-config.data.certData = '...';
-config.save();
+config.setPath('/mydomain.com'); // ~/.epistery/mydomain.com/config.ini
 ```
 
-## Architecture
+Methods: `setPath`, `getPath`, `load`, `save` (+ `data`).
 
-Epistery follows a plugin architecture that integrates seamlessly with Express.js applications:
+---
 
-- **Server Module** (`/src/epistery.ts`): Core wallet and data wallet operations
-- **Client Libraries** (`/client/*.js`): Browser-side authentication and data wallet tools
-- **CLI** (`/cli/epistery.mjs`): Command-line interface for authenticated requests
-- **Utils** (`/src/utils/`): Configuration, crypto operations, and Aqua protocol implementation
-- **Chains** (`/src/chains/`): Per-chain provider, fee policy, and gas estimation
+## Client API (`Witness`)
 
-All endpoints follow RFC 8615 well-known URIs standard for service discovery.
-
-See [Architecture.md](Architecture.md) for detailed architecture documentation.
-
-### Chain Support
-
-Each EVM chain epistery talks to is represented by a `Chain` object that owns the JSON-RPC provider, fee policy, gas estimation strategy, and default public RPC. No configuration is needed to use a built-in chain — every detail is in the class itself.
-
-| Chain | ID | Fee Model | Default RPC |
-|-------|----|-----------|-------------|
-| Polygon Mainnet | 137 | EIP-1559, 25 gwei priority floor | polygon-rpc.com |
-| Polygon Amoy | 80002 | EIP-1559, 25 gwei priority floor | rpc-amoy.polygon.technology |
-| Ethereum Mainnet | 1 | Standard EIP-1559 | eth.llamarpc.com |
-| Sepolia Testnet | 11155111 | Standard EIP-1559 | eth-sepolia.public.blastapi.io |
-| Japan Open Chain | 81 | Legacy gasPrice, 30 gwei floor | rpc-2.japanopenchain.org |
-
-Use `chainFor()` to get a chain instance. Only `chainId` is required — everything else comes from the chain class defaults:
+Served at `/.well-known/epistery/lib/witness.js`:
 
 ```javascript
-import { chainFor, registeredChains } from 'epistery';
-
-// Minimal — chain class supplies name, RPC, currency, fee policy
-const chain = chainFor({ chainId: 137 });
-
-// Or with an override — privateRpc for server-side calls with an API key
-const chain = chainFor({ chainId: 137, privateRpc: 'https://polygon-mainnet.infura.io/v3/KEY' });
-
-// Provider with explicit network info (no "could not detect network" errors)
-const wallet = ethers.Wallet.fromMnemonic(mnemonic).connect(chain.provider);
-
-// Per-chain fee data for transaction overrides
-const feeData = await chain.getFeeData();
-// → Polygon: { maxPriorityFeePerGas: 25 gwei, maxFeePerGas: 50 gwei }
-// → JOC:     { gasPrice: 30 gwei }
-// → Ethereum: { maxPriorityFeePerGas: <network>, maxFeePerGas: <network> }
-
-// Get the full built-in chain list (for UI dropdowns, etc.)
-const chains = registeredChains();
+import Witness from '/.well-known/epistery/lib/witness.js';
+const witness = await Witness.connect({ rootPath: '/' }); // creates/loads wallet, runs key exchange
 ```
 
-Adding a new chain is a single file — extend `Chain`, override the fee hooks that differ, and call `registerChain()`. No edits to existing code. See [src/chains/README.md](src/chains/README.md) for details.
+Public surface: `connect`, `performKeyExchange`, `getWallets`, `getStatus`,
+`addBrowserWallet` / `addFidoWallet` / `addWeb3Wallet`, `setDefaultWallet`,
+`removeWallet`, `updateWalletLabel`, `bindToEpisteryIdentity` (cross-host identity
+ferry), and data-wallet/approval event methods (`readEvent`, `writeEvent`,
+`transferOwnershipEvent`, approval events). Wallet classes: `RivetWallet`,
+`FidoWallet`, `Web3Wallet`, `BrowserWallet`; binding via `wallet.upgradeToContract`.
 
-## Use Cases
+---
 
-- **Decentralized Wikis**: User authentication and content ownership without central accounts
-- **API Authentication**: Replace API keys with wallet-based authentication
-- **Content Attribution**: Track content provenance and ownership on-chain
-- **Access Control**: Manage permissions through blockchain whitelists
-- **Bot/Agent Authentication**: Secure automation with wallet-based identity
+## CLI
 
-## Security
-
-- **Private Key Protection**: Domain configs stored with 0600 permissions (user-only access)
-- **Signature-Only Transmission**: Private keys never transmitted, only cryptographic signatures
-- **Wallet Isolation**: Each domain has its own isolated wallet
-- **Bot Authentication**: Stateless authentication with per-request signing and timestamp-based replay protection
-- **Encrypted Key Exchange**: Browser clients use ECDH for secure shared secret establishment
-- **On-Chain Verification**: Whitelist and ownership data stored immutably on blockchain
-
-## Testing
+Stateless bot authentication (each request independently signed):
 
 ```bash
-# Setup test environment (generates wallets automatically)
-npm run test:setup
-
-# Run tests
-npm test
+epistery initialize localhost
+epistery set-default localhost
+epistery curl https://api.example.com/data
+epistery curl -X PUT -d '{"title":"Test"}' https://api.example.com/wiki/Test
+epistery curl -b -w production.example.com https://api.example.com/data   # -b bot, -w wallet, -v verbose
 ```
 
-The setup script creates `.test.env` with generated wallet credentials. For integration tests requiring a deployed contract, add `TEST_CONTRACT_ADDRESS` to `.test.env` after running `npm run deploy:agent`.
+Commands: `initialize`, `set-default`, `info`, `curl`, `mcp`, `lists`, `list`,
+`requests`, `approve`, `deny`, `help`. See [CLI.md](CLI.md).
+
+---
+
+## Chains
+
+Each EVM chain is a `Chain` object owning its RPC, fee policy, and gas strategy.
+Only `chainId` is required; everything else comes from the class. Use
+`chainFor({ chainId })`; add a chain by extending `Chain` + `registerChain()`.
+See [src/chains/README.md](src/chains/README.md).
+
+---
+
+## Versioning & local development
+
+- Consumers depend on the **published** package: `npm install epistery@latest`.
+- Local cross-package work installs a **temporary relative path**
+  (`npm install ../../rootz/epistery`) for testing only.
+- Publishing to npm and any deployment is a deliberate, human-performed step. No
+  tooling or agent publishes, bumps versions, or deploys on its own.
+
+---
+
+## Known divergences (audit)
+
+Where the code currently fails the contract above. Dated; remove as fixed.
+
+**2026-05-27 — opening audit**
+
+1. **Plaintext private keys (critical).** Two paths persist the secp256k1 private
+   key in clear in browser storage, defeating the unextractable-key guarantee:
+   - `RivetWallet` WebCrypto **fallback** (`client/wallet.js:369`): stores the raw
+     key in the field named `encryptedPrivateKey` ("Not actually encrypted in
+     fallback").
+   - `BrowserWallet` (`client/wallet.js:241`, comment `:283`): stores `privateKey`
+     openly (legacy fallback).
+   - **Required:** never persist a plaintext signing key. Hard-fail (or refuse to
+     create a persistent wallet) when the secure path is unavailable, rather than
+     silently downgrading.
+
+2. **No in-session rivet→contract upgrade.** `Witness.performKeyExchange`
+   (`client/witness.js:~477`) short-circuits when the existing cookie address
+   equals `signingAddress` (the rivet). The rivet never changes across an upgrade,
+   so a device that already has a rivet session can never have its `_epistery`
+   cookie re-issued as contract-bound; a reload does not help. **Fix:** compare the
+   cookie address to `identityAddress` (the presented identity), not the signer,
+   so the exchange re-runs whenever the identity changes.
+
+3. **Downstream identity bypass (consumer: epistery.app).** Recorded here because
+   it stems from gaps above: consumers have asserted contract identity via a
+   spoofable `x-identity-contract` header + localStorage instead of the verified
+   `_epistery` cookie, and rolled their own per-session ACL instead of reading the
+   on-chain list role. To be corrected in the consumer once (1) and (2) land.
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
+MIT — see [LICENSE](LICENSE).
 
 ## Links
 
-- **Homepage**: https://epistery.com
-- **Repository**: https://github.com/rootz-global/epistery
-- **Documentation**: See [CLI.md](CLI.md), [Architecture.md](Architecture.md), [SESSION.md](SESSION.md)
+- Repository: https://github.com/rootz-global/epistery
+- See [CLI.md](CLI.md), [Architecture.md](Architecture.md), [SESSION.md](SESSION.md)

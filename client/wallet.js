@@ -25,8 +25,6 @@ export class Wallet {
   static async fromJSON(data, ethers) {
     if (data.source === "web3") {
       return await Web3Wallet.fromJSON(data, ethers);
-    } else if (data.source === "local") {
-      return await BrowserWallet.fromJSON(data, ethers);
     } else if (data.source === "rivet") {
       return await RivetWallet.fromJSON(data, ethers);
     } else if (data.source === "fido") {
@@ -45,8 +43,8 @@ export class Wallet {
   }
 
   // Peer encryption (ECDH + AES-256-GCM) — optional capability. Wallets
-  // that hold their private key in a closure (RivetWallet, FidoWallet,
-  // BrowserWallet) implement these so plaintext callers never see the key.
+  // that hold their private key in a closure (RivetWallet, FidoWallet)
+  // implement these so plaintext callers never see the key.
   // Wire format: secp256k1 ECDH → SHA-256 → AES-GCM(iv:12, tag:16). The
   // shared secret + private key live only inside the implementing closure.
   async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
@@ -224,76 +222,6 @@ export class Web3Wallet extends Wallet {
   }
 }
 
-// Browser Wallet (Local Storage)
-export class BrowserWallet extends Wallet {
-  constructor() {
-    super();
-    this.source = "local";
-    this.mnemonic = null;
-    this.privateKey = null;
-    this.signer = null;
-  }
-
-  toJSON() {
-    return {
-      ...super.toJSON(),
-      mnemonic: this.mnemonic,
-      privateKey: this.privateKey,
-    };
-  }
-
-  static async fromJSON(data, ethers) {
-    const wallet = new BrowserWallet();
-    wallet.address = data.address;
-    wallet.publicKey = data.publicKey;
-    wallet.mnemonic = data.mnemonic;
-    wallet.privateKey = data.privateKey;
-
-    // Recreate the signer
-    if (wallet.mnemonic) {
-      wallet.signer = ethers.Wallet.fromMnemonic(wallet.mnemonic);
-    }
-
-    return wallet;
-  }
-
-  static async create(ethers) {
-    const wallet = new BrowserWallet();
-
-    // Generate new wallet
-    const ethersWallet = ethers.Wallet.createRandom();
-
-    wallet.address = ethersWallet.address;
-    wallet.mnemonic = ethersWallet.mnemonic?.phrase || "";
-    wallet.publicKey = ethersWallet.publicKey;
-    wallet.privateKey = ethersWallet.privateKey;
-    wallet.signer = ethersWallet;
-
-    return wallet;
-  }
-
-  async sign(message) {
-    if (!this.signer) {
-      throw new Error("Browser wallet signer not available");
-    }
-
-    return await this.signer.signMessage(message);
-  }
-
-  // BrowserWallet stores privateKey openly (legacy, fallback mode) — provide
-  // peer encryption for parity with Rivet/Fido so callers can use one API.
-  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
-    if (!this.privateKey) throw new Error("BrowserWallet has no privateKey");
-    const aesKey = await _deriveAesKeyFromPriv(this.privateKey, peerPublicKey, ethers);
-    return await _aesGcmEncrypt(aesKey, plaintextBytes);
-  }
-
-  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
-    if (!this.privateKey) throw new Error("BrowserWallet has no privateKey");
-    const aesKey = await _deriveAesKeyFromPriv(this.privateKey, peerPublicKey, ethers);
-    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
-  }
-}
 
 // Rivet Wallet (Non-extractable browser wallet)
 export class RivetWallet extends Wallet {
@@ -357,17 +285,12 @@ export class RivetWallet extends Wallet {
       wallet.lastUpdated = Date.now();
       wallet.label = "Browser Wallet";
 
-      // Check if Web Crypto API is available
+      // The unextractable-key guarantee REQUIRES Web Crypto. If it's missing,
+      // refuse — Epistery never persists an extractable private key.
       if (!window.crypto || !window.crypto.subtle) {
-        console.warn(
-          "Web Crypto API not available, falling back to extractable keys",
+        throw new Error(
+          "Web Crypto API unavailable: cannot create a secure (unextractable) rivet wallet.",
         );
-        // Fallback to regular ethers wallet
-        const ethersWallet = ethers.Wallet.createRandom();
-        wallet.address = ethersWallet.address;
-        wallet.publicKey = ethersWallet.publicKey;
-        wallet.encryptedPrivateKey = ethersWallet.privateKey; // Not actually encrypted in fallback
-        return wallet;
       }
 
       // Generate non-extractable AES-GCM key for encrypting the secp256k1 private key

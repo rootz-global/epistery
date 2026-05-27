@@ -8,11 +8,9 @@
 import {
   Wallet,
   Web3Wallet,
-  BrowserWallet,
   RivetWallet,
   FidoWallet,
 } from "./wallet.js?v=7";
-import NotabotTracker from "./notabot.js";
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -162,7 +160,6 @@ export default class Witness {
     Witness.instance = this;
     this.wallet = null;
     this.server = null;
-    this.notabot = null; // Will be initialized when wallet is loaded
     // Normalize rootPath - remove trailing slash, default to '..'
     this.rootPath = (rootPath || "..").replace(/\/$/, "");
     return this;
@@ -320,12 +317,6 @@ export default class Witness {
       if (!options.skipKeyExchange) {
         await witness.performKeyExchange();
       }
-
-      // Initialize notabot tracker if wallet is a rivet
-      if (witness.wallet && witness.wallet.source === "rivet") {
-        witness.notabot = new NotabotTracker(witness.wallet);
-        console.log("[epistery] Notabot tracker initialized");
-      }
     } catch (e) {
       console.error("Failed to connect to Epistery server:", e);
       // For unclaimed domains, wallet discovery might succeed even if key exchange fails
@@ -342,8 +333,7 @@ export default class Witness {
       // Try RivetWallet first (non-extractable, invisible, zero friction)
       this.wallet = await RivetWallet.create(ethers);
 
-      // Only try Web3 if user explicitly requests (not automatic)
-      // BrowserWallet is legacy fallback only
+      // Only try Web3 if user explicitly requests (not automatic).
 
       if (this.wallet) {
         console.log(
@@ -1074,7 +1064,7 @@ export default class Witness {
    * This method now supports TWO flows:
    * 1. NEW FLOW (RivetWallet): Client-side signing
    *    - prepare transaction → sign locally → submit signed tx
-   * 2. OLD FLOW (BrowserWallet, Web3Wallet): Server-side signing
+   * 2. OLD FLOW (Web3Wallet): Server-side signing
    *    - send mnemonic → server signs and broadcasts
    *
    * @param {any} data - Data to write
@@ -1218,12 +1208,19 @@ export default class Witness {
     };
   }
 
-  async addBrowserWallet(label = null) {
+
+  // Add another secure device wallet (an unextractable localStorage rivet,
+  // shown to users as a "Browser Wallet"). Same shape as the deprecated
+  // addBrowserWallet, minus the exposed private key — RivetWallet.create wraps
+  // the secp256k1 key with a non-extractable WebCrypto master key. Lets one
+  // device hold multiple independent, non-linked identities (one key, one
+  // identity) the way Ledger/Trezor/MetaMask do.
+  async addRivetWallet(label = null) {
     await ensureEthers();
-    const newWallet = await BrowserWallet.create(ethers);
+    const newWallet = await RivetWallet.create(ethers);
 
     if (!newWallet) {
-      throw new Error("Failed to create browser wallet");
+      throw new Error("Failed to create wallet");
     }
 
     newWallet.label = label || "Browser Wallet";

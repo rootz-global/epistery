@@ -15,51 +15,11 @@ const rootDir = path.resolve(__dirname, "..");
 export default function statusRoutes(epistery) {
   const router = express.Router();
 
-  // Root endpoint - returns JSON for API clients, HTML for browsers
+  // Root endpoint — JSON server status only. Witness.connect() probes this with
+  // Accept: json for chain/provider info. Epistery serves machine endpoints under
+  // its .well-known path; it deliberately provides no HTML UI.
   router.get("/", (req, res) => {
-    // Check if client wants JSON (API request)
-    const acceptsJson = req.accepts("json") && !req.accepts("html");
-
-    if (acceptsJson) {
-      return res.json(epistery.buildStatus());
-    }
-
-    // Return HTML for browsers
-    const domain = req.hostname;
-    const serverWallet = epistery.domain;
-
-    // Determine the root path from the request's base URL
-    // baseUrl will be '/' or '/.well-known/epistery' depending on mount point
-    const rootPath = req.baseUrl || "/";
-
-    const templatePath = path.resolve(rootDir, "client/status.html");
-    if (!fs.existsSync(templatePath)) {
-      return res.status(404).send("Status template not found");
-    }
-
-    let template = fs.readFileSync(templatePath, "utf8");
-
-    // Template replacement
-    template = template.replace(/\{\{server\.domain\}\}/g, domain);
-    template = template.replace(
-      /\{\{server\.walletAddress\}\}/g,
-      serverWallet?.wallet?.address || "",
-    );
-    template = template.replace(
-      /\{\{server\.provider\}\}/g,
-      serverWallet?.provider?.name || "",
-    );
-    template = template.replace(
-      /\{\{server\.chainId\}\}/g,
-      serverWallet?.provider?.chainId?.toString() || "",
-    );
-    template = template.replace(
-      /\{\{timestamp\}\}/g,
-      new Date().toISOString(),
-    );
-    template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
-
-    res.send(template);
+    res.json(epistery.buildStatus());
   });
 
   // Client library files
@@ -67,7 +27,6 @@ export default function statusRoutes(epistery) {
     "client.js": path.resolve(rootDir, "client/client.js"),
     "witness.js": path.resolve(rootDir, "client/witness.js"),
     "wallet.js": path.resolve(rootDir, "client/wallet.js"),
-    "notabot.js": path.resolve(rootDir, "client/notabot.js"),
     "export.js": path.resolve(rootDir, "client/export.js"),
     "ethers.js": path.resolve(rootDir, "client/ethers.js"),
     "ethers.min.js": path.resolve(rootDir, "client/ethers.min.js"),
@@ -113,43 +72,6 @@ export default function statusRoutes(epistery) {
 
     res.set("Content-Type", "application/json");
     res.sendFile(artifactPath);
-  });
-
-  router.get("/status", (req, res) => {
-    const domain = req.hostname;
-    const serverWallet = epistery.domain;
-
-    // Determine the root path from the request's base URL
-    const rootPath = req.baseUrl;
-
-    const templatePath = path.resolve(rootDir, "client/status.html");
-    if (!fs.existsSync(templatePath)) {
-      return res.status(404).send("Status template not found");
-    }
-
-    let template = fs.readFileSync(templatePath, "utf8");
-
-    // Template replacement
-    template = template.replace(/\{\{server\.domain\}\}/g, domain);
-    template = template.replace(
-      /\{\{server\.walletAddress\}\}/g,
-      serverWallet?.wallet?.address || "",
-    );
-    template = template.replace(
-      /\{\{server\.provider\}\}/g,
-      serverWallet?.provider?.name || "",
-    );
-    template = template.replace(
-      /\{\{server\.chainId\}\}/g,
-      serverWallet?.provider?.chainId?.toString() || "",
-    );
-    template = template.replace(
-      /\{\{timestamp\}\}/g,
-      new Date().toISOString(),
-    );
-    template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
-
-    res.send(template);
   });
 
   return router;
