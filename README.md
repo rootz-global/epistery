@@ -85,24 +85,45 @@ The attach middleware sets exactly this on each request (or leaves it `undefined
 
 | Field             | Meaning |
 |-------------------|---------|
-| `address`         | **The identity.** The IdentityContract address when the wallet is bound; otherwise the rivet (device) address. This is what downstream uses. |
-| `signerAddress`   | The rivet that actually signed (the device key). Present when bound. |
-| `contractAddress` | The bound IdentityContract, or `null`. |
+| `signerAddress`   | **The signer.** The rivet whose signature was verified (cookie session or `Bot`). Always non-null. The only thing the client can assert by itself. |
+| `contractAddress` | **A verified contract claim.** When the client claimed an IdentityContract at `/connect`, this is that contract, verified on-chain via `isAuthorized(contractAddress, signerAddress)`. `null` when no claim. |
+| `identityAddress` | **The canonical identity.** Derived: `contractAddress || signerAddress`. This is what host ACLs evaluate against. Always non-null. |
 | `publicKey`       | The signer's public key. |
 | `authenticated`   | Whether the session/handshake completed. |
-| `authType`        | `"bot"` for `Bot`-signed requests; cookie-based otherwise. |
+| `authType`        | `"bot"` for `Bot`-signed requests; `"cookie"` for session-cookie. |
 
-**Rule for consumers:** treat `address` as the principal. The *type* (rivet vs.
-contract vs. bot) is available but is rarely your concern. Authorization is yours
-to evaluate against that address, using your host's own contracts/policy.
+The three roles are kept separate on purpose. `signerAddress` is a fact the
+client proves; `contractAddress` is a claim the server verifies; `identityAddress`
+is the server's derivation. The wire never asks the client to pick which role
+its address plays.
+
+**Rule for consumers:** authorize against `identityAddress`. The signer vs.
+contract distinction is available but rarely your concern.
 
 ```javascript
 app.get('/thing', (req, res) => {
   const me = req.episteryClient;            // the ONLY source of identity
   if (!me?.authenticated) return res.status(401).end();
-  // authorize against your host's contracts / policy
+  // authorize against your host's contracts / policy using me.identityAddress
 });
 ```
+
+### The wire (POST `/connect`)
+
+The handshake body carries facts only:
+
+| Field             | Required | Meaning |
+|-------------------|----------|---------|
+| `signerAddress`   | yes      | The rivet. Must equal the address recovered from `signature` over `message`. |
+| `signerPublicKey` | yes      | The signer's public key. |
+| `contractAddress` | yes      | An IdentityContract claim, or `null`. When non-null, the server verifies it on-chain via `isAuthorized(contractAddress, signerAddress)`. |
+| `challenge`, `message`, `signature` | yes | Proof of signer (see [Identity & key custody](#identity--key-custody)). |
+| `walletSource`    | no       | `"rivet"` / `"fido"` / `"web3"` / etc. — informational. |
+
+There is no `clientAddress`, no `identityAddress` on the wire. Either of those
+would force the receiver to guess which role the address plays. The server
+derives `identityAddress` from the two facts and exposes it on
+`req.episteryClient`; the client never tells the server what its identity *is*.
 
 ---
 
@@ -127,17 +148,21 @@ Server/domain wallets live in `~/.epistery/<domain>/config.ini` (0600).
 ### The `/connect` handshake & contract binding
 
 1. The client `Witness` signs a challenge with its rivet and POSTs to `/connect`
-   with `clientAddress` (rivet), optional `identityAddress`/`contractAddress`.
-2. The server verifies the signature. If a contract is claimed, it calls
-   `IdentityContract.isAuthorized(rivet)` **on-chain** — the chain is truth.
-3. On success it issues the signed `_epistery` cookie, recording the rivet and
-   (if verified) the contract. The auth middleware then surfaces the contract as
-   `req.episteryClient.address`.
+   with `signerAddress` (the rivet), `signerPublicKey`, and `contractAddress`
+   (the claim, or `null`).
+2. The server verifies the signature recovers to `signerAddress`. If
+   `contractAddress` is non-null, it calls `IdentityContract.isAuthorized(signerAddress)`
+   **on-chain** — the chain is truth.
+3. On success it issues the signed `_epistery` cookie, recording `signerAddress`
+   and (if verified) `contractAddress`. The auth middleware then exposes
+   `req.episteryClient.identityAddress = contractAddress || signerAddress`.
 
 A rivet is bound to a contract client-side via `wallet.upgradeToContract(contract)`
-(the wallet then presents the contract as its `address`, keeping the rivet as
-`rivetAddress`), followed by a fresh key exchange. The rivet→contract relation
-in localStorage is not cryptographically sealed in the browser — but spoofing it
+— afterward the wallet's derived `identityAddress` is the contract while
+`signerAddress` is still the rivet. A fresh key exchange follows; the witness
+short-circuits when (and only when) the cookie's `identityAddress` already
+matches the wallet's `identityAddress`. The rivet→contract relation in
+localStorage is not cryptographically sealed in the browser — but spoofing it
 is useless: the contract knows its authorized signers and can't be spoofed; the
 on-chain verification at `/connect` is the gate.
 
@@ -173,6 +198,11 @@ const epistery = await Epistery.connect({
 await epistery.setDomain('mydomain.com');
 await epistery.attach(app);              // mounts middleware + routes under rootPath
 ```
+
+The `clientInfo` passed to both hooks has the same shape as
+`req.episteryClient`: `{ signerAddress, contractAddress, identityAddress,
+publicKey }` (plus `authenticated` and `profile` after `authentication`
+resolves). Authorize against `identityAddress`.
 
 `Epistery` (exported as `EpisteryAttach`): `connect`, `setDomain`, `attach`,
 `resolveClient(req)` (auth resolution for non-middleware contexts, e.g. WebSocket
@@ -220,6 +250,15 @@ Public surface: `connect`, `performKeyExchange`, `getWallets`, `getStatus`,
 `removeWallet`, `updateWalletLabel`, `bindToEpisteryIdentity` (cross-host identity
 ferry). Wallet classes: `RivetWallet`, `FidoWallet`, `Web3Wallet`; binding via
 `wallet.upgradeToContract`.
+
+Identity properties on every wallet — the canonical surface for client code
+deciding "who am I right now":
+
+| Property              | Meaning |
+|-----------------------|---------|
+| `wallet.signerAddress`   | The rivet — the address we sign with. |
+| `wallet.contractAddress` | The bound IdentityContract, or `null`. |
+| `wallet.identityAddress` | Derived: `contractAddress || signerAddress`. What host UI and ACLs should reference. |
 
 ---
 
@@ -276,24 +315,44 @@ Where the code currently fails the contract above. Dated; remove as fixed.
   (`/identity/prepare-deploy`), `contracts/` directory — all removed. epistery
   is now identity + storage/config + FIDO blob only.
 - **Client header trust path.** Removed at the server boundary in v1.2: the
-  middleware no longer reads `x-identity-contract`; identity is the
-  `req.episteryClient.address` epistery itself proved.
+  middleware no longer reads `x-identity-contract`; identity is the verified
+  identity epistery itself proved.
+
+**Resolved in v1.2 follow-up (2026-05-28 naming cutover)**
+
+- **Ambiguous identity vocabulary; no in-session rivet→contract upgrade.** The
+  wire used `clientAddress` (alternately the signer or the identity), the
+  server reconstructed which-was-meant on the fly, and `Witness.performKeyExchange`
+  short-circuited by comparing the cookie's address to the signer — so a
+  device that already had a rivet cookie could never have its session re-issued
+  as contract-bound. Replaced with three distinct names everywhere: `signerAddress`
+  (fact, asserted), `contractAddress` (claim, server-verified on-chain), and the
+  derived `identityAddress` (= `contractAddress || signerAddress`, server-only).
+  The witness short-circuits when (and only when) the cookie's `identityAddress`
+  matches the wallet's `identityAddress`. The pre-cutover wire shape
+  (`clientAddress` / `clientPublicKey`) is removed without aliases — old
+  consumers fail at the handshake instead of silently degrading.
 
 **Outstanding**
 
-1. **No in-session rivet→contract upgrade.** `Witness.performKeyExchange`
-   (`client/witness.js`) short-circuits when the existing cookie address equals
-   `signingAddress` (the rivet). The rivet never changes across an upgrade, so a
-   device that already has a rivet session can never have its `_epistery` cookie
-   re-issued as contract-bound; a reload does not help. **Fix:** compare the
-   cookie address to `identityAddress` (the presented identity), not the signer,
-   so the exchange re-runs whenever the identity changes.
-
-2. **Downstream identity bypass (consumer: `epistery.app`).** Consumers have
+1. **Downstream identity bypass (consumer: `epistery.app`).** Consumers have
    asserted contract identity via a spoofable `x-identity-contract` header +
-   localStorage instead of the verified `_epistery` cookie, and rolled their own
-   per-session ACL. To be corrected in the consumer once (1) lands (so an
-   existing rivet session can be upgraded into a contract-bound cookie).
+   localStorage instead of consuming the verified `_epistery` cookie. Now
+   unblocked by the cutover above: the consumer's adopt path should call
+   `wallet.upgradeToContract(C)` + `Witness.performKeyExchange()` and read
+   identity from `req.episteryClient.identityAddress`.
+
+2. **Wallet-internal `address` field still flips on upgrade.** `RivetWallet.upgradeToContract`
+   still overwrites `wallet.address` with the contract address (the original
+   rivet survives as `wallet.rivetAddress`). The new `wallet.signerAddress` /
+   `wallet.identityAddress` getters cover the boundary, but every internal
+   caller of `wallet.address` reads an overloaded value. Phase 1b: rename the
+   persistence shape (with one-time IndexedDB migration so existing user
+   wallets keep working) and convert call sites.
+
+3. **`PrepareTransactionRequest`/`Response` types.** Reference removed
+   `agent.sol` operations (`write` / `transferOwnership` / `createApproval`
+   / etc.); imported but no longer consumed. Delete in the next dead-code sweep.
 
 ---
 

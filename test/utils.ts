@@ -111,11 +111,14 @@ export function createClientWalletInfo(wallet: ethers.Wallet): {
 }
 
 /**
- * Create key exchange request payload
+ * Create key exchange request payload — signer-only (no contract claim).
+ * Tests that exercise the contract verification path build their own
+ * payload with `contractAddress` set.
  */
 export async function createKeyExchangePayload(wallet: ethers.Wallet): Promise<{
-  clientAddress: string;
-  clientPublicKey: string;
+  signerAddress: string;
+  signerPublicKey: string;
+  contractAddress: string | null;
   challenge: string;
   message: string;
   signature: string;
@@ -126,8 +129,9 @@ export async function createKeyExchangePayload(wallet: ethers.Wallet): Promise<{
   const signature = await wallet.signMessage(message);
 
   return {
-    clientAddress: wallet.address,
-    clientPublicKey: wallet.publicKey,
+    signerAddress: wallet.address,
+    signerPublicKey: wallet.publicKey,
+    contractAddress: null,
     challenge,
     message,
     signature,

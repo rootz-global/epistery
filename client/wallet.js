@@ -5,11 +5,40 @@
  */
 
 // Base Wallet class
+//
+// Identity vocabulary (must match epistery's server-side contract):
+//   - signerAddress   : the rivet — the key we sign with. Always non-null.
+//   - contractAddress : an IdentityContract this signer speaks for, or null.
+//   - identityAddress : the canonical identity. Derived: contractAddress
+//                       || signerAddress. Never persisted; always computed.
+//
+// `address` is retained as a per-wallet field for storage compatibility,
+// but is no longer the source of identity decisions — use the getters.
+// (Phase 1b: rename the persistence shape so the storage key matches the
+// vocabulary; until then RivetWallet.upgradeToContract still flips
+// `address` to the contract for backwards-compatible callers.)
 export class Wallet {
   constructor() {
     this.address = null;
     this.publicKey = null;
     this.source = null;
+    // RivetWallet sets these to real values; the base class defaults so
+    // every wallet variant exposes the three-fact shape uniformly.
+    this.contractAddress = null;
+    this.rivetAddress = null;
+  }
+
+  // The rivet. For wallets that have been upgraded to a contract,
+  // `address` was flipped to the contract; the original rivet is kept on
+  // `rivetAddress`. For unbound wallets the rivet IS `address`.
+  get signerAddress() {
+    return this.rivetAddress || this.address;
+  }
+
+  // The canonical identity — what host ACLs evaluate against. Derived
+  // from facts; never stored.
+  get identityAddress() {
+    return this.contractAddress || this.signerAddress;
   }
 
   // Serialize only the essential data for persistence

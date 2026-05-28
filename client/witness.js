@@ -454,17 +454,30 @@ export default class Witness {
         throw new Error("No wallet available for key exchange");
       }
 
-      // For rivets with identity contracts, use the rivet address for signing
-      // but present the contract address as the identity
-      const signingAddress = this.wallet.rivetAddress || this.wallet.address;
-      const identityAddress = this.wallet.address;
+      // Two facts the wallet states; one of them carries a proof.
+      //   signerAddress    — the rivet we sign with (proven by `signature`).
+      //   contractAddress  — the IdentityContract we CLAIM to speak for, or
+      //                      null. Server verifies via on-chain isAuthorized.
+      // identityAddress is the derived canonical (contract || signer); we
+      // only use it locally to decide whether the cookie already names us.
+      const { signerAddress, contractAddress, identityAddress, publicKey } =
+        this.wallet;
 
-      // Check if session cookie already identifies this wallet
+      // Skip re-exchange only when the cookie already names our CURRENT
+      // identity. Both sides derive identityAddress from the same two facts,
+      // so comparing identity-to-identity is correct by construction — no
+      // ambiguity, no "did you mean signer or contract?" reasoning.
       try {
-        const check = await fetch(`${this.rootPath}/connect`, { credentials: "include" });
+        const check = await fetch(`${this.rootPath}/connect`, {
+          credentials: "include",
+        });
         if (check.ok) {
           const session = await check.json();
-          if (session.address && session.address.toLowerCase() === signingAddress.toLowerCase()) {
+          if (
+            session.identityAddress &&
+            session.identityAddress.toLowerCase() ===
+              identityAddress.toLowerCase()
+          ) {
             return;
           }
         }
@@ -472,28 +485,19 @@ export default class Witness {
         // No valid session, proceed with key exchange
       }
 
-      // Create a message to sign for identity proof
+      // Sign over signerAddress — what the server's recovery proves.
       const challenge = this.generateChallenge();
-      const message = `Epistery Key Exchange - ${signingAddress} - ${challenge}`;
-
-      // Sign the message using the wallet
+      const message = `Epistery Key Exchange - ${signerAddress} - ${challenge}`;
       const signature = await this.wallet.sign(message, ethers);
 
-      // Get the updated public key (especially important for Web3 wallets)
-      const publicKey = this.wallet.publicKey;
-
-      // Send key exchange request to server
       const keyExchangeData = {
-        clientAddress: signingAddress, // Use signing address for verification
-        clientPublicKey: publicKey,
-        challenge: challenge,
-        message: message,
-        signature: signature,
+        signerAddress,
+        signerPublicKey: publicKey,
+        contractAddress: contractAddress || null, // present in every request; null when unbound
+        challenge,
+        message,
+        signature,
         walletSource: this.wallet.source,
-        // Include identity info if using a contract
-        identityAddress:
-          identityAddress !== signingAddress ? identityAddress : undefined,
-        contractAddress: this.wallet.contractAddress,
       };
 
       const response = await fetch(`${this.rootPath}/connect`, {
@@ -731,8 +735,11 @@ export default class Witness {
     this.save();
 
     // Step 4: re-run key exchange so the host learns the new identity.
-    // performKeyExchange now sees wallet.address == contractAddress and
-    // wallet.rivetAddress == the original rivet, and posts both.
+    // After upgradeToContract, wallet.identityAddress flips from the rivet
+    // to the contract; performKeyExchange compares the cookie's
+    // identityAddress against ours and re-handshakes whenever they differ.
+    // The POST carries { signerAddress, contractAddress } as discrete facts;
+    // the host verifies the contract claim on-chain and reissues the cookie.
     //
     // The issuer's addRivet tx may still be confirming when we land here —
     // the host's /connect verifies on-chain isAuthorized, which won't pass

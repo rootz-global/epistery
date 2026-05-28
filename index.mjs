@@ -55,10 +55,15 @@ class EpisteryAttach {
    * is available). Mirrors the auth pathways the attach() middleware uses,
    * minus the name enrichment, which stays a middleware-only concern.
    *
-   * Returns {address, publicKey, authenticated, authType} or null.
+   * Returns {signerAddress, identityAddress, contractAddress, publicKey,
+   * authenticated, authType} or null. identityAddress is derived as
+   * contractAddress || signerAddress and is always non-null when the rest is.
    */
   async resolveClient(req) {
-    // 1. Bot auth (CLI / programmatic)
+    // 1. Bot auth (CLI / programmatic). Today the bot wire proves a signer
+    // only; contractAddress stays null. A future bot path that wants to
+    // claim a contract will sign a contract claim and the server will
+    // verify isAuthorized — same shape as cookie sessions.
     if (req?.headers?.authorization?.startsWith("Bot ")) {
       try {
         const authHeader = req.headers.authorization.substring(4);
@@ -69,7 +74,13 @@ class EpisteryAttach {
           const { ethers } = await import("ethers");
           const recoveredAddress = ethers.utils.verifyMessage(message, signature);
           if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
-            return { address, authenticated: true, authType: "bot" };
+            return {
+              signerAddress: address,
+              contractAddress: null,
+              identityAddress: address,
+              authenticated: true,
+              authType: "bot",
+            };
           }
         }
       } catch (error) {
@@ -92,19 +103,17 @@ class EpisteryAttach {
     }
     if (cookieValue) {
       try {
-        const sessionData = JSON.parse(
+        const s = JSON.parse(
           Buffer.from(cookieValue, "base64").toString("utf8"),
         );
-        if (sessionData?.rivetAddress) {
-          const hasContract = !!sessionData.contractAddress;
+        if (s?.signerAddress) {
           return {
-            address: hasContract
-              ? sessionData.contractAddress
-              : sessionData.rivetAddress,
-            signerAddress: sessionData.rivetAddress,
-            contractAddress: sessionData.contractAddress || null,
-            publicKey: sessionData.publicKey,
-            authenticated: sessionData.authenticated || false,
+            signerAddress: s.signerAddress,
+            contractAddress: s.contractAddress || null,
+            identityAddress: s.contractAddress || s.signerAddress,
+            publicKey: s.publicKey,
+            authenticated: !!s.authenticated,
+            authType: "cookie",
           };
         }
       } catch {
@@ -130,9 +139,15 @@ class EpisteryAttach {
       next();
     });
 
-    // Authentication middleware - handle Bot auth and session cookies
+    // Authentication middleware — sets req.episteryClient to the three-fact
+    // shape: { signerAddress, contractAddress, identityAddress, publicKey,
+    // authenticated, authType }. signerAddress is the proven rivet,
+    // contractAddress is a verified IdentityContract (or null), and
+    // identityAddress is derived (contractAddress || signerAddress).
+    // Downstream code authorizes against identityAddress.
     app.use(async (req, res, next) => {
-      // 1. Check for Bot authentication (CLI/programmatic access)
+      // 1. Bot authentication (CLI / programmatic). Signer-only today;
+      // no contract claim path in the bot wire.
       if (!req.episteryClient && req.headers.authorization?.startsWith("Bot ")) {
         try {
           const authHeader = req.headers.authorization.substring(4);
@@ -142,13 +157,14 @@ class EpisteryAttach {
           const { address, signature, message } = payload;
 
           if (address && signature && message) {
-            // Verify the signature using ethers
             const { ethers } = await import("ethers");
             const recoveredAddress = ethers.utils.verifyMessage(message, signature);
 
             if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
               req.episteryClient = {
-                address: address,
+                signerAddress: address,
+                contractAddress: null,
+                identityAddress: address,
                 authenticated: true,
                 authType: "bot",
               };
@@ -160,27 +176,21 @@ class EpisteryAttach {
         }
       }
 
-      // 2. Check for session cookie (_epistery)
+      // 2. Session cookie (_epistery). Set at /connect after signer proof and
+      // (if a contract was claimed) on-chain isAuthorized verification.
       if (!req.episteryClient && req.cookies?._epistery) {
         try {
-          const sessionData = JSON.parse(
+          const s = JSON.parse(
             Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
           );
-          if (sessionData && sessionData.rivetAddress) {
-            // If the session was established with a contract-backed rivet
-            // (i.e. /connect verified IdentityContract.isAuthorized), surface
-            // the contract as the canonical identity and keep the rivet as
-            // signerAddress. Plain Tier 1 sessions (no contract) keep
-            // address == rivet — back-compat.
-            const hasContract = !!sessionData.contractAddress;
+          if (s?.signerAddress) {
             req.episteryClient = {
-              address: hasContract
-                ? sessionData.contractAddress
-                : sessionData.rivetAddress,
-              signerAddress: sessionData.rivetAddress,
-              contractAddress: sessionData.contractAddress || null,
-              publicKey: sessionData.publicKey,
-              authenticated: sessionData.authenticated || false,
+              signerAddress: s.signerAddress,
+              contractAddress: s.contractAddress || null,
+              identityAddress: s.contractAddress || s.signerAddress,
+              publicKey: s.publicKey,
+              authenticated: !!s.authenticated,
+              authType: "cookie",
             };
           }
         } catch (e) {

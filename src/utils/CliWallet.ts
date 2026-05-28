@@ -17,9 +17,12 @@ import { join } from 'path';
  * making CLI usage consistent with server architecture.
  */
 
+// Duplicates types.ts::KeyExchangeRequest — kept here so the CLI module
+// doesn't have to reach across the package. Must stay in lockstep.
 export interface KeyExchangeRequest {
-  clientAddress: string;
-  clientPublicKey: string;
+  signerAddress: string;
+  signerPublicKey: string;
+  contractAddress?: string | null;
   challenge: string;
   message: string;
   signature: string;
@@ -194,10 +197,13 @@ export class CliWallet {
     // Sign the message
     const signature = await this.sign(message);
 
-    // Prepare key exchange request
+    // Prepare key exchange request. The CLI never claims a contract via
+    // session cookie today (CLI is bot-auth-first), so contractAddress is
+    // null; the server treats it as a signer-only session.
     const requestData: KeyExchangeRequest = {
-      clientAddress: this.address,
-      clientPublicKey: this.publicKey,
+      signerAddress: this.address,
+      signerPublicKey: this.publicKey,
+      contractAddress: null,
       challenge: challenge,
       message: message,
       signature: signature,

@@ -84,9 +84,21 @@ export interface EpisteryStatus {
 }
 
 
+// The wire shape for POST /connect.
+//
+// Two facts the client can state, one of which carries a proof:
+//   - signerAddress: the rivet (must equal the address recovered from
+//     `signature` over `message`).
+//   - contractAddress: an IdentityContract this signer CLAIMS to speak for.
+//     Server verifies the claim on-chain via isAuthorized(contract, signer).
+//
+// There is no `clientAddress` here, and no `identityAddress`: the client
+// never tells the server which role its address plays; the server derives
+// identityAddress = contractAddress || signerAddress.
 export interface KeyExchangeRequest {
-  clientAddress: string;
-  clientPublicKey: string;
+  signerAddress: string;
+  signerPublicKey: string;
+  contractAddress?: string | null;
   challenge: string;
   message: string;
   signature: string;

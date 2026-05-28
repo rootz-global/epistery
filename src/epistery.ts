@@ -81,8 +81,11 @@ export class Epistery {
 
   public static async handleKeyExchange(request: KeyExchangeRequest, serverWallet: WalletConfig): Promise<KeyExchangeResponse | null> {
     try {
-      // Verify client's identity by checking signature
-      const expectedMessage = `Epistery Key Exchange - ${request.clientAddress} - ${request.challenge}`;
+      // Proof of signer: the message names signerAddress, and the recovered
+      // address from `signature` must equal it. Contract claims (if any) are
+      // verified separately by the caller via on-chain isAuthorized — not
+      // here.
+      const expectedMessage = `Epistery Key Exchange - ${request.signerAddress} - ${request.challenge}`;
 
       if (request.message !== expectedMessage) {
         console.error('Key exchange message mismatch');
@@ -91,11 +94,10 @@ export class Epistery {
         return null;
       }
 
-      // Verify the signature matches the client's address
       const recoveredAddress = ethers.utils.verifyMessage(request.message, request.signature);
 
-      if (recoveredAddress.toLowerCase() !== request.clientAddress.toLowerCase()) {
-        console.error('Client identity verification failed');
+      if (recoveredAddress.toLowerCase() !== request.signerAddress.toLowerCase()) {
+        console.error('Signer verification failed');
         return null;
       }
 
