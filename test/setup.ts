@@ -23,7 +23,7 @@ export default async function globalSetup() {
   }
 
   // Now import fixtures after env is loaded
-  const { TEST_WALLETS, TEST_PROVIDER, TEST_CONTRACT_ADDRESS } = await import('./fixtures/wallets');
+  const { TEST_WALLETS, TEST_PROVIDER } = await import('./fixtures/wallets');
 
   // 1. Override HOME to use test config directory
   const testConfigPath = path.resolve(__dirname, 'config');
@@ -37,11 +37,6 @@ export default async function globalSetup() {
   process.env.CHAIN_RPC_URL = TEST_PROVIDER.rpc;
   process.env.CHAIN_ID = String(TEST_PROVIDER.chainId);
   process.env.SERVER_DOMAIN = 'localhost';
-  process.env.IPFS_URL = 'http://127.0.0.1:5001/api/v0';
-
-  if (TEST_CONTRACT_ADDRESS) {
-    process.env.AGENT_CONTRACT_ADDRESS = TEST_CONTRACT_ADDRESS;
-  }
 
   // 3. Generate test config files from environment variables
   const localhostDir = path.join(testConfigPath, 'localhost');
@@ -56,10 +51,6 @@ export default async function globalSetup() {
   const rootConfig = `[profile]
 name=Test Profile
 email=test@epistery.test
-
-[ipfs]
-url=http://127.0.0.1:5001/api/v0
-gateway=http://localhost:8080
 
 [default.provider]
 chainId=${TEST_PROVIDER.chainId}
@@ -76,7 +67,6 @@ default_domain=localhost
 
   // Write localhost domain config
   const localhostConfig = `domain=localhost
-contract_address=${TEST_CONTRACT_ADDRESS || ''}
 
 [wallet]
 address=${TEST_WALLETS.server.address}
@@ -110,23 +100,7 @@ nativeCurrencyDecimals=${TEST_PROVIDER.nativeCurrencyDecimals}
     throw new Error('Testnet connectivity required for tests. Ensure Polygon Amoy RPC is accessible.');
   }
 
-  // 5. Verify IPFS connectivity
-  try {
-    const ipfsResponse = await fetch('http://127.0.0.1:5001/api/v0/id', {
-      method: 'POST'
-    });
-    if (ipfsResponse.ok) {
-      const ipfsId = await ipfsResponse.json();
-      console.log(`IPFS daemon: OK (PeerID: ${ipfsId.ID?.slice(0, 16)}...)`);
-    } else {
-      console.warn('IPFS daemon not responding. Some tests may fail.');
-    }
-  } catch {
-    console.warn('IPFS daemon not running. Start with: ipfs daemon');
-    console.warn('Some tests requiring IPFS will be skipped.');
-  }
-
-  // 6. Check server wallet balance
+  // 5. Check server wallet balance
   const serverBalance = await provider.getBalance(TEST_WALLETS.server.address);
   const balanceInPol = ethers.utils.formatEther(serverBalance);
   console.log(`Server wallet balance: ${balanceInPol} POL`);
@@ -135,21 +109,6 @@ nativeCurrencyDecimals=${TEST_PROVIDER.nativeCurrencyDecimals}
     console.warn('\nWARNING: Server wallet has low balance!');
     console.warn(`Fund address ${TEST_WALLETS.server.address} with testnet POL`);
     console.warn('Get testnet POL from: https://faucet.polygon.technology/\n');
-  }
-
-  // 7. Check contract address
-  if (!TEST_CONTRACT_ADDRESS) {
-    console.warn('\nWARNING: TEST_CONTRACT_ADDRESS not set in .test.env');
-    console.warn('Deploy contract first: npx hardhat run scripts/deploy-agent.js --network amoy');
-    console.warn('Then set TEST_CONTRACT_ADDRESS in .test.env\n');
-  } else {
-    // Verify contract exists
-    const code = await provider.getCode(TEST_CONTRACT_ADDRESS);
-    if (code === '0x') {
-      console.warn(`\nWARNING: No contract found at ${TEST_CONTRACT_ADDRESS}`);
-    } else {
-      console.log(`Contract verified: ${TEST_CONTRACT_ADDRESS.slice(0, 10)}...`);
-    }
   }
 
   console.log('\n=== Setup Complete ===\n');

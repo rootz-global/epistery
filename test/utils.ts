@@ -40,11 +40,6 @@ export async function createTestApp(options?: {
   process.env.CHAIN_RPC_URL = TEST_PROVIDER.rpc;
   process.env.CHAIN_ID = String(TEST_PROVIDER.chainId);
   process.env.SERVER_DOMAIN = 'localhost';
-  process.env.IPFS_URL = 'http://127.0.0.1:5001/api/v0';
-
-  if (TEST_CONTRACT_ADDRESS) {
-    process.env.AGENT_CONTRACT_ADDRESS = TEST_CONTRACT_ADDRESS;
-  }
 
   // Dynamic import to ensure environment is set first
   const { Epistery } = await import('../index.mjs');
@@ -268,13 +263,6 @@ export function isValidTxHash(hash: string): boolean {
 }
 
 /**
- * Check if a string is a valid IPFS hash
- */
-export function isValidIPFSHash(hash: string): boolean {
-  return /^Qm[a-zA-Z0-9]{44}$/.test(hash) || /^bafy[a-zA-Z0-9]+$/.test(hash);
-}
-
-/**
  * Get provider instance
  */
 export function getProvider(): ethers.providers.JsonRpcProvider {
@@ -287,30 +275,6 @@ export function getProvider(): ethers.providers.JsonRpcProvider {
 export async function getBalance(address: string): Promise<ethers.BigNumber> {
   const provider = getProvider();
   return provider.getBalance(address);
-}
-
-/**
- * Check if IPFS is available
- */
-export async function isIPFSAvailable(): Promise<boolean> {
-  try {
-    const response = await fetch('http://127.0.0.1:5001/api/v0/id', {
-      method: 'POST'
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Skip test if IPFS is not available
- */
-export async function skipIfNoIPFS(): Promise<void> {
-  const available = await isIPFSAvailable();
-  if (!available) {
-    throw new Error('IPFS not available - skipping test');
-  }
 }
 
 /**

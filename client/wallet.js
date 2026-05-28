@@ -987,7 +987,7 @@ if (typeof window !== "undefined") {
 // secp256k1 rivet private key. The encrypted blob may live locally in the
 // wallet JSON and/or be backed up to the epistery server (keyed by credential
 // ID and domain) so it survives iOS ITP IndexedDB purges. See
-// MobileIdentity.md for the full design and threat model.
+// EpisteryMobileIdentity for the full design and threat model.
 const FIDO_PRF_INPUT = new TextEncoder().encode("epistery-fido-prf-v1");
 
 export class FidoWallet extends Wallet {
