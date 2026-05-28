@@ -1209,13 +1209,13 @@ export default class Witness {
   }
 
 
-  // Add another secure device wallet (an unextractable localStorage rivet,
-  // shown to users as a "Browser Wallet"). Same shape as the deprecated
-  // addBrowserWallet, minus the exposed private key — RivetWallet.create wraps
-  // the secp256k1 key with a non-extractable WebCrypto master key. Lets one
-  // device hold multiple independent, non-linked identities (one key, one
-  // identity) the way Ledger/Trezor/MetaMask do.
-  async addRivetWallet(label = null) {
+  // Add a Browser Wallet: a localStorage rivet whose secp256k1 key is wrapped by
+  // a non-extractable WebCrypto master key (the older exposed-key version is gone
+  // — this is the only "browser wallet"). All wallet kinds (Browser/Fido/Web3)
+  // are rivets — device-locked signing keys. Lets one device hold multiple
+  // independent, non-linked identities (one key, one identity) the way
+  // Ledger/Trezor/MetaMask do.
+  async addBrowserWallet(label = null) {
     await ensureEthers();
     const newWallet = await RivetWallet.create(ethers);
 

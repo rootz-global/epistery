@@ -103,12 +103,8 @@ export default function connectRoutes(epistery) {
         contractAddress: verifiedContractAddress,
         publicKey: data.clientPublicKey,
       };
-      try {
-        const name = await epistery.resolveName(data.clientAddress);
-        if (name) clientInfo.name = name;
-      } catch {
-        // Name resolution is opportunistic — many domains won't have it configured
-      }
+      // Naming is a relay service (per-domain contract name + nicknames), not
+      // epistery's concern — no name lookup here.
       if (epistery.options.authentication) {
         clientInfo.profile = await epistery.options.authentication.call(
           epistery.options.authentication,

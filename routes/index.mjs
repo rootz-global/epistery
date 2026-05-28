@@ -4,35 +4,23 @@ import express from "express";
 import statusRoutes from "./status.mjs";
 import authRoutes from "./auth.mjs";
 import connectRoutes from "./connect.mjs";
-import dataRoutes from "./data.mjs";
-import approvalRoutes from "./approval.mjs";
 import identityRoutes from "./identity.mjs";
 import domainRoutes from "./domain.mjs";
-import listRoutes from "./list.mjs";
-import contractRoutes from "./contract.mjs";
-import whitelistRoutes from "./whitelist/index.mjs";
 import fidoRoutes from "./fido.mjs";
 
 /**
  * Creates and configures all Epistery routes
  *
  * Route structure:
- *   /                     - Status (JSON/HTML)
- *   /status               - Status page (HTML)
+ *   /                     - Status (JSON)
  *   /lib/:module          - Client library files
  *   /artifacts/:file      - Contract artifacts
- *   /connect              - Key exchange
+ *   /connect              - Key exchange (binds a rivet to its IdentityContract)
  *   /create               - Create wallet
  *   /auth/*               - Authentication & domain claiming
- *   /data/*               - Data read/write/ownership
- *   /approval/*           - Approval system
- *   /identity/*           - Identity contract management
+ *   /identity/*           - Identity contract binding (prepare-add-rivet)
  *   /domain/*             - Domain initialization
- *   /lists                - Get all lists
- *   /list                 - Get specific list
- *   /list/check/:address  - Check list membership
- *   /contract/*           - Contract version info
- *   /whitelist/*          - Whitelist management (admin, check, add, remove, etc.)
+ *   /fido/*               - FIDO PRF-wrapped rivet key blob storage
  *
  * @param {Object} epistery - The EpisteryAttach instance
  * @returns {express.Router}
@@ -40,7 +28,7 @@ import fidoRoutes from "./fido.mjs";
 export default function createRoutes(epistery) {
   const router = express.Router();
 
-  // Status routes (/, /status, /lib/:module, /artifacts/:contractFile)
+  // Status routes (/, /lib/:module, /artifacts/:contractFile)
   router.use(statusRoutes(epistery));
 
   // Connect routes (/connect, /create)
@@ -49,26 +37,11 @@ export default function createRoutes(epistery) {
   // Auth routes (/auth/*)
   router.use("/auth", authRoutes(epistery));
 
-  // Data routes (/data/*)
-  router.use("/data", dataRoutes(epistery));
-
-  // Approval routes (/approval/*)
-  router.use("/approval", approvalRoutes(epistery));
-
   // Identity routes (/identity/*)
   router.use("/identity", identityRoutes(epistery));
 
   // Domain routes (/domain/*)
   router.use("/domain", domainRoutes(epistery));
-
-  // List routes (/lists, /list, /list/check/:address)
-  router.use(listRoutes(epistery));
-
-  // Contract routes (/contract/*)
-  router.use("/contract", contractRoutes(epistery));
-
-  // Whitelist routes (/whitelist/*)
-  router.use("/whitelist", whitelistRoutes(epistery));
 
   // FIDO routes (/fido/blob — PRF-wrapped rivet private key storage)
   router.use("/fido", fidoRoutes(epistery));

@@ -17,7 +17,7 @@ import express from "express";
  * Auth model (v1): anonymous read/write. The blob is encrypted; the only
  * abuse vector is storage spam, which we limit by validating shape and
  * rejecting oversized payloads. Production deployments should gate writes
- * behind whitelist registration (see routes/whitelist).
+ * behind a host-side authorization check.
  *
  * @param {Object} epistery - The EpisteryAttach instance
  * @returns {express.Router}
