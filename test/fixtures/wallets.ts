@@ -57,6 +57,12 @@ export const TEST_WALLETS: {
   }
 };
 
+// Address of an existing on-chain contract for binding tests (e.g. an
+// IdentityContract that prepare-add-rivet targets). Loaded from .test.env.
+// Originally the agent contract; with that removed, any deployed contract on
+// the test chain works for the binding flow.
+export const TEST_CONTRACT_ADDRESS = process.env.TEST_CONTRACT_ADDRESS || '';
+
 export const TEST_PROVIDER = {
   get name() { return getEnvOrDefault('TEST_PROVIDER_NAME', 'Polygon Amoy Testnet'); },
   get chainId() { return parseInt(getEnvOrDefault('TEST_PROVIDER_CHAIN_ID', '80002'), 10); },
@@ -65,6 +71,3 @@ export const TEST_PROVIDER = {
   get nativeCurrencyName() { return getEnvOrDefault('TEST_PROVIDER_CURRENCY_NAME', 'POL'); },
   get nativeCurrencyDecimals() { return parseInt(getEnvOrDefault('TEST_PROVIDER_CURRENCY_DECIMALS', '18'), 10); }
 };
-
-// Contract address - loaded from .test.env
-export const TEST_CONTRACT_ADDRESS = process.env.TEST_CONTRACT_ADDRESS || '';

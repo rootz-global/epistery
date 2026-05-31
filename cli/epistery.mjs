@@ -10,17 +10,6 @@
  *   epistery info [domain]               Show domain information
  *   epistery set-default <domain>        Set default domain for CLI
  *
- * List Management (use -p <port> for non-standard ports):
- *   epistery lists <domain>              Show all lists
- *   epistery list <domain> <listname>    Show list members
- *   epistery list add <domain> <list> <addr> [name] [role]  Add to list
- *   epistery list rm <domain> <list> <addr>   Remove from list
- *
- * Access Requests:
- *   epistery requests <domain>           Show pending access requests
- *   epistery approve <domain> <list> <addr> [role]  Approve request
- *   epistery deny <domain> <list> <addr> Deny request
- *
  * The curl subcommand automatically performs key exchange when needed.
  */
 
@@ -32,55 +21,11 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
-// Base path for whitelist API endpoints
-const WHITELIST_PATH = "/.well-known/epistery/whitelist";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Load .env file from project root
 dotenv.config({ path: join(__dirname, "../.env") });
-
-// Role name to number mapping
-const ROLE_MAP = {
-  guest: 0,
-  member: 1,
-  moderator: 2,
-  mod: 2,
-  admin: 3,
-  owner: 4,
-};
-
-const ROLE_NAMES = ["Guest", "Member", "Moderator", "Admin", "Owner"];
-
-/**
- * Parse a role (name or number) to a role number
- * @param {string|number} role - Role name or number
- * @param {number} defaultRole - Default role if not specified
- * @returns {number} Role number (0-4)
- */
-function parseRole(role, defaultRole = 1) {
-  if (role === undefined || role === null || role === "") {
-    return defaultRole;
-  }
-
-  // If it's already a number
-  const num = parseInt(role);
-  if (!isNaN(num) && num >= 0 && num <= 4) {
-    return num;
-  }
-
-  // Try to match by name
-  const roleLower = String(role).toLowerCase();
-  if (roleLower in ROLE_MAP) {
-    return ROLE_MAP[roleLower];
-  }
-
-  // Invalid role
-  throw new Error(
-    `Invalid role: "${role}". Valid roles: guest, member, moderator, admin, owner (or 0-4)`,
-  );
-}
 
 /**
  * Extract global options from args (like -p/--port)
@@ -125,7 +70,7 @@ function formatNetworkError(error, domain, port) {
     hint = "\n\nThe server refused the connection.";
     if (domain === "localhost" && !port) {
       hint += "\n→ If your server is running on a different port, use: -p <port>";
-      hint += "\n  Example: epistery lists localhost -p 3001";
+      hint += "\n  Example: epistery info localhost";
     } else {
       hint += "\n→ Make sure the server is running";
       if (port) {
@@ -149,7 +94,7 @@ function formatNetworkError(error, domain, port) {
     hint = "\n\nCould not connect to the server.";
     if (domain === "localhost" && !port) {
       hint += "\n→ If your server is running on a different port, use: -p <port>";
-      hint += "\n  Example: epistery lists localhost -p 3001";
+      hint += "\n  Example: epistery info localhost";
     } else {
       hint += "\n→ Make sure the server is running and accessible";
     }
@@ -178,52 +123,6 @@ function showHelp() {
     "  epistery set-default <domain>             Set default domain for CLI",
   );
   console.log("");
-  console.log("List Management:");
-  console.log(
-    "  epistery lists <domain> [-p port]         Show all lists",
-  );
-  console.log(
-    "  epistery list <domain> <listname> [-p port]",
-  );
-  console.log(
-    "                                            Show list members",
-  );
-  console.log(
-    "  epistery list add <domain> <list> <addr> [name] [role] [-p port]",
-  );
-  console.log(
-    "                                            Add address to list",
-  );
-  console.log(
-    "  epistery list rm <domain> <list> <addr> [-p port]",
-  );
-  console.log(
-    "                                            Remove address from list",
-  );
-  console.log(
-    "  epistery list check <domain> <list> <addr> [-p port]",
-  );
-  console.log(
-    "                                            Check if address is on list",
-  );
-  console.log("");
-  console.log("Access Requests:");
-  console.log(
-    "  epistery requests <domain> [-p port]      Show pending access requests",
-  );
-  console.log(
-    "  epistery approve <domain> <list> <addr> [role] [-p port]",
-  );
-  console.log(
-    "                                            Approve access request",
-  );
-  console.log(
-    "  epistery deny <domain> <list> <addr> [-p port]",
-  );
-  console.log(
-    "                                            Deny access request",
-  );
-  console.log("");
   console.log("Global Options:");
   console.log(
     "  -p, --port <port>        Server port (for localhost development)",
@@ -246,29 +145,9 @@ function showHelp() {
   );
   console.log("  -v, --verbose            Show detailed output");
   console.log("");
-  console.log("Roles (use name or number):");
-  console.log("  guest      (0) - Read-only access");
-  console.log("  member     (1) - Standard access (default)");
-  console.log("  moderator  (2) - Can moderate");
-  console.log("  admin      (3) - Full admin access");
-  console.log("  owner      (4) - Highest level");
-  console.log("");
   console.log("Examples:");
   console.log("  # Initialize a domain (creates wallet)");
   console.log("  epistery initialize localhost");
-  console.log("");
-  console.log("  # List management (use -p for local dev server)");
-  console.log("  epistery lists localhost -p 3001");
-  console.log("  epistery list localhost epistery::admin -p 3001");
-  console.log(
-    '  epistery list add localhost epistery::admin 0x1234... "John Doe" admin -p 3001',
-  );
-  console.log("  epistery list rm localhost channel::general 0x5678... -p 3001");
-  console.log("");
-  console.log("  # Access requests");
-  console.log("  epistery requests localhost -p 3001");
-  console.log("  epistery approve localhost channel::premium 0x1234... member -p 3001");
-  console.log("  epistery deny localhost channel::premium 0x5678... -p 3001");
   console.log("");
   console.log("  # MCP bridge (use with Claude Code or any MCP client)");
   console.log("  claude mcp add --transport stdio geist-social -- epistery mcp https://geist.social");
@@ -424,383 +303,6 @@ function setDefault(domain) {
   }
 }
 
-/**
- * Build the base URL for a domain
- * Uses https by default, http for localhost
- * @param {string} domain - Domain name
- * @param {string|null} port - Optional port number
- */
-function buildBaseUrl(domain, port = null) {
-  const protocol = domain === "localhost" ? "http" : "https";
-  const portSuffix = port ? `:${port}` : "";
-  return `${protocol}://${domain}${portSuffix}`;
-}
-
-async function showAllLists(domain, port = null) {
-  try {
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/lists`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: authHeader,
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    console.log("");
-    console.log(`Lists for domain: ${domain}`);
-    console.log(`Total lists: ${data.count}`);
-    console.log("");
-
-    if (data.lists && data.lists.length > 0) {
-      data.lists.forEach((list, index) => {
-        console.log(`  ${index + 1}. ${list}`);
-      });
-    } else {
-      console.log("No lists found.");
-    }
-
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function showList(domain, listName, port = null) {
-  try {
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/list?list=${encodeURIComponent(listName)}`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: authHeader,
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    console.log("");
-    console.log(`List: ${data.listName}`);
-    console.log(`Total members: ${data.count}`);
-    console.log("");
-
-    if (data.members && data.members.length > 0) {
-      data.members.forEach((member, index) => {
-        const addr = member.address || member.addr;
-        const roleName = ROLE_NAMES[member.role] || `Role ${member.role}`;
-        console.log(`  ${index + 1}. ${addr}`);
-        if (member.name) {
-          console.log(`      Name: ${member.name}`);
-        }
-        console.log(`      Role: ${roleName}`);
-      });
-    } else {
-      console.log("No members in this list.");
-    }
-
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function addToList(domain, listName, address, name, role, port = null) {
-  try {
-    // Validate the address
-    if (!ethers.utils.isAddress(address)) {
-      throw new Error(`Invalid Ethereum address: ${address}`);
-    }
-
-    const roleNum = parseRole(role, 1); // Default to Member (1)
-    const roleName = ROLE_NAMES[roleNum] || `Role ${roleNum}`;
-
-    console.log(`Adding ${address} to list "${listName}"`);
-    console.log(`  Role: ${roleName}`);
-    if (name) console.log(`  Name: ${name}`);
-    console.log("");
-
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/add`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        listName: listName,
-        address: address,
-        name: name || "",
-        role: roleNum,
-        meta: "",
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    console.log("");
-    console.log("Address added to list successfully");
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function removeFromList(domain, listName, address, port = null) {
-  try {
-    // Validate the address
-    if (!ethers.utils.isAddress(address)) {
-      throw new Error(`Invalid Ethereum address: ${address}`);
-    }
-
-    console.log(`Removing ${address} from list "${listName}"`);
-    console.log("");
-
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/remove`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        listName: listName,
-        address: address,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    console.log("");
-    console.log("Address removed from list successfully");
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function checkListMembership(domain, listName, address, port = null) {
-  try {
-    // Validate the address
-    if (!ethers.utils.isAddress(address)) {
-      throw new Error(`Invalid Ethereum address: ${address}`);
-    }
-
-    const baseUrl = buildBaseUrl(domain, port);
-    // Use the public list check endpoint (doesn't require auth)
-    const url = `${baseUrl}/.well-known/epistery/list/check/${address}?list=${encodeURIComponent(listName)}`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "GET",
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    console.log("");
-    console.log(`Address: ${address}`);
-    console.log(`List: ${listName}`);
-    console.log(`Is Listed: ${data.isListed ? "YES" : "NO"}`);
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function showPendingRequests(domain, port = null) {
-  try {
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/pending-requests`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: authHeader,
-      },
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    console.log("");
-    console.log(`Pending access requests for: ${domain}`);
-    console.log(`Total pending: ${data.count}`);
-    console.log("");
-
-    if (data.requests && data.requests.length > 0) {
-      data.requests.forEach((req, index) => {
-        console.log(`  ${index + 1}. ${req.address}`);
-        console.log(`      List: ${req.listName}`);
-        if (req.message) {
-          console.log(`      Message: ${req.message}`);
-        }
-        console.log(`      Requested: ${req.timestamp}`);
-        console.log("");
-      });
-
-      console.log("To approve: epistery approve <domain> <list> <addr> [role] [-p port]");
-      console.log("To deny:    epistery deny <domain> <list> <addr> [-p port]");
-    } else {
-      console.log("No pending access requests.");
-    }
-
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function approveRequest(domain, listName, address, role, port = null) {
-  try {
-    // Validate the address
-    if (!ethers.utils.isAddress(address)) {
-      throw new Error(`Invalid Ethereum address: ${address}`);
-    }
-
-    const roleNum = parseRole(role, 1); // Default to Member (1)
-    const roleName = ROLE_NAMES[roleNum] || `Role ${roleNum}`;
-
-    console.log(`Approving ${address} for list "${listName}"`);
-    console.log(`  Role: ${roleName}`);
-    console.log("");
-
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/handle-request`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        address: address,
-        listName: listName,
-        approved: true,
-        role: roleNum,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    console.log("");
-    console.log("Access request approved");
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
-
-async function denyRequest(domain, listName, address, port = null) {
-  try {
-    // Validate the address
-    if (!ethers.utils.isAddress(address)) {
-      throw new Error(`Invalid Ethereum address: ${address}`);
-    }
-
-    console.log(`Denying ${address} for list "${listName}"`);
-    console.log("");
-
-    const wallet = CliWallet.load(domain);
-    const authHeader = await wallet.createBotAuthHeader();
-    const baseUrl = buildBaseUrl(domain, port);
-    const url = `${baseUrl}${WHITELIST_PATH}/handle-request`;
-
-    const fetch = (await import("node-fetch")).default;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: authHeader,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        address: address,
-        listName: listName,
-        approved: false,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-
-    console.log("");
-    console.log("Access request denied");
-    console.log("");
-  } catch (error) {
-    console.error("");
-    console.error("Error:", formatNetworkError(error, domain, port));
-    process.exit(1);
-  }
-}
 
 function parseCurlArgs(args) {
   const options = {
@@ -1149,89 +651,6 @@ async function main() {
           process.exit(1);
         }
         setDefault(args[0]);
-        break;
-
-      case "lists":
-        if (!args[0]) {
-          console.error("Error: Domain name required");
-          console.error("Usage: epistery lists <domain> [-p port]");
-          process.exit(1);
-        }
-        await showAllLists(args[0], port);
-        break;
-
-      case "list":
-        if (args.length === 0) {
-          console.error("Error: Arguments required");
-          console.error("Usage: epistery list <domain> <listname> [-p port]");
-          console.error(
-            "       epistery list add <domain> <list> <addr> [name] [role] [-p port]",
-          );
-          console.error("       epistery list rm <domain> <list> <addr> [-p port]");
-          console.error("       epistery list check <domain> <list> <addr> [-p port]");
-          process.exit(1);
-        }
-
-        if (args[0] === "add") {
-          if (!args[1] || !args[2] || !args[3]) {
-            console.error("Error: Domain, list name, and address required");
-            console.error(
-              "Usage: epistery list add <domain> <list> <addr> [name] [role] [-p port]",
-            );
-            process.exit(1);
-          }
-          await addToList(args[1], args[2], args[3], args[4], args[5], port);
-        } else if (args[0] === "rm") {
-          if (!args[1] || !args[2] || !args[3]) {
-            console.error("Error: Domain, list name, and address required");
-            console.error("Usage: epistery list rm <domain> <list> <addr> [-p port]");
-            process.exit(1);
-          }
-          await removeFromList(args[1], args[2], args[3], port);
-        } else if (args[0] === "check") {
-          if (!args[1] || !args[2] || !args[3]) {
-            console.error("Error: Domain, list name, and address required");
-            console.error("Usage: epistery list check <domain> <list> <addr> [-p port]");
-            process.exit(1);
-          }
-          await checkListMembership(args[1], args[2], args[3], port);
-        } else {
-          if (!args[0] || !args[1]) {
-            console.error("Error: Domain and list name required");
-            console.error("Usage: epistery list <domain> <listname> [-p port]");
-            process.exit(1);
-          }
-          await showList(args[0], args[1], port);
-        }
-        break;
-
-      case "requests":
-        if (!args[0]) {
-          console.error("Error: Domain name required");
-          console.error("Usage: epistery requests <domain> [-p port]");
-          process.exit(1);
-        }
-        await showPendingRequests(args[0], port);
-        break;
-
-      case "approve":
-        if (!args[0] || !args[1] || !args[2]) {
-          console.error("Error: Domain, list name, and address required");
-          console.error(
-            "Usage: epistery approve <domain> <list> <addr> [role] [-p port]",
-          );
-          process.exit(1);
-        }
-        await approveRequest(args[0], args[1], args[2], args[3], port);
-        break;
-
-      case "deny":
-        if (!args[0] || !args[1] || !args[2]) {
-          console.error("Error: Domain, list name, and address required");
-          console.error("Usage: epistery deny <domain> <list> <addr> [-p port]");
-          process.exit(1);
-        }
-        await denyRequest(args[0], args[1], args[2], port);
         break;
 
       case "help":

@@ -66,8 +66,9 @@ describe('Connect Routes', () => {
       const invalidSignature = '0x' + '00'.repeat(65); // Invalid signature
 
       const payload = {
-        clientAddress: client1Wallet.address,
-        clientPublicKey: client1Wallet.publicKey,
+        signerAddress: client1Wallet.address,
+        signerPublicKey: client1Wallet.publicKey,
+        contractAddress: null,
         challenge,
         message,
         signature: invalidSignature,
@@ -88,8 +89,9 @@ describe('Connect Routes', () => {
       const signature = await client1Wallet.signMessage(message);
 
       const payload = {
-        clientAddress: fakeAddress,
-        clientPublicKey: client1Wallet.publicKey,
+        signerAddress: fakeAddress,
+        signerPublicKey: client1Wallet.publicKey,
+        contractAddress: null,
         challenge,
         message,
         signature,
@@ -104,7 +106,7 @@ describe('Connect Routes', () => {
 
     it('should return 401 for missing required fields', async () => {
       const payload = {
-        clientAddress: client1Wallet.address
+        signerAddress: client1Wallet.address
         // Missing other required fields
       };
 
@@ -136,7 +138,11 @@ describe('Connect Routes', () => {
         .expect(200);
 
       expect(callbackCalled).toBe(true);
-      expect(callbackClientInfo.address).toBe(client1Wallet.address);
+      // No contract claim → identityAddress equals signerAddress equals the
+      // EOA we just proved.
+      expect(callbackClientInfo.signerAddress).toBe(client1Wallet.address);
+      expect(callbackClientInfo.identityAddress).toBe(client1Wallet.address);
+      expect(callbackClientInfo.contractAddress).toBeNull();
       expect(response.body.authenticated).toBe(true);
       expect(response.body.profile).toEqual({ userId: 'test-user', role: 'admin' });
     });

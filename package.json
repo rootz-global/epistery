@@ -1,6 +1,6 @@
 {
   "name": "epistery",
-  "version": "1.5.11",
+  "version": "1.2.0",
   "description": "Epistery brings blockchain capabilities to mundane web tasks like engagement metrics, authentication and commerce of all sorts.",
   "author": "Rootz Corp.",
   "license": "MIT",
@@ -14,16 +14,12 @@
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "start": "npm run build && node demo/server.mjs",
     "dev": "ts-node -r tsconfig-paths/register src/api.ts",
     "watch": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
     "certify": "node cli/index.mjs certify",
     "initialize": "node cli/index.mjs initialize",
     "testcertify": "PROFILE=DEV node --inspect=0.0.0.0:9229 cli/index.mjs certify",
-    "deploy:agent": "npx hardhat run scripts/deploy-agent.js --network polygon",
-    "verify:agent": "node scripts/verify-agent.js",
     "test": "vitest run",
-    "test:setup": "node scripts/setup-test-env.js",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

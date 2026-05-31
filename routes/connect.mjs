@@ -19,13 +19,18 @@ const IDENTITY_AUTHORIZED_ABI = [
 export default function connectRoutes(epistery) {
   const router = express.Router();
 
-  // Session check - returns current identity from cookie (via auth middleware)
+  // Session check — surface the three facts the middleware exposes, no more.
+  // Witness compares its current identityAddress against this; matching means
+  // the cookie already names us, so no re-handshake needed.
   router.get("/connect", (req, res) => {
-    if (req.episteryClient) {
-      const { address, name } = req.episteryClient;
-      return res.json(name ? { address, name } : { address });
-    }
-    res.json({});
+    const c = req.episteryClient;
+    if (!c) return res.json({});
+    res.json({
+      signerAddress: c.signerAddress,
+      identityAddress: c.identityAddress,
+      contractAddress: c.contractAddress,
+      ...(c.name ? { name: c.name } : {}),
+    });
   });
 
   // Key exchange endpoint - handles POST requests for key exchange
@@ -52,17 +57,16 @@ export default function connectRoutes(epistery) {
         });
       }
 
-      // If the client presents a contract-backed identity (Tier 2), verify
-      // on-chain that the signing rivet is actually one of the contract's
-      // authorized rivets. This is what closes the cross-host trust loop —
-      // the witness can claim any contract address, but the chain is truth.
+      // Contract claim — when present, ALWAYS verified on-chain. No "is
+      // contract == signer? then skip" shortcut: the wire never overloads
+      // a single field, so the verifier never has to guess what the client
+      // meant. The chain is truth; we ask it directly.
       //
-      // Provider: use the host's domain RPC. v0 assumes the IdentityContract
+      // Provider: the host's domain RPC. v0 assumes the IdentityContract
       // lives on the same chain as the host. Cross-chain identity is a
       // future concern.
       let verifiedContractAddress = null;
-      const claimedContract = data.contractAddress || data.identityAddress;
-      if (claimedContract) {
+      if (data.contractAddress) {
         try {
           const rpcUrl =
             serverWallet?.provider?.privateRpc ||
@@ -75,18 +79,18 @@ export default function connectRoutes(epistery) {
           }
           const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
           const identity = new ethers.Contract(
-            claimedContract,
+            data.contractAddress,
             IDENTITY_AUTHORIZED_ABI,
             provider,
           );
-          const isAuth = await identity.isAuthorized(data.clientAddress);
+          const isAuth = await identity.isAuthorized(data.signerAddress);
           if (!isAuth) {
             return res.status(401).json({
               error:
-                "Identity contract does not authorize this rivet (isAuthorized returned false)",
+                "Identity contract does not authorize this signer (isAuthorized returned false)",
             });
           }
-          verifiedContractAddress = claimedContract;
+          verifiedContractAddress = data.contractAddress;
         } catch (e) {
           console.error("[connect] Identity contract verification failed:", e.message);
           return res.status(401).json({
@@ -95,20 +99,17 @@ export default function connectRoutes(epistery) {
         }
       }
 
+      // Build the three-fact view we expose to downstream middleware AND
+      // hand to any caller-supplied authentication() hook. identityAddress is
+      // derived here; it never appears on the wire and is not stored.
       const clientInfo = {
-        // For verified contract sessions, present the contract as the
-        // canonical identity. The rivet remains accessible as signerAddress.
-        address: verifiedContractAddress || data.clientAddress,
-        signerAddress: data.clientAddress,
+        signerAddress: data.signerAddress,
         contractAddress: verifiedContractAddress,
-        publicKey: data.clientPublicKey,
+        identityAddress: verifiedContractAddress || data.signerAddress,
+        publicKey: data.signerPublicKey,
       };
-      try {
-        const name = await epistery.resolveName(data.clientAddress);
-        if (name) clientInfo.name = name;
-      } catch {
-        // Name resolution is opportunistic — many domains won't have it configured
-      }
+      // Naming is a relay service (per-domain contract name + nicknames), not
+      // epistery's concern — no name lookup here.
       if (epistery.options.authentication) {
         clientInfo.profile = await epistery.options.authentication.call(
           epistery.options.authentication,
@@ -118,14 +119,13 @@ export default function connectRoutes(epistery) {
       }
       req.episteryClient = clientInfo;
 
-      // Create session cookie. Rivet address always recorded; contract
-      // address only when we just verified it on-chain. Downstream middleware
-      // (index.mjs) surfaces contractAddress as req.episteryClient.address
-      // when present.
+      // Cookie stores facts only — signer + (verified) contract. identityAddress
+      // is re-derived every read; persisting it would just be a place for the
+      // two to drift apart.
       const sessionData = {
-        rivetAddress: data.clientAddress,
-        contractAddress: verifiedContractAddress || null,
-        publicKey: data.clientPublicKey,
+        signerAddress: data.signerAddress,
+        contractAddress: verifiedContractAddress,
+        publicKey: data.signerPublicKey,
         authenticated: clientInfo.authenticated || false,
         timestamp: new Date().toISOString(),
       };

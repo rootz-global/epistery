@@ -2,40 +2,14 @@ import express from "express";
 import { Epistery } from "../dist/epistery.js";
 
 /**
- * Identity routes - deploy identity contracts and add rivets
+ * Identity routes - bind a rivet to an existing IdentityContract.
+ * (Contract CREATION was removed in the identity-only refactor — epistery binds
+ * keys to contracts and verifies on-chain; it does not deploy/manage contracts.)
  * @param {Object} epistery - The EpisteryAttach instance
  * @returns {express.Router}
  */
 export default function identityRoutes(epistery) {
   const router = express.Router();
-
-  /**
-   * POST /identity/prepare-deploy
-   *
-   * Prepares an unsigned transaction for deploying an IdentityContract.
-   * Server handles gas estimation and client funding.
-   * Returns unsigned deployment transaction for client to sign.
-   */
-  router.post("/prepare-deploy", async (req, res) => {
-    try {
-      const { clientAddress, domain } = req.body;
-
-      if (!clientAddress || !domain) {
-        return res.status(400).json({
-          error: "Missing required fields: clientAddress, domain",
-        });
-      }
-
-      const result = await Epistery.prepareDeployIdentityContract(
-        clientAddress,
-        domain,
-      );
-      res.json(result);
-    } catch (error) {
-      console.error("Prepare deploy identity contract error:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   /**
    * POST /identity/prepare-add-rivet

@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { fileURLToPath } from "url";
 import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
@@ -10,22 +9,6 @@ import createRoutes from "./routes/index.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Expected Agent contract version — read directly from the source file
-// shipped in this package, so it tracks whatever this build was compiled
-// from. No separate constant to keep in sync.
-export const EXPECTED_CONTRACT_VERSION = (() => {
-  try {
-    const source = fs.readFileSync(
-      path.join(__dirname, "contracts/agent.sol"),
-      "utf8",
-    );
-    const match = source.match(/VERSION\s*=\s*"([^"]+)"/);
-    return match ? match[1] : null;
-  } catch {
-    return null;
-  }
-})();
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 function getDomainConfig(domain) {
@@ -70,12 +53,17 @@ class EpisteryAttach {
    * middleware path (where `req.cookies` is populated by cookie-parser) and
    * in raw contexts like a WebSocket upgrade (where only `req.headers.cookie`
    * is available). Mirrors the auth pathways the attach() middleware uses,
-   * minus the notabot/name enrichment, which stays a middleware-only concern.
+   * minus the name enrichment, which stays a middleware-only concern.
    *
-   * Returns {address, publicKey, authenticated, authType} or null.
+   * Returns {signerAddress, identityAddress, contractAddress, publicKey,
+   * authenticated, authType} or null. identityAddress is derived as
+   * contractAddress || signerAddress and is always non-null when the rest is.
    */
   async resolveClient(req) {
-    // 1. Bot auth (CLI / programmatic)
+    // 1. Bot auth (CLI / programmatic). Today the bot wire proves a signer
+    // only; contractAddress stays null. A future bot path that wants to
+    // claim a contract will sign a contract claim and the server will
+    // verify isAuthorized — same shape as cookie sessions.
     if (req?.headers?.authorization?.startsWith("Bot ")) {
       try {
         const authHeader = req.headers.authorization.substring(4);
@@ -86,7 +74,13 @@ class EpisteryAttach {
           const { ethers } = await import("ethers");
           const recoveredAddress = ethers.utils.verifyMessage(message, signature);
           if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
-            return { address, authenticated: true, authType: "bot" };
+            return {
+              signerAddress: address,
+              contractAddress: null,
+              identityAddress: address,
+              authenticated: true,
+              authType: "bot",
+            };
           }
         }
       } catch (error) {
@@ -109,19 +103,17 @@ class EpisteryAttach {
     }
     if (cookieValue) {
       try {
-        const sessionData = JSON.parse(
+        const s = JSON.parse(
           Buffer.from(cookieValue, "base64").toString("utf8"),
         );
-        if (sessionData?.rivetAddress) {
-          const hasContract = !!sessionData.contractAddress;
+        if (s?.signerAddress) {
           return {
-            address: hasContract
-              ? sessionData.contractAddress
-              : sessionData.rivetAddress,
-            signerAddress: sessionData.rivetAddress,
-            contractAddress: sessionData.contractAddress || null,
-            publicKey: sessionData.publicKey,
-            authenticated: sessionData.authenticated || false,
+            signerAddress: s.signerAddress,
+            contractAddress: s.contractAddress || null,
+            identityAddress: s.contractAddress || s.signerAddress,
+            publicKey: s.publicKey,
+            authenticated: !!s.authenticated,
+            authType: "cookie",
           };
         }
       } catch {
@@ -147,9 +139,15 @@ class EpisteryAttach {
       next();
     });
 
-    // Authentication middleware - handle Bot auth and session cookies
+    // Authentication middleware — sets req.episteryClient to the three-fact
+    // shape: { signerAddress, contractAddress, identityAddress, publicKey,
+    // authenticated, authType }. signerAddress is the proven rivet,
+    // contractAddress is a verified IdentityContract (or null), and
+    // identityAddress is derived (contractAddress || signerAddress).
+    // Downstream code authorizes against identityAddress.
     app.use(async (req, res, next) => {
-      // 1. Check for Bot authentication (CLI/programmatic access)
+      // 1. Bot authentication (CLI / programmatic). Signer-only today;
+      // no contract claim path in the bot wire.
       if (!req.episteryClient && req.headers.authorization?.startsWith("Bot ")) {
         try {
           const authHeader = req.headers.authorization.substring(4);
@@ -159,13 +157,14 @@ class EpisteryAttach {
           const { address, signature, message } = payload;
 
           if (address && signature && message) {
-            // Verify the signature using ethers
             const { ethers } = await import("ethers");
             const recoveredAddress = ethers.utils.verifyMessage(message, signature);
 
             if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
               req.episteryClient = {
-                address: address,
+                signerAddress: address,
+                contractAddress: null,
+                identityAddress: address,
                 authenticated: true,
                 authType: "bot",
               };
@@ -177,27 +176,21 @@ class EpisteryAttach {
         }
       }
 
-      // 2. Check for session cookie (_epistery)
+      // 2. Session cookie (_epistery). Set at /connect after signer proof and
+      // (if a contract was claimed) on-chain isAuthorized verification.
       if (!req.episteryClient && req.cookies?._epistery) {
         try {
-          const sessionData = JSON.parse(
+          const s = JSON.parse(
             Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
           );
-          if (sessionData && sessionData.rivetAddress) {
-            // If the session was established with a contract-backed rivet
-            // (i.e. /connect verified IdentityContract.isAuthorized), surface
-            // the contract as the canonical identity and keep the rivet as
-            // signerAddress. Plain Tier 1 sessions (no contract) keep
-            // address == rivet — back-compat.
-            const hasContract = !!sessionData.contractAddress;
+          if (s?.signerAddress) {
             req.episteryClient = {
-              address: hasContract
-                ? sessionData.contractAddress
-                : sessionData.rivetAddress,
-              signerAddress: sessionData.rivetAddress,
-              contractAddress: sessionData.contractAddress || null,
-              publicKey: sessionData.publicKey,
-              authenticated: sessionData.authenticated || false,
+              signerAddress: s.signerAddress,
+              contractAddress: s.contractAddress || null,
+              identityAddress: s.contractAddress || s.signerAddress,
+              publicKey: s.publicKey,
+              authenticated: !!s.authenticated,
+              authType: "cookie",
             };
           }
         } catch (e) {
@@ -207,552 +200,8 @@ class EpisteryAttach {
       next();
     });
 
-    // Middleware to enrich request with notabot score and resolved name
-    app.use(async (req, res, next) => {
-      // Check if client info is available (from key exchange or authentication)
-      if (req.episteryClient && req.episteryClient.address) {
-        // Resolve address → name from the domain agent whitelists.
-        // Opportunistic — many domains won't have names configured.
-        try {
-          const name = await req.app.locals.epistery.resolveName(
-            req.episteryClient.address,
-          );
-          if (name) {
-            req.episteryClient.name = name;
-          }
-        } catch {
-          // Silent — name is optional
-        }
-
-        try {
-          // Get identity contract address if available
-          // For now, we'll try to get it from query params or headers
-          const identityContractAddress =
-            req.query.identityContract || req.headers["x-identity-contract"];
-
-          // Retrieve notabot score
-          const notabotScore = await Epistery.getNotabotScore(
-            req.episteryClient.address,
-            identityContractAddress,
-          );
-
-          // Enrich client info with notabot data
-          req.episteryClient.notabotPoints = notabotScore.points;
-          req.episteryClient.notabotLastUpdate = notabotScore.lastUpdate;
-          req.episteryClient.notabotVerified = notabotScore.verified;
-          req.episteryClient.notabotEventCount = notabotScore.eventCount;
-
-          // Make available at the documented location (app.locals.epistery)
-          if (req.app.locals.epistery) {
-            req.app.locals.epistery.clientWallet = Object.assign(
-              req.app.locals.epistery.clientWallet || {},
-              req.episteryClient,
-            );
-          }
-        } catch (error) {
-          // Log error but don't fail the request
-          console.error(
-            "[Epistery] Failed to retrieve notabot score:",
-            error.message,
-          );
-        }
-      }
-      next();
-    });
-
     // Mount routes - RFC 8615 compliant well-known URI
     app.use(this.rootPath, this.routes());
-  }
-
-  /**
-   * Get a list for the current server domain
-   * @param {string} listName - Name of the list (e.g., "example.com::admin")
-   * @returns {Promise<Array>} Array of list entries
-   */
-  async getList(listName) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!listName) {
-      throw new Error("List name is required");
-    }
-
-    // Initialize server wallet if not already done
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.GetWhitelist(
-      serverWallet,
-      this.domain.wallet.address,
-      listName,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Check if an address is on a list for the current server domain
-   * @param {string} address - The address to check
-   * @param {string} listName - Name of the list to check, if null return all for address
-   * @returns {Promise<boolean>} True if address is on the list
-   */
-  async isListed(address, listName) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!listName) {
-      throw new Error("List name is required");
-    }
-
-    // Initialize server wallet if not already done
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.IsWhitelisted(
-      serverWallet,
-      this.domain.wallet.address,
-      listName,
-      address,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Get all list memberships for a specific address
-   * @param {string} address - The address to look up
-   * @returns {Promise<Array>} Array of membership entries with listName, role, addedAt
-   */
-  async getListsForMember(address) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!address) {
-      throw new Error("Address is required");
-    }
-
-    // Initialize server wallet if not already done
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.GetListsForMember(
-      serverWallet,
-      address,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Resolve an address to its human-readable name as known by this domain.
-   * Walks the address's whitelist memberships under the domain agent and
-   * returns the first non-empty `name` field. Returns undefined if no entry
-   * has a name (or the address isn't on any list).
-   * @param {string} address - The address to resolve
-   * @returns {Promise<string | undefined>} The resolved name, or undefined
-   */
-  async resolveName(address) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!address) {
-      throw new Error("Address is required");
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.ResolveAddressName(
-      serverWallet,
-      this.domain.wallet.address,
-      address,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Set the human-readable name for an address under this domain's scope.
-   * Names belong to the address, not to whitelist entries or roles.
-   * @param {string} address - The address to name
-   * @param {string} name - The name (empty string clears)
-   */
-  async setAddressName(address, name) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!address) {
-      throw new Error("Address is required");
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.SetAddressName(
-      serverWallet,
-      address,
-      name,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Get the contract sponsor (owner) address
-   * @returns {Promise<string>} The sponsor's Ethereum address
-   */
-  async getSponsor() {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    // Get provider from domain config
-    const providerConfig = this.config.data?.provider;
-    if (!providerConfig || !providerConfig.rpc) {
-      throw new Error("Provider not configured for domain");
-    }
-
-    // Create ethers provider and contract
-    const { ethers } = await import("ethers");
-    const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
-
-    // Load contract ABI using fs like other methods in this file
-    const AgentArtifact = JSON.parse(
-      fs.readFileSync(
-        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
-        "utf8",
-      ),
-    );
-
-    const contract = new ethers.Contract(
-      contractAddress,
-      AgentArtifact.abi,
-      provider,
-    );
-
-    return await contract.sponsor();
-  }
-
-  /**
-   * Add an address to a named list
-   * @param {string} listName - Name of the list
-   * @param {string} address - Ethereum address to add
-   * @param {string} name - Display name
-   * @param {number} role - Role (0-4)
-   * @param {string} meta - Metadata JSON string
-   */
-  async addToList(listName, address, name = "", role = 0, meta = "") {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!listName) {
-      throw new Error("List name is required");
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.AddToWhitelist(
-      serverWallet,
-      listName,
-      address,
-      name,
-      role,
-      meta,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Remove an address from a named list
-   * @param {string} listName - Name of the list
-   * @param {string} address - Ethereum address to remove
-   */
-  async removeFromList(listName, address) {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    if (!listName) {
-      throw new Error("List name is required");
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const contractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    return await Utils.RemoveFromWhitelist(
-      serverWallet,
-      listName,
-      address,
-      contractAddress,
-    );
-  }
-
-  /**
-   * Check if the deployed contract needs upgrade
-   * @returns {Promise<Object>} Version comparison result
-   */
-  async checkContractVersion() {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    // Get contract address from domain config - reload from disk to get latest
-    this.config.setPath(`/${this.domainName}`);
-    this.config.load(); // Force reload from disk
-    const agentContractAddress = this.config.data?.contract_address;
-    const upgradeNotes = this.config.data?.contract_upgrade_notes;
-
-    if (
-      !agentContractAddress ||
-      agentContractAddress === "0x0000000000000000000000000000000000000000"
-    ) {
-      return {
-        needsUpgrade: true,
-        reason: "no_contract",
-        deployedVersion: null,
-        expectedVersion: EXPECTED_CONTRACT_VERSION,
-        contractAddress: null,
-        notes: upgradeNotes,
-      };
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    try {
-      // Load contract ABI - use readFileSync since dynamic import with assertions is problematic
-      const AgentArtifact = JSON.parse(
-        fs.readFileSync(
-          path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
-          "utf8",
-        ),
-      );
-
-      const { ethers } = await import("ethers");
-      const agentContract = new ethers.Contract(
-        agentContractAddress,
-        AgentArtifact.abi,
-        serverWallet,
-      );
-
-      // Try to get VERSION from contract
-      let deployedVersion = null;
-      try {
-        deployedVersion = await agentContract.VERSION();
-      } catch (error) {
-        // Contract doesn't have VERSION field (old version)
-        deployedVersion = "1.0.0"; // Assume old version
-      }
-
-      const needsUpgrade = deployedVersion !== EXPECTED_CONTRACT_VERSION;
-
-      return {
-        needsUpgrade,
-        reason: needsUpgrade ? "version_mismatch" : "up_to_date",
-        deployedVersion,
-        expectedVersion: EXPECTED_CONTRACT_VERSION,
-        contractAddress: agentContractAddress,
-        notes: upgradeNotes,
-      };
-    } catch (error) {
-      return {
-        needsUpgrade: true,
-        reason: "check_failed",
-        error: error.message,
-        deployedVersion: null,
-        expectedVersion: EXPECTED_CONTRACT_VERSION,
-        contractAddress: agentContractAddress,
-        notes: upgradeNotes,
-      };
-    }
-  }
-
-  /**
-   * Get all list names for the current domain
-   * @returns {Promise<string[]>} Array of list names
-   */
-  async getLists() {
-    if (!this.domain?.wallet) {
-      throw new Error("Server wallet not initialized for domain");
-    }
-
-    if (!this.domainName) {
-      throw new Error("Domain name not set");
-    }
-
-    const serverWallet = Utils.InitServerWallet(this.domainName);
-    if (!serverWallet) {
-      throw new Error("Server wallet not connected");
-    }
-
-    // Get contract address from domain config
-    this.config.setPath(`/${this.domainName}`);
-    const agentContractAddress =
-      this.config.data?.contract_address ||
-      process.env.AGENT_CONTRACT_ADDRESS;
-    if (
-      !agentContractAddress ||
-      agentContractAddress === "0x0000000000000000000000000000000000000000"
-    ) {
-      throw new Error("Agent contract address not configured for domain");
-    }
-
-    const AgentArtifact = JSON.parse(
-      fs.readFileSync(
-        path.join(__dirname, "artifacts/contracts/agent.sol/Agent.json"),
-        "utf8",
-      ),
-    );
-
-    const { ethers } = await import("ethers");
-    const agentContract = new ethers.Contract(
-      agentContractAddress,
-      AgentArtifact.abi,
-      serverWallet,
-    );
-
-    const listNames = await agentContract.getListNames(
-      this.domain.wallet.address,
-    );
-    return listNames;
-  }
-
-  /**
-   * Update a list entry
-   * @param {string} listName - Name of the list
-   * @param {string} address - Ethereum address
-   * @param {string} name - Display name
-   * @param {number} role - Role (0-4)
-   * @param {string} meta - Metadata JSON string
-   */
-  async updateEntry(listName, address, name, role, meta) {
-    // For now, update is done by removing and re-adding
-    await this.removeFromList(listName, address);
-    await this.addToList(listName, address, name, role, meta);
   }
 
   /**
@@ -798,7 +247,6 @@ class EpisteryAttach {
    *   /approval/*           - Approval system
    *   /identity/*           - Identity contract management
    *   /domain/*             - Domain initialization
-   *   /notabot/*            - Notabot scoring
    *   /lists                - Get all lists
    *   /list                 - Get specific list
    *   /list/check/:address  - Check list membership
