@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=7";
+} from "./wallet.js?v=8";
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -252,30 +252,55 @@ export default class Witness {
 
     this.server = storageData.server;
 
-    // Check if migration happened and persist it immediately to avoid data loss
+    // Purge legacy/unsupported wallets. Only the three rivet types (web3,
+    // browser "rivet", fido) may engage an epistery site. The pre-2.0 plaintext
+    // "local" browser wallet is NOT a rivet; scrub it from storage so no exposed
+    // private key is left behind (hygiene — the security is the rivet, not
+    // hiding this). A single legacy entry must never abort the load of the rest.
+    const RIVET_SOURCES = new Set(["web3", "rivet", "fido"]);
+    const before = storageData.wallets.length;
+    storageData.wallets = storageData.wallets.filter((w) =>
+      RIVET_SOURCES.has((w.wallet || w)?.source),
+    );
+    const purged = before - storageData.wallets.length;
+    if (
+      purged > 0 &&
+      !storageData.wallets.some((w) => w.id === storageData.defaultWalletId)
+    ) {
+      storageData.defaultWalletId = storageData.wallets[0]?.id || null;
+    }
+
+    // Persist when we migrated the old single-wallet format OR purged a legacy
+    // wallet — either way the on-disk shape must reflect what we just normalized.
     const currentData = localStorage.getItem("epistery");
     if (currentData) {
       const parsed = JSON.parse(currentData);
-      // If we migrated from old format (had wallet but no wallets), save the migration
-      if (parsed.wallet && !parsed.wallets && storageData.wallets.length > 0) {
-        console.log(
-          "[epistery] Migrating old wallet format to multi-wallet format",
-        );
+      const migrated =
+        parsed.wallet && !parsed.wallets && storageData.wallets.length > 0;
+      if (migrated || purged > 0) {
+        if (purged > 0) {
+          console.warn(
+            `[epistery] Purged ${purged} legacy non-rivet wallet(s) from storage.`,
+          );
+        }
         localStorage.setItem("epistery", JSON.stringify(storageData));
-        console.log("[epistery] Migration complete - wallet preserved");
       }
     }
 
-    // Load the default wallet if it exists (maintains backward compatibility)
+    // Load the default wallet if it exists. fromJSON returns null for an
+    // unsupported source — skip rather than crash.
     if (storageData.defaultWalletId && ethers) {
       const walletData = storageData.wallets.find(
         (w) => w.id === storageData.defaultWalletId,
       );
       if (walletData) {
-        this.wallet = await Wallet.fromJSON(walletData.wallet, ethers);
-        this.wallet.id = walletData.id;
-        this.wallet.label = walletData.label;
-        this.wallet.createdAt = walletData.createdAt;
+        const wallet = await Wallet.fromJSON(walletData.wallet, ethers);
+        if (wallet) {
+          this.wallet = wallet;
+          this.wallet.id = walletData.id;
+          this.wallet.label = walletData.label;
+          this.wallet.createdAt = walletData.createdAt;
+        }
       }
     }
   }

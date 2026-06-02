@@ -50,7 +50,12 @@ export class Wallet {
     };
   }
 
-  // Factory method to create appropriate wallet type from saved data
+  // Factory method to create appropriate wallet type from saved data.
+  // The three rivet types — web3, browser (rivet), and fido — are the only
+  // valid identities. Anything else is a legacy/unsupported entry (e.g. the
+  // pre-2.0 plaintext "local" browser wallet, which is NOT a rivet). Return
+  // null rather than throw so one dead entry can't abort the whole load; the
+  // caller skips and purges it.
   static async fromJSON(data, ethers) {
     if (data.source === "web3") {
       return await Web3Wallet.fromJSON(data, ethers);
@@ -59,7 +64,8 @@ export class Wallet {
     } else if (data.source === "fido") {
       return await FidoWallet.fromJSON(data, ethers);
     }
-    throw new Error(`Unknown wallet source: ${data.source}`);
+    console.warn(`[epistery] Ignoring unsupported wallet source: ${data.source}`);
+    return null;
   }
 
   // Abstract methods - must be implemented by subclasses
