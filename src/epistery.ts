@@ -153,10 +153,17 @@ export class Epistery {
     rivetName: string,
     domain: string
   ): Promise<any> {
-    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    // RPC comes from ~/.epistery via Config (GetDomainInfo falls back to root
+    // [provider]); never process.env — env is for deployment vars only.
+    const domainInfo = Utils.GetDomainInfo(domain);
+    const rpcUrl = domainInfo?.provider?.rpc;
+    if (!rpcUrl) {
+      throw new Error(`No provider RPC configured in ~/.epistery for domain "${domain}"`);
+    }
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
     // Get server wallet for funding
-    const serverWalletConfig = Utils.GetDomainInfo(domain)?.wallet;
+    const serverWalletConfig = domainInfo?.wallet;
     if (!serverWalletConfig) {
       throw new Error('Server wallet not configured');
     }
@@ -297,7 +304,15 @@ export class Epistery {
   public static async submitSignedTransaction(
     signedTx: string
   ): Promise<any> {
-    const provider = new ethers.providers.JsonRpcProvider(process.env.CHAIN_RPC_URL);
+    // RPC from ~/.epistery root config via Config — not process.env. A signed
+    // tx already encodes its chainId; we just need the network's RPC, which
+    // single-domain apps declare once at root [provider].
+    const rootData = Utils.GetConfig().read('/');
+    const rpcUrl = rootData.provider?.rpc ?? rootData.default?.provider?.rpc;
+    if (!rpcUrl) {
+      throw new Error('No provider RPC configured in ~/.epistery (root [provider])');
+    }
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
     // Parse signed transaction to validate and log
     const parsedTx = ethers.utils.parseTransaction(signedTx);

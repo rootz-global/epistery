@@ -116,7 +116,21 @@ export class Utils {
     if (!this.config.data.domain)
       return {domain:domain};
 
-    return this.config.data;
+    const domainConfig = this.config.data;
+
+    // Provider falls back to root config, same as InitServerWallet. Single-
+    // domain apps (App, Relay, Scan) declare their provider once at root
+    // [provider] and share it; epistery-host keeps a shared default at
+    // [default.provider] that hosted domains may override. Without this,
+    // epistery.domain.provider is undefined for those apps and callers that
+    // read epistery.domain.provider.rpc (e.g. connect's on-chain contract
+    // verification) get no RPC. read('/') doesn't move the current path.
+    if (!domainConfig.provider) {
+      const rootData = this.config.read('/');
+      domainConfig.provider = rootData.default?.provider ?? rootData.provider;
+    }
+
+    return domainConfig;
   }
 
 }
