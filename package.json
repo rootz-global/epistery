@@ -1,6 +1,6 @@
 {
   "name": "epistery",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Epistery brings blockchain capabilities to mundane web tasks like engagement metrics, authentication and commerce of all sorts.",
   "author": "Rootz Corp.",
   "license": "MIT",
@@ -30,7 +30,6 @@
     "aqua-js-sdk": "^3.2.1-44",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.2",
-    "epistery": "^1.4.1",
     "ethers": "^5.8.0",
     "express": "^5.1.0",
     "ini": "^5.0.0",
