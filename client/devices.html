@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <link rel="icon" href="{{epistery.rootPath}}/favicon.ico">
+  <title>My Collection — {{server.domain}}</title>
+  <script src="{{epistery.rootPath}}/lib/ethers.min.js"></script>
+  <script type="module">
+    import Witness from '{{epistery.rootPath}}/lib/witness.js';
+
+    const rootPath = '{{epistery.rootPath}}';
+    let witness = null;
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        witness = await Witness.connect({ rootPath });
+        const wallet = witness.wallet;
+
+        if (!wallet) { showSection('no-wallet'); return; }
+        if (!wallet.contractAddress) {
+          showSection('no-contract');
+          document.getElementById('setup-link').href = `${rootPath}/status`;
+          return;
+        }
+
+        showSection('loading');
+        await loadDevices(wallet);
+      } catch (e) {
+        showSection('error');
+        document.getElementById('error-msg').textContent = e.message;
+      }
+    });
+
+    function showSection(id) {
+      ['loading','no-wallet','no-contract','error','devices'].forEach(s => {
+        const el = document.getElementById('section-' + s);
+        if (el) el.style.display = (s === id) ? '' : 'none';
+      });
+    }
+
+    async function loadDevices(wallet) {
+      const artifactRes = await fetch(`${rootPath}/artifacts/IdentityContract.json`);
+      const artifact = await artifactRes.json();
+
+      const provider = new ethers.providers.JsonRpcProvider('https://polygon-bor-rpc.publicnode.com');
+      const contract = new ethers.Contract(wallet.contractAddress, artifact.abi, provider);
+
+      let addresses = [], names = [];
+      try {
+        const result = await contract.getRivetsWithNames();
+        addresses = result[0];
+        names = result[1];
+      } catch (e) {
+        try {
+          addresses = await contract.getRivets();
+          names = addresses.map(() => '');
+        } catch (e2) {
+          throw new Error('Could not load your collection: ' + e2.message);
+        }
+      }
+
+      renderDevices(addresses, names, wallet);
+      showSection('devices');
+    }
+
+    function guessIcon(name) {
+      const n = (name || '').toLowerCase();
+      if (/epistery|service|recovery/i.test(n)) return '🛡️';
+      if (/iphone|android|phone|mobile/i.test(n)) return '📱';
+      if (/ipad|tablet/i.test(n)) return '📋';
+      if (/mac|macbook|laptop/i.test(n)) return '💻';
+      if (/chrome|firefox|safari|edge|browser/i.test(n)) return '🌐';
+      if (/pc|desktop|windows|linux/i.test(n)) return '🖥️';
+      return '🔐';
+    }
+
+    function renderDevices(addresses, names, wallet) {
+      const currentRivet = (wallet.rivetAddress || wallet.address || '').toLowerCase();
+      const contractAddress = wallet.contractAddress;
+      const list = document.getElementById('device-list');
+      const count = document.getElementById('device-count');
+      const connectUrl = `${window.location.origin}${rootPath}/status?connect=${contractAddress}`;
+
+      list.innerHTML = '';
+      if (count) count.textContent = addresses ? addresses.length : 0;
+
+      if (!addresses || addresses.length === 0) {
+        list.innerHTML = '<p class="muted">No devices in your collection yet.</p>';
+      } else {
+        addresses.forEach((addr, i) => {
+          const name = names[i] || 'Unnamed device';
+          const isThis = addr.toLowerCase() === currentRivet;
+          const isEpistery = /epistery|service|recovery/i.test(name);
+          const icon = isThis ? '🖥️' : guessIcon(name);
+
+          const card = document.createElement('div');
+          card.className = 'device-card' + (isThis ? ' is-this' : '') + (isEpistery ? ' is-service' : '');
+          card.innerHTML = `
+            <span class="device-icon">${icon}</span>
+            <div class="device-info">
+              <div class="device-name">
+                ${escHtml(name)}
+                ${isThis ? '<span class="badge badge-you">You are here</span>' : ''}
+                ${isEpistery ? '<span class="badge badge-service">Recovery service</span>' : ''}
+              </div>
+              <div class="device-addr">${addr.slice(0,8)}…${addr.slice(-6)}</div>
+            </div>
+            <div class="device-actions">
+              ${isThis
+                ? '<span class="trusted-label">Active ✓</span>'
+                : `<button type="button" class="remove-btn" data-addr="${addr}" data-name="${escHtml(name)}" data-epistery="${isEpistery}">Remove</button>`
+              }
+            </div>
+          `;
+          list.appendChild(card);
+        });
+
+        list.querySelectorAll('.remove-btn').forEach(btn => {
+          btn.onclick = () => handleRemove(btn.dataset.addr, btn.dataset.name, contractAddress, btn.dataset.epistery === 'true');
+        });
+      }
+
+      // Set up add-device section
+      const linkInput = document.getElementById('connect-link');
+      const copyBtn = document.getElementById('copy-link-btn');
+      const shareBtn = document.getElementById('share-btn');
+      const qrImg = document.getElementById('qr-img');
+
+      linkInput.value = connectUrl;
+      qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&data=${encodeURIComponent(connectUrl)}`;
+      qrImg.alt = 'QR code — scan on your other device';
+
+      copyBtn.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(connectUrl);
+          copyBtn.textContent = '✅ Copied!';
+          setTimeout(() => { copyBtn.textContent = 'Copy Link'; }, 2500);
+        } catch (_) { linkInput.select(); document.execCommand('copy'); }
+      };
+
+      if (navigator.share) {
+        shareBtn.style.display = '';
+        shareBtn.onclick = () => navigator.share({ title: 'Add this device to my collection', url: connectUrl });
+      }
+    }
+
+    async function handleRemove(addr, name, contractAddress, isEpistery) {
+      const warning = isEpistery
+        ? `Remove Epistery from your collection?\n\nOnce removed, the recovery service will have no access to your data — not now, not ever. You can add it back at any time.`
+        : `Remove "${name}" from your collection?\n\nThat device will lose access to your data. You can add it back any time by opening the invite link on that device again.`;
+
+      if (!confirm(warning)) return;
+
+      const output = document.getElementById('remove-output');
+      output.innerHTML = '<div class="status-loading">Removing from your collection — this takes a few seconds…</div>';
+
+      try {
+        const artifactRes = await fetch(`${rootPath}/artifacts/IdentityContract.json`);
+        const artifact = await artifactRes.json();
+
+        const res = await fetch(`${rootPath}/identity/prepare-remove-rivet`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            signerAddress: witness.wallet.rivetAddress || witness.wallet.address,
+            contractAddress,
+            rivetToRemove: addr
+          })
+        });
+
+        if (!res.ok) throw new Error('prepare-remove not available');
+        const { transaction } = await res.json();
+
+        const provider = new ethers.providers.JsonRpcProvider('https://polygon-bor-rpc.publicnode.com');
+        const rivetWallet = new ethers.Wallet(await witness.wallet.exportPrivateKey(), provider);
+        const tx = await rivetWallet.sendTransaction(transaction);
+        output.innerHTML = '<div class="status-loading">Waiting for confirmation…</div>';
+        await tx.wait();
+
+        output.innerHTML = `<div class="status-success">"${name}" removed from your collection. <a href="">Refresh to update.</a></div>`;
+        await loadDevices(witness.wallet);
+      } catch (e) {
+        if (e.message.includes('prepare-remove')) {
+          output.innerHTML = `<div class="status-info">
+            <strong>Removal coming soon.</strong>
+            For now, go to <a href="${rootPath}/status">Status → Manage Identity</a> to remove a device.
+          </div>`;
+        } else {
+          output.innerHTML = `<div class="status-error">Could not remove: ${escHtml(e.message)}</div>`;
+        }
+      }
+    }
+
+    function escHtml(str) {
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #f4f6f9;
+      color: #222;
+    }
+
+    /* ——— Page header ——— */
+    .page-header {
+      background: #fff;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 28px 32px 22px;
+    }
+    .page-header h1 { margin: 0 0 4px; font-size: 1.7em; font-weight: 700; }
+    .page-header .tagline { margin: 0; color: #555; font-size: 1em; font-style: italic; }
+
+    /* ——— Intro narrative ——— */
+    .intro-card {
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e0e0e0;
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+
+    .intro-lead {
+      background: linear-gradient(135deg, #e8f4fd 0%, #f0f7ff 100%);
+      border-bottom: 1px solid #cce3f7;
+      padding: 20px 24px;
+      font-size: 1.05em;
+      line-height: 1.65;
+      color: #1a3a5c;
+    }
+
+    .intro-lead strong {
+      font-size: 1.08em;
+    }
+
+    .intro-body {
+      padding: 20px 24px;
+      font-size: 0.93em;
+      color: #444;
+      line-height: 1.7;
+    }
+
+    .intro-body p { margin: 0 0 14px; }
+    .intro-body p:last-child { margin-bottom: 0; }
+
+    .intro-body .highlight {
+      background: #fff8e1;
+      border-left: 3px solid #f5a623;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      margin: 14px 0;
+      font-style: italic;
+      color: #5a3e00;
+    }
+
+    .intro-body a {
+      color: #007bff;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .device-examples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 14px 0;
+    }
+
+    .device-example {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: #f0f4f8;
+      border: 1px solid #dde4ed;
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 0.88em;
+      color: #334;
+    }
+
+    /* ——— Body layout ——— */
+    .page-body {
+      max-width: 660px;
+      margin: 28px auto;
+      padding: 0 16px;
+    }
+
+    /* ——— Cards ——— */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e0e0e0;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-header h2 { margin: 0; font-size: 1.05em; font-weight: 600; }
+    .card-header .count {
+      background: #007bff;
+      color: #fff;
+      font-size: 0.75em;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      margin-left: auto;
+    }
+
+    .card-body { padding: 16px 20px; }
+
+    /* ——— Device list ——— */
+    .device-card {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 13px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .device-card:last-child { border-bottom: none; }
+
+    .device-card.is-this {
+      background: #f0f7ff;
+      margin: 0 -20px;
+      padding: 13px 20px;
+    }
+
+    .device-card.is-service {
+      background: #f9f5ff;
+      margin: 0 -20px;
+      padding: 13px 20px;
+      border-bottom-color: #e8e0f5;
+    }
+
+    .device-icon { font-size: 1.75em; width: 36px; text-align: center; flex-shrink: 0; }
+
+    .device-info { flex: 1; min-width: 0; }
+
+    .device-name {
+      font-weight: 600;
+      font-size: 0.95em;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 0.7em;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .badge-you { background: #007bff; color: #fff; }
+    .badge-service { background: #7c3aed; color: #fff; }
+
+    .device-addr {
+      font-family: monospace;
+      font-size: 0.76em;
+      color: #aaa;
+      margin-top: 2px;
+    }
+
+    .device-actions { flex-shrink: 0; }
+
+    .trusted-label { color: #28a745; font-size: 0.85em; font-weight: 600; }
+
+    .remove-btn {
+      background: none;
+      border: 1px solid #ccc;
+      color: #666;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.82em;
+    }
+    .remove-btn:hover { border-color: #dc3545; color: #dc3545; background: #fff5f5; }
+
+    /* ——— Add device ——— */
+    .add-body { padding: 20px; }
+
+    .add-intro {
+      font-size: 0.92em;
+      color: #444;
+      margin: 0 0 18px;
+      line-height: 1.55;
+    }
+
+    .add-layout {
+      display: flex;
+      gap: 22px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .qr-box { flex-shrink: 0; text-align: center; }
+    #qr-img {
+      width: 150px; height: 150px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      display: block;
+    }
+    .qr-label { font-size: 0.73em; color: #999; margin-top: 6px; }
+
+    .link-box { flex: 1; min-width: 200px; }
+    .link-box label {
+      display: block;
+      font-size: 0.78em;
+      font-weight: 700;
+      color: #555;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .link-row { display: flex; gap: 8px; }
+    .link-input {
+      flex: 1;
+      padding: 9px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 0.78em;
+      font-family: monospace;
+      background: #f8f9fa;
+      min-width: 0;
+    }
+    .copy-btn {
+      background: #007bff; color: #fff;
+      border: none;
+      padding: 9px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85em;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .copy-btn:hover { background: #0056b3; }
+
+    .share-btn {
+      display: none;
+      width: 100%;
+      background: #28a745; color: #fff;
+      border: none;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9em;
+      font-weight: 600;
+      margin-top: 10px;
+    }
+    .share-btn:hover { background: #218838; }
+
+    .link-warning {
+      font-size: 0.76em;
+      color: #888;
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
+    /* ——— Epistery service card ——— */
+    .service-card-body {
+      padding: 16px 20px;
+      font-size: 0.91em;
+      color: #444;
+      line-height: 1.65;
+    }
+    .service-card-body p { margin: 0 0 12px; }
+    .service-card-body p:last-child { margin-bottom: 0; }
+
+    /* ——— Invitations callout ——— */
+    .invitations-callout {
+      background: #f4f0ff;
+      border: 1px solid #d4c5f9;
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .invitations-callout .ci { font-size: 1.8em; flex-shrink: 0; }
+    .invitations-callout h3 { margin: 0 0 5px; font-size: 0.97em; color: #5b21b6; }
+    .invitations-callout p { margin: 0; font-size: 0.88em; color: #555; line-height: 1.5; }
+    .invitations-callout a { color: #7c3aed; font-weight: 600; }
+
+    /* ——— State blocks ——— */
+    .state-block {
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e0e0e0;
+      padding: 44px 32px;
+      text-align: center;
+    }
+    .state-block .si { font-size: 2.4em; margin-bottom: 12px; }
+    .state-block h2 { margin: 0 0 10px; font-size: 1.2em; }
+    .state-block p { color: #666; font-size: 0.95em; line-height: 1.5; margin: 0 0 18px; }
+    .state-block a.btn {
+      display: inline-block;
+      background: #007bff; color: #fff;
+      text-decoration: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.9em;
+    }
+
+    /* ——— Status messages ——— */
+    .status-loading { background:#fff3cd; color:#856404; padding:12px 16px; border-radius:6px; margin:10px 0; }
+    .status-success { background:#d4edda; color:#155724; padding:12px 16px; border-radius:6px; margin:10px 0; }
+    .status-error   { background:#f8d7da; color:#721c24; padding:12px 16px; border-radius:6px; margin:10px 0; }
+    .status-info    { background:#e7f3ff; color:#004085; padding:12px 16px; border-radius:6px; margin:10px 0; }
+
+    .muted { color:#999; font-size:0.9em; margin: 10px 0; }
+
+    .section-hidden { display: none; }
+
+    @media (max-width: 500px) {
+      .page-header { padding: 18px 16px 14px; }
+      .page-body { margin: 16px auto; }
+      .add-layout { flex-direction: column; }
+      .qr-box { width: 100%; }
+      #qr-img { width: 130px; height: 130px; margin: 0 auto; }
+      .device-examples { gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Page header -->
+  <div class="page-header">
+    <h1>My Collection</h1>
+    <p class="tagline">Your collection of devices is your identity on {{server.domain}}</p>
+  </div>
+
+  <div class="page-body">
+
+    <!-- Narrative intro — always visible -->
+    <div class="intro-card">
+      <div class="intro-lead">
+        <strong>Your collection of devices is you.</strong>
+        Your phone, your tablet, your home PC, your work PC —
+        each one is a member of your collection.
+        Together they share your keys, share your content, and protect each other.
+      </div>
+      <div class="intro-body">
+
+        <p>
+          <strong>Each browser is treated as its own device</strong> — even when two browsers
+          run on the same machine. Chrome on your PC and Edge on the same PC are two separate
+          devices. Add as many as you use.
+        </p>
+
+        <div class="highlight">
+          The power of your collection is what makes your content easy to use,
+          easy to manage, and easy to recover.
+        </div>
+
+        <p><strong>Examples of devices in a collection:</strong></p>
+        <div class="device-examples">
+          <span class="device-example">🌐 Chrome on your home PC</span>
+          <span class="device-example">🌐 Edge on your home PC</span>
+          <span class="device-example">🌐 Chrome at work</span>
+          <span class="device-example">📱 Safari on your iPhone</span>
+          <span class="device-example">📋 Tablet browser</span>
+          <span class="device-example">🛡️ Epistery recovery</span>
+        </div>
+
+        <p>
+          Your content — your pictures, your conversations, your notes —
+          is encrypted with keys that only your collection holds.
+          No one else can read it. Not even {{server.domain}}.
+        </p>
+
+        <p>
+          If a device is lost or stolen, remove its connection here.
+          It can never access your content again, and everything is still safe on your other connections.
+        </p>
+
+        <p>
+          <strong>Epistery is also in your collection</strong> — as a recovery service, not as an owner.
+          If you're ever down to your last connection, Epistery can help you get back in.
+          Remove it at any time and the service immediately loses all access. Zero.
+        </p>
+      </div>
+    </div>
+
+    <!-- ——— State: Loading ——— -->
+    <div id="section-loading" class="state-block section-hidden">
+      <div class="si">⏳</div>
+      <h2>Loading your collection…</h2>
+      <p>Checking the network for your devices.</p>
+    </div>
+
+    <!-- ——— State: No wallet ——— -->
+    <div id="section-no-wallet" class="state-block section-hidden">
+      <div class="si">🔐</div>
+      <h2>This device isn't set up yet</h2>
+      <p>
+        This browser doesn't have an account on {{server.domain}}.
+        Visit Status to create one, or open the invite link from one of your other devices.
+      </p>
+      <a class="btn" href="{{epistery.rootPath}}/status">Set up this device</a>
+    </div>
+
+    <!-- ——— State: Wallet but no identity contract ——— -->
+    <div id="section-no-contract" class="state-block section-hidden">
+      <div class="si">📋</div>
+      <h2>Your collection isn't set up yet</h2>
+      <p>
+        This device has a wallet but isn't part of a collection yet.
+        Go to Status to finish setting up your identity —
+        once that's done, you can add all your other devices here.
+      </p>
+      <a id="setup-link" class="btn" href="{{epistery.rootPath}}/status">Finish setting up</a>
+    </div>
+
+    <!-- ——— State: Error ——— -->
+    <div id="section-error" class="state-block section-hidden">
+      <div class="si">⚠️</div>
+      <h2>Something went wrong</h2>
+      <p id="error-msg"></p>
+      <a class="btn" href="">Try again</a>
+    </div>
+
+    <!-- ——— State: Devices loaded ——— -->
+    <div id="section-devices" class="section-hidden">
+
+      <!-- Connections list -->
+      <div class="card">
+        <div class="card-header">
+          <span>🔗</span>
+          <h2>Your connections</h2>
+          <span class="count" id="device-count">0</span>
+        </div>
+        <div class="card-body">
+          <div id="device-list"></div>
+          <div id="remove-output"></div>
+        </div>
+      </div>
+
+      <!-- Add a connection -->
+      <div class="card">
+        <div class="card-header">
+          <span>➕</span>
+          <h2>Add a connection to your collection</h2>
+        </div>
+        <div class="add-body">
+          <p class="add-intro">
+            Open this link in any browser you want to add — your phone, your tablet, a different browser on this PC.
+            When it opens, that browser automatically joins your collection and gets access to your content.
+          </p>
+          <div class="add-layout">
+            <div class="qr-box">
+              <img id="qr-img" src="" alt="QR code loading…">
+              <div class="qr-label">Scan on your other device</div>
+            </div>
+            <div class="link-box">
+              <label>Or copy and send this link</label>
+              <div class="link-row">
+                <input id="connect-link" class="link-input" type="text" readonly onclick="this.select()">
+                <button id="copy-link-btn" type="button" class="copy-btn">Copy</button>
+              </div>
+              <button id="share-btn" type="button" class="share-btn">📤 Share to other device</button>
+              <p class="link-warning">
+                ⚠️ This link gives full access to your account.
+                Only open it on <em>your own</em> device — never share it with anyone else.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- About epistery in your collection -->
+      <div class="card">
+        <div class="card-header">
+          <span>🛡️</span>
+          <h2>Epistery in your collection</h2>
+        </div>
+        <div class="service-card-body">
+          <p>
+            {{server.domain}} joins your collection as a <strong>recovery service</strong> —
+            one member among your devices, not a special owner.
+            It uses this access only to help you recover if you lose all your other devices.
+          </p>
+          <p>
+            <strong>You are always in control.</strong>
+            Remove Epistery from your collection at any time using the Remove button above.
+            The moment you do, the service has no access to your keys, your data, or your account — now or ever.
+            You can add it back whenever you choose.
+          </p>
+          <p>
+            Think of it like a trusted locksmith who holds one key to your house.
+            You gave them the key — you can take it back.
+            They can't enter without it.
+          </p>
+        </div>
+      </div>
+
+      <!-- Invitations callout -->
+      <div class="invitations-callout">
+        <span class="ci">👥</span>
+        <div>
+          <h3>Sharing with other people? Use Invitations.</h3>
+          <p>
+            Your collection is just for <em>you</em> — your own devices.
+            To share content with a friend or colleague,
+            use <a href="{{epistery.rootPath}}/status">Invitations</a>.
+            An invitation connects your friend's collection to yours,
+            and only shares the specific information you choose.
+          </p>
+        </div>
+      </div>
+
+    </div><!-- /section-devices -->
+  </div><!-- /page-body -->
+
+</body>
+</html>

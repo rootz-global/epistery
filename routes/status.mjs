@@ -152,5 +152,22 @@ export default function statusRoutes(epistery) {
     res.send(template);
   });
 
+  // Devices page - /devices
+  router.get("/devices", (req, res) => {
+    const domain = req.hostname;
+    const rootPath = req.baseUrl;
+
+    const templatePath = path.resolve(rootDir, "client/devices.html");
+    if (!fs.existsSync(templatePath)) {
+      return res.status(404).send("Devices template not found");
+    }
+
+    let template = fs.readFileSync(templatePath, "utf8");
+    template = template.replace(/\{\{server\.domain\}\}/g, domain);
+    template = template.replace(/\{\{epistery\.rootPath\}\}/g, rootPath);
+
+    res.send(template);
+  });
+
   return router;
 }

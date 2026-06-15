@@ -973,10 +973,10 @@
               };
             } else {
               identityStatus.innerHTML = `
-                <h4>📱 Rivet Wallet</h4>
-                <p><strong>Address:</strong> <code>${wallet.address}</code></p>
-                <p><strong>Status:</strong> Not upgraded to Identity Contract</p>
-                <p><i>You can either deploy a new Identity Contract, or join an existing one using a token from another device.</i></p>
+                <h4>📱 This Device</h4>
+                <p><strong>Device Address:</strong> <code>${wallet.address}</code></p>
+                <p><strong>Collection:</strong> Not part of a collection yet</p>
+                <p>Start your collection to connect your other devices, or join an existing collection using an invite code from one of your other devices.</p>
               `;
               deployButton.style.display = 'inline-block';
               generateTokenButton.style.display = 'none';
@@ -1007,10 +1007,9 @@
 
               identityOutput.innerHTML = `
                 <div class="success">
-                  <h4>🎉 Identity Contract Deployed!</h4>
-                  <p><strong>Contract Address:</strong> <code>${contractAddress}</code></p>
-                  <p>Your rivet has been upgraded to a portable identity contract.</p>
-                  <p>You can now generate a join token to add this identity from other devices.</p>
+                  <h4>🎉 Your Collection is Ready!</h4>
+                  <p><strong>Collection Address:</strong> <code>${contractAddress}</code></p>
+                  <p>Your collection has been created. Now use <strong>Add a Device</strong> to connect your phone, tablet, or other browsers.</p>
                 </div>
               `;
             } catch (error) {
@@ -1191,11 +1190,11 @@
                 // Success - show the token
                 identityOutput.innerHTML = `
                   <div class="success">
-                    <h4>✅ Rivet Authorized!</h4>
-                    <p><strong>Target Rivet:</strong> <code>${targetAddress}</code></p>
-                    <p>The rivet has been authorized on the blockchain. Now send this token to the other device:</p>
+                    <h4>✅ Device Added to Your Collection!</h4>
+                    <p><strong>Device Address:</strong> <code>${targetAddress}</code></p>
+                    <p>That device is now authorized. Send this invite code to it so it can finish joining:</p>
                     <textarea readonly style="width: 100%; height: 100px; font-family: monospace; font-size: 0.85em; padding: 10px; margin: 10px 0;">${token}</textarea>
-                    <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Token copied to clipboard!'))" class="action-button">📋 Copy Token</button>
+                    <button onclick="navigator.clipboard.writeText('${token}').then(() => alert('Invite code copied!'))" class="action-button">📋 Copy Invite Code</button>
                     <p class="info-text">
                       The other device should use "Add Rivet from Token" to accept this invitation.
                       Token expires in 1 hour and can only be used by the target rivet.
@@ -1469,135 +1468,188 @@
       .approval-button { background-color: #9c27b0; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 10px; }
       .approval-button:hover { background-color: #7b1fa2; }
       .approval-button:disabled { background-color: #6c757d; cursor: not-allowed; }
+
+      /* Dashboard layout */
+      .page-header { background: #fff; border-bottom: 1px solid #e0e0e0; padding: 22px 40px 18px; }
+      .page-header h1 { margin: 0 0 4px; font-size: 1.6em; font-weight: 700; }
+      .page-header .domain-line { margin: 0; color: #555; font-size: 0.97em; }
+      .page-body { max-width: 760px; margin: 28px auto; padding: 0 20px; }
+      .page-body h2 { font-size: 1.15em; margin: 24px 0 8px; color: #222; }
+      .page-body h3 { font-size: 1em; margin: 20px 0 8px; color: #333; }
+      .page-body h4 { font-size: 0.95em; margin: 16px 0 6px; color: #444; }
+      .device-type-note { color: #555; font-size: 0.95em; margin: 0 0 14px; }
+      .dev-tools-summary { cursor: pointer; padding: 14px 18px; background: #e9ecef; border-radius: 6px; font-weight: 600; color: #495057; list-style: none; user-select: none; }
+      .dev-tools-summary:hover { background: #dee2e6; }
+      .dev-tools-body { margin-top: 16px; }
+      .dev-tools-footer { color: #aaa; font-size: 0.8em; margin-top: 20px; }
   </style>
 </head>
 <body>
-    <h1>Epistery Status</h1>
-    
-    <h2>Server Wallet</h2>
-    <div class="wallet-info">
-        <p><strong>Domain:</strong> {{server.domain}}</p>
-        <p><strong>Address:</strong> <span class="address">{{server.walletAddress}}</span></p>
-        <p><strong>Provider:</strong> {{server.provider}}</p>
-        <p><strong>Chain ID:</strong> {{server.chainId}}</p>
-    </div>
-    
-    <h2>Local Client Wallet (Current Default)</h2>
-    <div class="wallet-info">
-        <p><strong>Address:</strong> <span id="local-wallet-address" class="address">Loading...</span></p>
-        <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading...</span></p>
-        <p><strong>Source:</strong> <span id="wallet-source">Loading...</span></p>
+
+  <!-- ═══════════════════════════════════════════
+       PAGE HEADER
+  ═══════════════════════════════════════════ -->
+  <div class="page-header">
+    <h1>My Collection</h1>
+    <p class="domain-line">
+      <strong>{{server.domain}}</strong> — your devices, your keys, your data
+    </p>
+  </div>
+
+  <div class="page-body">
+
+    <!-- ═══════════════════════════════════════════
+         SECTION 1 — YOUR COLLECTION (identity contract, shown first)
+    ═══════════════════════════════════════════ -->
+    <div id="identity-contract-section" class="identity-contract-section" style="display:none;">
+      <h2 style="margin-top:0;">Your Collection of Devices</h2>
+      <p>
+        Your collection connects all your devices — each browser, each phone, each tablet —
+        under one identity. Add any device here and it shares access to all your content.
+        Each browser is treated as its own device, even when two browsers run on the same machine.
+      </p>
+
+      <div id="identity-status" class="identity-status"></div>
+
+      <div class="identity-actions">
+        <button id="deploy-identity-button" class="action-button">🚀 Start My Collection</button>
+        <button id="generate-join-token-button" class="action-button" style="display:none;">➕ Add a Device</button>
+        <button id="accept-join-token-button" class="action-button" style="display:none;">📥 Join with Invite Code</button>
+      </div>
+
+      <div id="join-token-input-section" style="display:none;margin-top:20px;">
+        <p><strong>Paste the invite code from your other device:</strong></p>
+        <input type="text" id="join-token-input" class="write-input" placeholder="Paste invite code here…" />
+        <button id="submit-join-token-button" class="action-button">Join This Collection</button>
+      </div>
+
+      <div id="add-rivet-section" style="display:none;margin-top:20px;">
+        <p><strong>Authorize another device to join your collection:</strong></p>
+        <p><em>Enter that device's address, or the URL of the site where it connected.</em></p>
+        <input type="text" id="rivet-address-input" class="write-input" placeholder="Device address (0x…) or site URL" />
+        <button id="add-rivet-button" class="action-button">Add to My Collection</button>
+      </div>
+
+      <div id="identity-output"></div>
     </div>
 
+    <!-- ═══════════════════════════════════════════
+         SECTION 2 — THIS DEVICE
+    ═══════════════════════════════════════════ -->
+    <h2>This Device</h2>
+    <p class="device-type-note">
+      This is how this browser identifies itself on <strong>{{server.domain}}</strong>.
+      Each browser — Chrome, Edge, Safari, MetaMask — is treated as a separate device.
+    </p>
+    <div class="wallet-info">
+      <p><strong>Device Address:</strong> <span id="local-wallet-address" class="address">Loading…</span></p>
+      <p><strong>Public Key:</strong> <span id="local-wallet-public-key" class="address">Loading…</span></p>
+      <p><strong>Type:</strong> <span id="wallet-source">Loading…</span></p>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         SECTION 3 — IDENTITIES IN THIS BROWSER
+    ═══════════════════════════════════════════ -->
     <div class="wallet-management-section">
-        <h2>Wallet Management</h2>
-        <p>Manage multiple wallets for this site. You can add Web3 wallets (MetaMask) or browser wallets, and switch between them.</p>
+      <h2>Identities in This Browser</h2>
+      <p>
+        One browser can hold more than one identity — for example, a personal account and a work account.
+        Switch between them here. The active identity is this device's current member of your collection.
+      </p>
 
-        <div id="wallet-list"></div>
+      <div id="wallet-list"></div>
 
-        <div class="wallet-actions">
-            <button id="add-web3-wallet" class="action-button">Add Web3 Wallet (MetaMask)</button>
-            <button id="add-browser-wallet" class="action-button">Add Browser Wallet</button>
+      <div class="wallet-actions">
+        <button id="add-web3-wallet" class="action-button">Connect MetaMask</button>
+        <button id="add-browser-wallet" class="action-button">Create New Identity</button>
+      </div>
+
+      <div id="wallet-management-output"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         SECTION 4 — BACK UP THIS DEVICE
+    ═══════════════════════════════════════════ -->
+    <div id="export-section" class="export-section" style="display:none;">
+      <h2>Back Up This Device</h2>
+      <p>
+        Save a copy of this device's key. If you ever lose access to this browser,
+        you can use this backup to rejoin your collection from a new device.
+      </p>
+      <p class="warning-text">⚠️ Keep your backup secure. Anyone who has it can access your account.</p>
+
+      <div class="export-buttons">
+        <button id="export-button" class="export-button">Download Backup (JSON)</button>
+        <button id="export-privatekey-button" class="export-button">Copy Device Key</button>
+        <button id="export-mnemonic-button" class="export-button">Copy Recovery Phrase</button>
+      </div>
+
+      <div id="export-output"></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         SECTION 5 — DEVELOPER TOOLS (collapsed)
+    ═══════════════════════════════════════════ -->
+    <details style="margin-top:30px;">
+      <summary class="dev-tools-summary">⚙️ Developer Tools</summary>
+      <div class="dev-tools-body">
+
+        <h3>Write a Signed Event</h3>
+        <div class="write-section">
+          <p>Sign and store a message from this device:</p>
+          <input type="text" id="write-input" class="write-input" placeholder="Enter your message…" />
+          <button id="write-button" class="write-button">Sign &amp; Write</button>
+          <div id="write-output"></div>
         </div>
 
-        <div id="wallet-management-output"></div>
-    </div>
-
-    <div id="identity-contract-section" class="identity-contract-section" style="display: none;">
-        <h2>Identity Contract</h2>
-        <p><i>Upgrade your rivet to a portable identity that works across devices and browsers.</i></p>
-        <p>An Identity Contract lets you bind multiple rivets together into a single, unified identity.</p>
-
-        <div id="identity-status" class="identity-status"></div>
-
-        <div class="identity-actions">
-            <button id="deploy-identity-button" class="action-button">🚀 Deploy Identity Contract</button>
-            <button id="generate-join-token-button" class="action-button" style="display: none;">🔗 Generate Join Token</button>
-            <button id="accept-join-token-button" class="action-button" style="display: none;">📥 Add Rivet from Token</button>
+        <h3>Read Events</h3>
+        <div class="read-section">
+          <p>Read signed events stored for this device:</p>
+          <button id="read-button" class="read-button">Read Events</button>
+          <div id="read-output"></div>
         </div>
 
-        <div id="join-token-input-section" style="display: none; margin-top: 20px;">
-            <p><strong>Enter join token from another device:</strong></p>
-            <input type="text" id="join-token-input" class="write-input" placeholder="Paste join token here..." />
-            <button id="submit-join-token-button" class="action-button">Process Join Token</button>
+        <h3>Transfer Ownership</h3>
+        <div class="transfer-section">
+          <p><strong>⚠️ Warning:</strong> This transfers ownership of your data to another address. This cannot be undone.</p>
+          <input type="text" id="transfer-input" class="transfer-input" placeholder="New owner address (0x…)" />
+          <button id="transfer-button" class="transfer-button">Transfer Ownership</button>
+          <div id="transfer-output"></div>
         </div>
 
-        <div id="add-rivet-section" style="display: none; margin-top: 20px;">
-            <p><strong>Add a rivet address to this identity contract:</strong></p>
-            <p><em>(After another device accepts your join token, paste their rivet address here)</em></p>
-            <input type="text" id="rivet-address-input" class="write-input" placeholder="Paste rivet address (0x...)" />
-            <button id="add-rivet-button" class="action-button">Authorize Rivet</button>
+        <h3>Approval Requests</h3>
+        <div class="approval-section">
+          <h4>Create a Request</h4>
+          <p>Ask another device to review and approve a file:</p>
+          <input type="text" id="approval-approver-input" class="approval-input" placeholder="Approver address (0x…)" />
+          <input type="file" id="approval-file-input" class="approval-input" />
+          <input type="text" id="approval-domain-input" class="approval-input" placeholder="Domain (e.g., localhost)" value="localhost" />
+          <button id="create-approval-button" class="approval-button">Create Request</button>
+          <div id="create-approval-output"></div>
         </div>
 
-        <div id="identity-output"></div>
-    </div>
-
-    <div id="export-section" class="export-section" style="display: none;">
-        <h2>Export Wallet to Web3 Plugin</h2>
-        <p><i>This browser has a wallet unique to you and {{server.domain}}. Transfer this identity
-        to a web3 plugin for security and portability.</i></p>
-        <p>Export your browser wallet keys to import into MetaMask or another Web3 wallet extension.</p>
-        <p class="warning-text">⚠️ Keep your private keys secure. Never share them with anyone!</p>
-
-        <div class="export-buttons">
-            <button id="export-button" class="export-button">Download Keys (JSON)</button>
-            <button id="export-privatekey-button" class="export-button">Copy Private Key</button>
-            <button id="export-mnemonic-button" class="export-button">Copy Recovery Phrase</button>
+        <div class="approval-section" style="margin-top:20px;background:#fff3e0;border:2px solid #ff9800;">
+          <h4>My Requests</h4>
+          <p>Requests you have sent to reviewers:</p>
+          <button id="get-all-requestor-button" class="approval-button" style="background:#ff9800;">Get My Requests</button>
+          <div id="get-all-requestor-output"></div>
         </div>
 
-        <div id="export-output"></div>
-    </div>
+        <div class="approval-section" style="margin-top:20px;background:#e8f5e9;border:2px solid #4caf50;">
+          <h4>Pending Reviews</h4>
+          <p>Requests where you are the reviewer:</p>
+          <button id="get-all-approvals-button" class="approval-button" style="background:#4caf50;">Get Pending Reviews</button>
+          <div id="get-all-approvals-output"></div>
+        </div>
 
-    <h2>Write Event Test</h2>
-    <div class="write-section">
-        <p>Test the Epistery write functionality by entering a message below:</p>
-        <input type="text" id="write-input" class="write-input" placeholder="Enter your message here..." />
-        <button id="write-button" class="write-button">Sign Message (w/AQUA)</button>
-        <div id="write-output"></div>
-    </div>
+        <p class="dev-tools-footer">
+          Service: {{server.domain}} · {{server.walletAddress}} · {{server.provider}} · Chain {{server.chainId}}<br>
+          Generated: {{timestamp}}
+        </p>
 
-    <h2>Read Event Test</h2>
-    <div class="read-section">
-        <p>Read your data from the Agent smart contract and IPFS:</p>
-        <button id="read-button" class="read-button">Read from Contract</button>
-        <div id="read-output"></div>
-    </div>
+      </div>
+    </details>
 
-    <h2>Transfer Ownership Test</h2>
-    <div class="transfer-section">
-        <p><strong>⚠️ Warning:</strong> This operation will transfer ownership of your data to another wallet address. This action cannot be undone.</p>
-        <p>Enter the wallet address of the new owner:</p>
-        <input type="text" id="transfer-input" class="transfer-input" placeholder="0x..." />
-        <button id="transfer-button" class="transfer-button">Transfer Ownership</button>
-        <div id="transfer-output"></div>
-    </div>
-
-    <h2>Request System Test</h2>
-    <div class="approval-section">
-        <h3>Create Request</h3>
-        <p>Request review from another wallet address for a file:</p>
-        <input type="text" id="approval-approver-input" class="approval-input" placeholder="Approver Address (0x...)" />
-        <input type="file" id="approval-file-input" class="approval-input" />
-        <input type="text" id="approval-domain-input" class="approval-input" placeholder="Domain (e.g., localhost)" value="localhost" />
-        <button id="create-approval-button" class="approval-button">Create Request</button>
-        <div id="create-approval-output"></div>
-    </div>
-
-    <div class="approval-section" style="margin-top: 20px; background-color: #fff3e0; border: 2px solid #ff9800;">
-        <h3>Get My Requests</h3>
-        <p>Retrieve all requests you have made to reviewers:</p>
-        <button id="get-all-requestor-button" class="approval-button" style="background-color: #ff9800;">Get My Requests</button>
-        <div id="get-all-requestor-output"></div>
-    </div>
-
-    <div class="approval-section" style="margin-top: 20px; background-color: #e8f5e9; border: 2px solid #4caf50;">
-        <h3>Get Pending Requests</h3>
-        <p>Retrieve all requests where you are the reviewer:</p>
-        <button id="get-all-approvals-button" class="approval-button" style="background-color: #4caf50;">Get Pending Requests</button>
-        <div id="get-all-approvals-output"></div>
-    </div>
-
-    <h2>Timestamp</h2>
-    <p><strong>Generated:</strong> {{timestamp}}</p>
+  </div><!-- /page-body -->
 </body>
 </html>
