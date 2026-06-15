@@ -890,12 +890,20 @@
             const wallet = witness.wallet;
 
             if (wallet.contractAddress) {
+              const connectUrl = `${window.location.origin}${witness.rootPath || '/.well-known/epistery'}/status?connect=${wallet.contractAddress}`;
               identityStatus.innerHTML = `
                 <h4>✅ Identity Contract Active</h4>
                 <p><strong>Contract Address:</strong> <code>${wallet.contractAddress}</code></p>
                 <p><strong>Rivet Address:</strong> <code>${wallet.rivetAddress || wallet.address}</code></p>
                 <p><strong>Type:</strong> ${wallet.type}</p>
-                <button id="view-rivets-button" class="action-button" style="margin-top: 10px;">👥 View All Rivets</button>
+                <div style="margin-top:12px;padding:10px;background:#e8f5e9;border-radius:4px;border-left:4px solid #28a745;">
+                  <strong>📱 Link a new device</strong> — open this URL on the other device after authorizing its rivet:
+                  <input type="text" readonly value="${connectUrl}"
+                    style="width:100%;padding:6px;font-family:monospace;font-size:0.8em;margin:6px 0;"
+                    onclick="this.select()">
+                  <button onclick="navigator.clipboard.writeText('${connectUrl}').then(()=>alert('Link copied!'))" class="action-button" style="font-size:12px;padding:6px 12px;">📋 Copy Link</button>
+                </div>
+                <button id="view-rivets-button" class="action-button" style="margin-top: 10px;">👥 View All Devices</button>
               `;
               deployButton.style.display = 'none';
               generateTokenButton.style.display = 'inline-block';
@@ -1295,12 +1303,27 @@
               );
 
               if (alreadyAuthorized) {
+                // Already on-chain — skip the blockchain tx and go straight to token
+                identityOutput.innerHTML = '<div class="loading">Rivet already authorized — generating join token...</div>';
+                const contractAddress = witness.wallet.contractAddress || witness.wallet.address;
+                const token = await witness.wallet.generateJoinToken(rivetAddressToAdd, contractAddress, window.ethers);
+                const connectUrl = `${window.location.origin}${witness.rootPath || ''}?connect=${rivetAddressToAdd === rivetAddressToAdd ? contractAddress : contractAddress}`;
+
                 identityOutput.innerHTML = `
-                  <div class="error">
-                    <h4>⚠️ Already Authorized</h4>
-                    <p>Rivet <code>${rivetAddressToAdd}</code> is already authorized on this identity contract.</p>
-                    <p>You can generate a new join token for this rivet without re-authorizing it on the blockchain.</p>
-                    <button onclick="document.getElementById('identity-output').innerHTML = ''" class="action-button" style="background: #666; margin-top: 10px;">Close</button>
+                  <div class="success">
+                    <h4>✅ Already Authorized — Token Generated</h4>
+                    <p><strong>Rivet Address:</strong> <code>${rivetAddressToAdd}</code></p>
+                    <p>This rivet is already on-chain. Send either the token <em>or</em> the connect link to the other device:</p>
+                    <h5 style="margin-top:15px;">Option A — Connect Link (easiest)</h5>
+                    <p>Open this URL on the other device (or scan as QR):</p>
+                    <input type="text" readonly value="${window.location.origin}/.well-known/epistery/status?connect=${contractAddress}"
+                      style="width:100%;padding:8px;font-family:monospace;font-size:0.8em;margin:8px 0;"
+                      onclick="this.select()">
+                    <button onclick="navigator.clipboard.writeText('${window.location.origin}/.well-known/epistery/status?connect=${contractAddress}').then(()=>alert('Link copied!'))" class="action-button">📋 Copy Link</button>
+                    <h5 style="margin-top:15px;">Option B — Join Token</h5>
+                    <textarea readonly style="width:100%;height:80px;font-family:monospace;font-size:0.8em;padding:8px;margin:8px 0;">${token}</textarea>
+                    <button onclick="navigator.clipboard.writeText('${token}').then(()=>alert('Token copied!'))" class="action-button">📋 Copy Token</button>
+                    <p class="info-text">Token expires in 1 hour and is bound to this rivet address only.</p>
                   </div>
                 `;
                 return;

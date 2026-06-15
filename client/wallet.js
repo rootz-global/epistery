@@ -933,6 +933,20 @@ export class RivetWallet extends Wallet {
     this.type = "Contract";
     this.lastUpdated = Date.now();
   }
+
+  /**
+   * Switches this rivet to a different identity contract.
+   * Use when the rivet is already bound to one contract but needs to join another.
+   * The caller is responsible for verifying on-chain authorization first.
+   * @param {string} contractAddress - The target identity contract address
+   */
+  switchToContract(contractAddress) {
+    this.rivetAddress = this.rivetAddress || this.address;
+    this.address = contractAddress;
+    this.contractAddress = contractAddress;
+    this.type = "Contract";
+    this.lastUpdated = Date.now();
+  }
 }
 
 // Expose RivetWallet globally for browser access

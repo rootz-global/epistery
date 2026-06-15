@@ -213,6 +213,19 @@ export default class Witness {
         witness.notabot = new NotabotTracker(witness.wallet);
         console.log("[epistery] Notabot tracker initialized");
       }
+
+      // Handle ?connect=<contractAddress> URL param — device linking via URL/QR
+      if (typeof window !== "undefined" && witness.wallet?.source === "rivet") {
+        const urlParams = new URLSearchParams(window.location.search);
+        const connectParam = urlParams.get("connect");
+        if (connectParam) {
+          try {
+            await witness.handleContractConnect(connectParam);
+          } catch (e) {
+            console.warn("[epistery] connect param handling failed:", e.message);
+          }
+        }
+      }
     } catch (e) {
       console.error("Failed to connect to Epistery server:", e);
       // For unclaimed domains, wallet discovery might succeed even if key exchange fails
@@ -1202,6 +1215,68 @@ export default class Witness {
     localStorage.setItem("epistery", JSON.stringify(storageData));
 
     return true;
+  }
+
+  /**
+   * Handle a ?connect=<contractAddress> URL parameter.
+   * Verifies the current rivet is authorized on the given identity contract,
+   * then links (or switches) the wallet to that contract.
+   *
+   * Phone flow: scan QR from PC → URL loads with ?connect=0x... → auto-links.
+   *
+   * @param {string} contractAddress - The identity contract address (0x... or base64)
+   * @returns {Promise<{linked: boolean, contractAddress: string}>}
+   */
+  async handleContractConnect(contractAddress) {
+    if (!this.wallet || this.wallet.source !== "rivet") return { linked: false };
+
+    // Normalize: accept either raw 0x address or base64-encoded address
+    let addr = contractAddress;
+    if (!addr.startsWith("0x")) {
+      try { addr = atob(contractAddress); } catch (_) { addr = contractAddress; }
+    }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+      console.warn("[epistery] handleContractConnect: invalid address", addr);
+      return { linked: false };
+    }
+
+    // Already linked to this contract — nothing to do
+    if (this.wallet.contractAddress?.toLowerCase() === addr.toLowerCase()) {
+      return { linked: true, contractAddress: addr, alreadyLinked: true };
+    }
+
+    // Verify authorization on-chain via the server endpoint
+    const rivetAddr = this.wallet.rivetAddress || this.wallet.address;
+    const rootPath = this.rootPath || "";
+    const checkRes = await fetch(
+      `${rootPath}/identity/check?contract=${addr}&rivet=${rivetAddr}`
+    );
+    if (!checkRes.ok) throw new Error("Authorization check failed");
+    const { authorized } = await checkRes.json();
+
+    if (!authorized) {
+      console.warn("[epistery] rivet not authorized on contract", addr);
+      return { linked: false, contractAddress: addr, notAuthorized: true };
+    }
+
+    // Link (or switch) wallet to this contract
+    if (this.wallet.contractAddress) {
+      this.wallet.switchToContract(addr);
+    } else {
+      this.wallet.upgradeToContract(addr);
+    }
+
+    this.save();
+
+    // Remove the ?connect= param from the URL without reload
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("connect");
+      window.history.replaceState({}, "", url.toString());
+    }
+
+    console.log("[epistery] Wallet linked to contract", addr);
+    return { linked: true, contractAddress: addr };
   }
 
   getStatus() {
