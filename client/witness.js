@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=8";
+} from "./wallet.js?v=9";
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
