@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=8";
+} from "./wallet.js?v=9";
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -591,15 +591,29 @@ export default class Witness {
   getWallets() {
     const storageData = this.loadStorageData();
     return {
-      wallets: storageData.wallets.map((w) => ({
-        id: w.id,
-        address: w.wallet.address,
-        source: w.wallet.source,
-        label: w.label,
-        createdAt: w.createdAt,
-        lastUsed: w.lastUsed,
-        isDefault: w.id === storageData.defaultWalletId,
-      })),
+      wallets: storageData.wallets.map((w) => {
+        // Derive the three-fact shape from RAW storage so it's correct even
+        // for legacy records that fromJSON hasn't un-flipped yet (getWallets
+        // reads storage directly, not via fromJSON). signerAddress is always
+        // the rivet; identityAddress is the contract when bound.
+        const rivet = w.wallet.rivetAddress || w.wallet.address;
+        const contract = w.wallet.contractAddress || null;
+        return {
+          id: w.id,
+          // `address` kept for back-compat; may be the contract on an
+          // un-migrated legacy record. Render rivetAddress/signerAddress.
+          address: w.wallet.address,
+          rivetAddress: rivet,
+          signerAddress: rivet,
+          contractAddress: contract,
+          identityAddress: contract || rivet,
+          source: w.wallet.source,
+          label: w.label,
+          createdAt: w.createdAt,
+          lastUsed: w.lastUsed,
+          isDefault: w.id === storageData.defaultWalletId,
+        };
+      }),
       defaultWalletId: storageData.defaultWalletId,
     };
   }
@@ -788,8 +802,11 @@ export default class Witness {
 
     return {
       id: localRivet.id,
-      address: localRivet.address,         // = contract
-      rivetAddress: localRivet.rivetAddress,
+      // `address` no longer flips to the contract on upgrade; expose the
+      // canonical identity explicitly so callers that want the contract keep
+      // getting it, and the rivet stays available separately.
+      address: localRivet.identityAddress,   // = contract once joined
+      rivetAddress: localRivet.signerAddress,
       source: localRivet.source,
       label: localRivet.label,
       identityName: identityName || null,

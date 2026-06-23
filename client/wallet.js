@@ -12,11 +12,13 @@
 //   - identityAddress : the canonical identity. Derived: contractAddress
 //                       || signerAddress. Never persisted; always computed.
 //
-// `address` is retained as a per-wallet field for storage compatibility,
-// but is no longer the source of identity decisions — use the getters.
-// (Phase 1b: rename the persistence shape so the storage key matches the
-// vocabulary; until then RivetWallet.upgradeToContract still flips
-// `address` to the contract for backwards-compatible callers.)
+// `address` is the rivet (device key) for the LIFE of the wallet — it is no
+// longer flipped to the contract on upgrade. Identity decisions use the
+// getters (signerAddress / identityAddress) or the explicit contractAddress
+// field. Legacy records that were flipped before this change are un-flipped
+// on load (see RivetWallet.fromJSON migration).
+// (Phase 1b — future: rename the persisted `address` key to `rivetAddress`
+// so the storage shape matches the vocabulary.)
 export class Wallet {
   constructor() {
     this.address = null;
@@ -305,6 +307,21 @@ export class RivetWallet extends Wallet {
     wallet.contractAddress = data.contractAddress;
     wallet.rivetAddress = data.rivetAddress;
     wallet.associations = data.associations || [];
+
+    // Migrate legacy flipped records. Before we stopped flipping, upgradeToContract
+    // set `address = contractAddress` and stashed the rivet on rivetAddress. Restore
+    // `address` to the rivet so it's always the device key. Unambiguous: only an old
+    // flipped record has address === contractAddress with a distinct rivetAddress.
+    // New (unflipped) records have address === rivetAddress !== contractAddress and
+    // are left untouched. Re-saving the wallet persists the corrected shape.
+    if (
+      wallet.contractAddress &&
+      wallet.rivetAddress &&
+      wallet.address &&
+      wallet.address.toLowerCase() === wallet.contractAddress.toLowerCase()
+    ) {
+      wallet.address = wallet.rivetAddress;
+    }
 
     return wallet;
   }
@@ -1002,8 +1019,14 @@ export class RivetWallet extends Wallet {
       throw new Error("Rivet is already using an identity contract");
     }
 
-    this.rivetAddress = this.address; // Save original rivet address
-    this.address = contractAddress; // Present contract address
+    // Do NOT flip `address` to the contract. `address` stays the rivet (device
+    // key) for the life of the wallet; the contract is a separate fact exposed
+    // via contractAddress / identityAddress. Flipping used to make the device
+    // wallet masquerade as its contract — the device list then showed the
+    // contract address, and every consumer that read `address` expecting the
+    // signer was wrong. rivetAddress is kept set (== address) for the
+    // signerAddress getter and a stable persisted shape.
+    this.rivetAddress = this.address;
     this.contractAddress = contractAddress;
     this.type = "Contract";
     this.lastUpdated = Date.now();
