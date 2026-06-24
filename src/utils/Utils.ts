@@ -11,7 +11,7 @@ export class Utils {
   // across concurrent requests for different domains on a multi-tenant host.
   private static walletCache: Map<string, ethers.Wallet> = new Map();
 
-  public static InitServerWallet(domain: string = 'localhost'): ethers.Wallet | null {
+  public static async InitServerWallet(domain: string = 'localhost'): Promise<ethers.Wallet | null> {
     // Fast path: return cached wallet for this domain. Avoids both the
     // wallet-rebuild cost and the static config setPath mutation.
     const cached = this.walletCache.get(domain);
@@ -25,7 +25,7 @@ export class Utils {
       }
 
       // Load domain config
-      this.config.setPath(domain);
+      await this.config.setPath(domain);
 
       const domainConfig = this.config.data.domain ? this.config.data : {domain: domain};
 
@@ -41,10 +41,10 @@ export class Utils {
       // "provider=undefined", and which on reload becomes a truthy
       // string that bypasses the `||` fallback below at chainFor).
       if (!domainConfig.provider) {
-        this.config.setPath('/');
+        await this.config.setPath('/');
         domainConfig.provider =
           this.config.data.default?.provider ?? this.config.data.provider;
-        this.config.setPath(domain); // Switch back to domain
+        await this.config.setPath(domain); // Switch back to domain
       }
 
       if (!domainConfig.wallet) {
@@ -69,7 +69,7 @@ export class Utils {
         }
 
         this.config.data = domainConfig;
-        this.config.save();
+        await this.config.save();
 
         console.log(`[debug] Created new wallet for domain: ${domain}`);
         console.log(`[debug] Wallet address: ${wallet.address}`);
@@ -98,6 +98,17 @@ export class Utils {
     return this.serverWallet;
   }
 
+  /**
+   * Synchronous accessor for a domain's already-initialized wallet, read from
+   * the per-domain cache. Returns null if InitServerWallet(domain) has not been
+   * awaited yet. This lets the synchronous `get signer()` getter survive the
+   * async migration: setDomain() awaits InitServerWallet to warm the cache, and
+   * the getter reads it here without re-entering async config IO.
+   */
+  public static GetServerWalletFor(domain: string): ethers.Wallet | null {
+    return this.walletCache.get(domain) || null;
+  }
+
   public static GetConfig(): Config {
     if (!this.config) {
       this.config = new Config();
@@ -105,13 +116,12 @@ export class Utils {
     return this.config;
   }
 
-  public static GetDomainInfo(domain: string = 'localhost'): DomainConfig {
+  public static async GetDomainInfo(domain: string = 'localhost'): Promise<DomainConfig> {
     if (!this.config) {
       this.config = new Config();
     }
 
-    this.config.setPath(`/${domain}`);
-    this.config.load();
+    await this.config.setPath(`/${domain}`);
 
     if (!this.config.data.domain)
       return {domain:domain};
@@ -126,7 +136,7 @@ export class Utils {
     // read epistery.domain.provider.rpc (e.g. connect's on-chain contract
     // verification) get no RPC. read('/') doesn't move the current path.
     if (!domainConfig.provider) {
-      const rootData = this.config.read('/');
+      const rootData = await this.config.read('/');
       domainConfig.provider = rootData.default?.provider ?? rootData.provider;
     }
 

@@ -82,9 +82,9 @@ export function registeredChains(): ChainConfig[] {
  *
  * Chains without a config override are returned unchanged.
  */
-export function configuredChains(): ChainConfig[] {
+export async function configuredChains(): Promise<ChainConfig[]> {
   const config = new Config();
-  const rootData = config.read('/');
+  const rootData = await config.read('/');
   return registeredChains().map(chain => {
     const id = String(chain.chainId);
     const privateRpc = rootData?.default?.rpc?.[id]?.privateRpc
@@ -101,9 +101,9 @@ export function configuredChains(): ChainConfig[] {
  * Checks `[default] defaultChainId`, then `[default.provider] chainId`,
  * falling back to Polygon mainnet (137).
  */
-export function defaultChainId(): string {
+export async function defaultChainId(): Promise<string> {
   const config = new Config();
-  const rootData = config.read('/');
+  const rootData = await config.read('/');
   return String(
     rootData?.default?.defaultChainId
     || rootData?.default?.provider?.chainId

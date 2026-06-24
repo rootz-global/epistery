@@ -1,23 +1,59 @@
 import fs from 'fs';
+import fsp from 'fs/promises';
 import { join } from 'path';
 import ini from 'ini';
+import { ethers } from 'ethers';
 
 /**
- * Epistery Config - Path-based configuration system
+ * Epistery Config — async path-based configuration store.
  *
- * Provides unified, filesystem-like config management:
+ * Filesystem-like config management, now async so the same interface can be
+ * served by a remote authority:
  * - setPath('/') → ~/.epistery/config.ini
  * - setPath('/domain') → ~/.epistery/domain/config.ini
  * - setPath('/.ssl/domain') → ~/.epistery/.ssl/domain/config.ini
  *
+ * `Config` is a thin facade that picks a backend at construction:
+ *   - if the local bootstrap ~/.epistery/config.ini has [authority] url=…,
+ *     or EPISTERY_CONFIG_URL is set → RemoteConfig (talks to epistery-authority)
+ *   - otherwise → LocalConfig (the filesystem store; unchanged semantics)
+ *
+ * Every IO method is async because a remote/HSM custodian cannot answer
+ * synchronously. `data` holds the snapshot from the last awaited load()/setPath().
+ *
  * Usage:
  *   const config = new Config('epistery');
- *   config.setPath('/wiki.rootz.global');
- *   config.load();
+ *   await config.setPath('/wiki.rootz.global');   // loads
  *   config.data.verified = true;
- *   config.save();
+ *   await config.save();
  */
-export class Config {
+export interface ConfigStore {
+  data: any;
+  getPath(): string;
+  setPath(path: string): Promise<void>;
+  load(): Promise<void>;
+  read(path: string): Promise<any>;
+  save(): Promise<void>;
+  readFile(filename: string): Promise<Buffer>;
+  writeFile(filename: string, data: string | Buffer): Promise<void>;
+  exists(): Promise<boolean>;
+  listPaths(): Promise<string[]>;
+}
+
+/** Normalize a path: leading slash, no trailing slash, lowercase. */
+function normalizePath(path: string): string {
+  path = path.trim();
+  if (!path.startsWith('/')) path = '/' + path;
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  return path.toLowerCase();
+}
+
+/**
+ * LocalConfig — the filesystem backend under ~/.epistery. This is the original
+ * Config behavior, with all IO made async. It is also what the epistery-authority
+ * server mounts as its own storage backend (one implementation, not two).
+ */
+export class LocalConfig implements ConfigStore {
   public readonly rootName: string;
   public readonly homeDir: string;
   public readonly configDir: string;
@@ -36,151 +72,291 @@ export class Config {
     this.currentDir = this.configDir;
     this.currentFile = join(this.configDir, 'config.ini');
 
-    // Initialize root config if it doesn't exist
+    // Bootstrap is synchronous: seed the root config so the very first run has
+    // somewhere to read the authority URL from. Only this seed stays sync; all
+    // subsequent IO is async.
     if (!fs.existsSync(this.currentFile)) {
-      this.initialize();
+      this.initializeSync();
     }
   }
 
-  /**
-   * Set current working path and load config (like cd)
-   * Examples: '/', 'domain', '/domain', '/.ssl/domain'
-   * Leading slash is optional and will be added if not present
-   * Automatically loads the config at the specified path
-   */
-  public setPath(path: string): void {
-    // Normalize path: ensure leading slash, remove trailing slash, lowercase
-    path = path.trim();
-    if (!path.startsWith('/')) path = '/' + path;
-    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
-    path = path.toLowerCase();
-
-    this.currentPath = path;
-
-    // Calculate directory and file paths
-    if (path === '/') {
-      this.currentDir = this.configDir;
-      this.currentFile = join(this.configDir, 'config.ini');
-    } else {
-      this.currentDir = join(this.configDir, path.slice(1)); // Remove leading /
-      this.currentFile = join(this.currentDir, 'config.ini');
-    }
-
-    // Automatically load the config at this path
-    this.load();
-  }
-
-  /**
-   * Get current path
-   */
-  public getPath(): string {
-    return this.currentPath;
-  }
-
-  /**
-   * Initialize config at current path
-   */
-  private initialize(): void {
+  private initializeSync(): void {
     if (!fs.existsSync(this.currentDir)) {
       fs.mkdirSync(this.currentDir, { recursive: true });
     }
-
-    // Write default config for root, empty for paths
     const defaultContent = this.currentPath === '/' ? defaultIni : '';
     fs.writeFileSync(this.currentFile, defaultContent);
     this.data = ini.decode(defaultContent);
   }
 
-  /**
-   * Load config from current path
-   */
-  public load(): void {
-    if (!fs.existsSync(this.currentFile)) {
-      this.data = {};
-      return;
-    }
-
-    const fileData = fs.readFileSync(this.currentFile, 'utf8');
-    this.data = ini.decode(fileData);
+  public getPath(): string {
+    return this.currentPath;
   }
 
-  /**
-   * Read config from arbitrary path without changing current path
-   * @param path Path to read from (e.g., '/', '/domain')
-   * @returns Parsed config data from that path
-   */
-  public read(path: string): any {
-    // Normalize path
-    path = path.trim();
-    if (!path.startsWith('/')) path = '/' + path;
-    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
-    path = path.toLowerCase();
+  public async setPath(path: string): Promise<void> {
+    path = normalizePath(path);
+    this.currentPath = path;
 
-    // Calculate file location
-    let configFile: string;
     if (path === '/') {
-      configFile = join(this.configDir, 'config.ini');
+      this.currentDir = this.configDir;
+      this.currentFile = join(this.configDir, 'config.ini');
     } else {
-      configFile = join(this.configDir, path.slice(1), 'config.ini');
+      this.currentDir = join(this.configDir, path.slice(1));
+      this.currentFile = join(this.currentDir, 'config.ini');
     }
 
-    // Read and parse
-    if (!fs.existsSync(configFile)) {
+    await this.load();
+  }
+
+  public async load(): Promise<void> {
+    try {
+      const fileData = await fsp.readFile(this.currentFile, 'utf8');
+      this.data = ini.decode(fileData);
+    } catch {
+      this.data = {};
+    }
+  }
+
+  public async read(path: string): Promise<any> {
+    path = normalizePath(path);
+    const configFile = path === '/'
+      ? join(this.configDir, 'config.ini')
+      : join(this.configDir, path.slice(1), 'config.ini');
+    try {
+      const fileData = await fsp.readFile(configFile, 'utf8');
+      return ini.decode(fileData);
+    } catch {
       return {};
     }
-
-    const fileData = fs.readFileSync(configFile, 'utf8');
-    return ini.decode(fileData);
   }
 
-  /**
-   * Save config to current path
-   */
-  public save(): void {
-    if (!fs.existsSync(this.currentDir)) {
-      fs.mkdirSync(this.currentDir, { recursive: true });
+  public async save(): Promise<void> {
+    await fsp.mkdir(this.currentDir, { recursive: true });
+    await fsp.writeFile(this.currentFile, ini.stringify(this.data));
+  }
+
+  public async readFile(filename: string): Promise<Buffer> {
+    return fsp.readFile(join(this.currentDir, filename));
+  }
+
+  public async writeFile(filename: string, data: string | Buffer): Promise<void> {
+    await fsp.mkdir(this.currentDir, { recursive: true });
+    await fsp.writeFile(join(this.currentDir, filename), data);
+  }
+
+  public async exists(): Promise<boolean> {
+    try {
+      await fsp.access(this.currentFile);
+      return true;
+    } catch {
+      return false;
     }
-
-    const text = ini.stringify(this.data);
-    fs.writeFileSync(this.currentFile, text);
   }
 
-  /**
-   * Read file from current path directory
-   */
-  public readFile(filename: string): Buffer {
-    return fs.readFileSync(join(this.currentDir, filename));
-  }
-
-  /**
-   * Write file to current path directory
-   */
-  public writeFile(filename: string, data: string | Buffer): void {
-    if (!fs.existsSync(this.currentDir)) {
-      fs.mkdirSync(this.currentDir, { recursive: true });
-    }
-    fs.writeFileSync(join(this.currentDir, filename), data);
-  }
-
-  /**
-   * Check if config exists at current path
-   */
-  public exists(): boolean {
-    return fs.existsSync(this.currentFile);
-  }
-
-  /**
-   * List all subdirectories at current path
-   */
-  public listPaths(): string[] {
-    if (!fs.existsSync(this.currentDir)) {
+  public async listPaths(): Promise<string[]> {
+    try {
+      const entries = await fsp.readdir(this.currentDir, { withFileTypes: true });
+      return entries.filter(e => e.isDirectory()).map(e => e.name);
+    } catch {
       return [];
     }
-
-    return fs.readdirSync(this.currentDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
   }
+}
+
+/**
+ * RemoteConfig — HTTP client to an epistery-authority server. Implements the
+ * same ConfigStore interface; the authority mounts a LocalConfig behind it.
+ *
+ * Auth is the rivet key-exchange: the machine signs a challenge with its
+ * device key, and the authority issues a bearer token (see epistery-authority
+ * lib/auth.mjs). In Phase 1 config data (including the wallet mnemonic) is
+ * still served; Phase 2 splits public from secret and adds /sign/*.
+ */
+export class RemoteConfig implements ConfigStore {
+  public data: any = {};
+  private currentPath: string = '/';
+  private token: string | null = null;
+
+  constructor(
+    private readonly baseUrl: string,
+    private readonly machineAddress: string,
+    private readonly signChallenge: (message: string) => Promise<string>,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
+
+  public getPath(): string {
+    return this.currentPath;
+  }
+
+  private async authenticate(): Promise<void> {
+    const fetch = (globalThis as any).fetch;
+    const cRes = await fetch(`${this.baseUrl}/auth/challenge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ machineAddress: this.machineAddress }),
+    });
+    if (!cRes.ok) throw new Error(`authority challenge failed: ${cRes.status}`);
+    const { challenge } = await cRes.json();
+
+    const message = `Epistery Key Exchange - ${this.machineAddress} - ${challenge}`;
+    const signature = await this.signChallenge(message);
+
+    const vRes = await fetch(`${this.baseUrl}/auth/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ machineAddress: this.machineAddress, message, signature }),
+    });
+    if (!vRes.ok) throw new Error(`authority verify failed: ${vRes.status}`);
+    this.token = (await vRes.json()).token;
+  }
+
+  private async authedFetch(pathAndQuery: string, init: any = {}): Promise<any> {
+    const fetch = (globalThis as any).fetch;
+    if (!this.token) await this.authenticate();
+    const withAuth = () => ({ ...init, headers: { ...(init.headers || {}), authorization: `Bearer ${this.token}` } });
+    let res = await fetch(this.baseUrl + pathAndQuery, withAuth());
+    if (res.status === 401) {
+      this.token = null;            // expired — re-auth once
+      await this.authenticate();
+      res = await fetch(this.baseUrl + pathAndQuery, withAuth());
+    }
+    return res;
+  }
+
+  public async setPath(path: string): Promise<void> {
+    this.currentPath = normalizePath(path);
+    await this.load();
+  }
+
+  public async load(): Promise<void> {
+    this.data = await this.read(this.currentPath);
+  }
+
+  public async read(path: string): Promise<any> {
+    path = normalizePath(path);
+    const res = await this.authedFetch(`/config${path === '/' ? '/' : path}`);
+    if (!res.ok) return {};
+    return (await res.json()).data || {};
+  }
+
+  public async save(): Promise<void> {
+    const path = this.currentPath;
+    const res = await this.authedFetch(`/config${path === '/' ? '/' : path}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ data: this.data }),
+    });
+    if (!res.ok) throw new Error(`authority save failed: ${res.status}`);
+  }
+
+  private filePrefix(): string {
+    return this.currentPath === '/' ? '' : this.currentPath;
+  }
+
+  public async readFile(filename: string): Promise<Buffer> {
+    const res = await this.authedFetch(`/file${this.filePrefix()}/${filename}`);
+    if (!res.ok) throw new Error(`authority file read failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  public async writeFile(filename: string, data: string | Buffer): Promise<void> {
+    const res = await this.authedFetch(`/file${this.filePrefix()}/${filename}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: data,
+    });
+    if (!res.ok) throw new Error(`authority file write failed: ${res.status}`);
+  }
+
+  public async exists(): Promise<boolean> {
+    const data = await this.read(this.currentPath);
+    return !!data && Object.keys(data).length > 0;
+  }
+
+  public async listPaths(): Promise<string[]> {
+    const res = await this.authedFetch(`/paths${this.currentPath === '/' ? '/' : this.currentPath}`);
+    if (!res.ok) return [];
+    return (await res.json()).paths || [];
+  }
+}
+
+/**
+ * Config — the public facade. `new Config()` selects the backend synchronously
+ * (reading only the local bootstrap), then delegates every async operation.
+ * Existing call sites change only by adding `await`.
+ */
+export class Config implements ConfigStore {
+  private readonly backend: ConfigStore;
+  private readonly local: LocalConfig;
+
+  constructor(rootName: string = 'epistery') {
+    this.local = new LocalConfig(rootName);
+    const authorityUrl = Config.resolveAuthorityUrl(rootName);
+    if (authorityUrl) {
+      const { machineAddress, sign } = Config.machineSigner(rootName);
+      this.backend = new RemoteConfig(authorityUrl, machineAddress, sign);
+    } else {
+      this.backend = this.local;
+    }
+  }
+
+  /** Read the local bootstrap config.ini synchronously (authority selection only). */
+  private static readBootstrap(rootName: string): any {
+    const homeDir = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || '';
+    const file = join(homeDir, '.' + rootName, 'config.ini');
+    try {
+      return ini.decode(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return {};
+    }
+  }
+
+  private static resolveAuthorityUrl(rootName: string): string | null {
+    if (process.env.EPISTERY_CONFIG_URL) return process.env.EPISTERY_CONFIG_URL;
+    const boot = Config.readBootstrap(rootName);
+    return boot?.authority?.url || null;
+  }
+
+  /**
+   * Build the machine signer used to authenticate to the authority. The machine
+   * rivet key lives in the local bootstrap [authority] section (Phase 1). A
+   * future TPM-backed key replaces this without changing the call site.
+   */
+  private static machineSigner(rootName: string): { machineAddress: string; sign: (m: string) => Promise<string> } {
+    const boot = Config.readBootstrap(rootName);
+    const a = boot?.authority || {};
+    let wallet: ethers.Wallet;
+    if (a.machineMnemonic) {
+      wallet = ethers.Wallet.fromMnemonic(a.machineMnemonic);
+    } else if (a.machineKey) {
+      wallet = new ethers.Wallet(a.machineKey);
+    } else {
+      throw new Error(
+        'Config: [authority] url is set but no machine credential ([authority] machineMnemonic or machineKey) is configured to authenticate to it.',
+      );
+    }
+    return { machineAddress: wallet.address, sign: (m: string) => wallet.signMessage(m) };
+  }
+
+  // Local-machine facts (always the bootstrap LocalConfig, even in remote mode):
+  // these are filesystem paths some callers need (e.g. CliWallet session dir).
+  public get rootName(): string { return this.local.rootName; }
+  public get homeDir(): string { return this.local.homeDir; }
+  public get configDir(): string { return this.local.configDir; }
+
+  public get data(): any { return this.backend.data; }
+  public set data(v: any) { this.backend.data = v; }
+
+  public getPath(): string { return this.backend.getPath(); }
+  public setPath(path: string): Promise<void> { return this.backend.setPath(path); }
+  public load(): Promise<void> { return this.backend.load(); }
+  public read(path: string): Promise<any> { return this.backend.read(path); }
+  public save(): Promise<void> { return this.backend.save(); }
+  public readFile(filename: string): Promise<Buffer> { return this.backend.readFile(filename); }
+  public writeFile(filename: string, data: string | Buffer): Promise<void> { return this.backend.writeFile(filename, data); }
+  public exists(): Promise<boolean> { return this.backend.exists(); }
+  public listPaths(): Promise<string[]> { return this.backend.listPaths(); }
 }
 
 const defaultIni =
@@ -224,4 +400,11 @@ nativeCurrencyDecimals=18
 ;   minPriorityFeeGwei=25         ; Polygon RPC floor (don't lower)
 ;   [default.rpc.81.policy]
 ;   maxGasPriceGwei=1000           ; legacy-chain analogue (JOC)
-`
+
+; Shared Configuration Authority (optional). When set, Config reads/writes
+; through the epistery-authority server instead of the local filesystem, so
+; this host becomes a stateless pool member. EPISTERY_CONFIG_URL overrides url.
+;   [authority]
+;   url=https://epistery-authority-1.internal:4500
+;   machineMnemonic=...            ; this machine's rivet (or machineKey=0x…)
+`;

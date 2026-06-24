@@ -25,7 +25,7 @@ export default function authRoutes(epistery) {
           .json({ status: "error", message: "Domain not found" });
       }
 
-      epistery.config.setPath(domain);
+      await epistery.config.setPath(domain);
 
       if (epistery.config.data && epistery.config.data.verified) {
         return res
@@ -97,7 +97,7 @@ export default function authRoutes(epistery) {
         });
       }
 
-      epistery.config.setPath(domain);
+      await epistery.config.setPath(domain);
 
       if (epistery.config.data && epistery.config.data.verified) {
         return res
@@ -125,7 +125,7 @@ export default function authRoutes(epistery) {
       epistery.config.data.challenge_requester_ip = req.ip;
       epistery.config.data.provider = providerConfig;
 
-      epistery.config.save();
+      await epistery.config.save();
       console.log(
         `Domain claim initiated: ${domain} by ${normalizedClientAddress}`,
       );
@@ -149,7 +149,7 @@ export default function authRoutes(epistery) {
           .json({ status: "error", message: "Domain not found" });
       }
 
-      epistery.config.setPath(domain);
+      await epistery.config.setPath(domain);
 
       if (!epistery.config.data.pending) {
         return res.status(400).json({
@@ -208,7 +208,7 @@ export default function authRoutes(epistery) {
       delete epistery.config.data.challenge_token;
       delete epistery.config.data.challenge_address;
       delete epistery.config.data.challenge_requester_ip;
-      epistery.config.save();
+      await epistery.config.save();
 
       res.json({ status: "success", message: "Domain claimed successfully" });
     } catch (error) {
@@ -229,7 +229,7 @@ export default function authRoutes(epistery) {
         return res.json({ isAdmin: false });
       }
 
-      epistery.config.setPath(domain);
+      await epistery.config.setPath(domain);
 
       if (
         !epistery.config.data ||

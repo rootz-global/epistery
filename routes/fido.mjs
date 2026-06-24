@@ -64,8 +64,8 @@ export default function fidoRoutes(epistery) {
         return res.status(500).json({ error: "Domain not set" });
       }
 
-      epistery.config.setPath(`/${domain}/fido`);
-      epistery.config.writeFile(
+      await epistery.config.setPath(`/${domain}/fido`);
+      await epistery.config.writeFile(
         `${credentialId}.json`,
         JSON.stringify({
           credentialId,
@@ -97,11 +97,11 @@ export default function fidoRoutes(epistery) {
         return res.status(500).json({ error: "Domain not set" });
       }
 
-      epistery.config.setPath(`/${domain}/fido`);
+      await epistery.config.setPath(`/${domain}/fido`);
 
       let buf;
       try {
-        buf = epistery.config.readFile(`${credentialId}.json`);
+        buf = await epistery.config.readFile(`${credentialId}.json`);
       } catch (e) {
         return res.status(404).json({ error: "Blob not found" });
       }

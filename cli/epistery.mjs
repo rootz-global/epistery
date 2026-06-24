@@ -177,7 +177,7 @@ async function initializeDomain(domain) {
     console.log(`Initializing domain: ${domain}`);
     console.log("");
 
-    const wallet = CliWallet.initialize(domain);
+    const wallet = await CliWallet.initialize(domain);
 
     console.log("");
     console.log("Domain initialized successfully");
@@ -189,8 +189,7 @@ async function initializeDomain(domain) {
       // Load config to get agent contract address
       const { Config } = await import("../dist/utils/Config.js");
       const config = new Config();
-      config.setPath(`/${domain}`);
-      config.load();
+      await config.setPath(`/${domain}`);
 
       const contractAddress = config.data?.contract_address;
 
@@ -201,7 +200,7 @@ async function initializeDomain(domain) {
         console.log("Adding wallet to epistery::admin list...");
 
         // Get the server wallet (which was just initialized)
-        const serverWallet = Utils.InitServerWallet(domain);
+        const serverWallet = await Utils.InitServerWallet(domain);
 
         if (serverWallet) {
           await Utils.AddToWhitelist(
@@ -263,7 +262,7 @@ async function initializeDomain(domain) {
 
 async function showInfo(domain) {
   try {
-    const wallet = CliWallet.load(domain);
+    const wallet = await CliWallet.load(domain);
 
     console.log("Domain:", wallet.getDomain());
     console.log("Address:", wallet.address);
@@ -290,9 +289,9 @@ async function showInfo(domain) {
   }
 }
 
-function setDefault(domain) {
+async function setDefault(domain) {
   try {
-    CliWallet.setDefaultDomain(domain);
+    await CliWallet.setDefaultDomain(domain);
     console.log(`✓ Default domain set to: ${domain}`);
     console.log("");
     console.log("Verify with: epistery info");
@@ -397,7 +396,7 @@ async function executeCurl(curlArgs) {
 async function performCurl(options) {
   try {
     // Load wallet (uses default if domain not specified)
-    const wallet = CliWallet.load(options.domain);
+    const wallet = await CliWallet.load(options.domain);
 
     if (options.verbose) {
       console.error(`[epistery] Domain: ${wallet.getDomain()}`);
@@ -522,7 +521,7 @@ async function performMcp(args) {
     ? url.replace(/\/+$/, '')
     : url.replace(/\/+$/, '') + '/mcp';
 
-  const wallet = CliWallet.load(domain);
+  const wallet = await CliWallet.load(domain);
   const fetch = (await import('node-fetch')).default;
 
   // All log output to stderr so stdout stays clean for MCP JSON-RPC
@@ -650,7 +649,7 @@ async function main() {
           console.error("Usage: epistery set-default <domain>");
           process.exit(1);
         }
-        setDefault(args[0]);
+        await setDefault(args[0]);
         break;
 
       case "help":

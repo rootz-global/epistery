@@ -67,32 +67,38 @@ export class CliWallet {
   /**
    * Get the default domain from config.ini [cli] section
    */
-  static getDefaultDomain(): string {
+  static async getDefaultDomain(): Promise<string> {
     const config = new Config();
+    await config.setPath('/');
     return (config.data as any).cli?.default_domain || 'localhost';
   }
 
   /**
-   * Set the default domain in config.ini [cli] section
+   * Set the default domain in config.ini [cli] section.
+   *
+   * Loads the root config first so the rest of it ([profile], [default.provider],
+   * …) is preserved on save. (Before the async migration, Config did not
+   * auto-load on construction, so this wrote {cli:…} over the whole root file.)
    */
-  static setDefaultDomain(domain: string): void {
+  static async setDefaultDomain(domain: string): Promise<void> {
     const config = new Config();
+    await config.setPath('/');
     if (!(config.data as any).cli) {
       (config.data as any).cli = {};
     }
     (config.data as any).cli.default_domain = domain;
-    config.save();
+    await config.save();
   }
 
   /**
    * Initialize a new domain with wallet
    * Creates ~/.epistery/{domain}/config.ini with new wallet
    */
-  static initialize(domain: string, provider?: { name: string, chainId: number, rpc: string }): CliWallet {
+  static async initialize(domain: string, provider?: { name: string, chainId: number, rpc: string }): Promise<CliWallet> {
     const config = new Config();
 
     // Check if domain already exists
-    config.setPath(domain);
+    await config.setPath(domain);
     if (config.data.wallet) {
       throw new Error(`Domain '${domain}' already initialized. Use load() to access it.`);
     }
@@ -101,7 +107,7 @@ export class CliWallet {
     const ethersWallet = ethers.Wallet.createRandom();
 
     // Get provider from root default, argument, or fallback default
-    config.setPath('/');
+    await config.setPath('/');
     const providerConfig = provider || config.data.default?.provider || {
       chainId: 420420422,
       name: 'polkadot-hub-testnet',
@@ -109,7 +115,7 @@ export class CliWallet {
     };
 
     // Create domain config
-    config.setPath(`/${domain}`);
+    await config.setPath(`/${domain}`);
     config.data = {
       domain: domain,
       wallet: {
@@ -120,7 +126,7 @@ export class CliWallet {
       },
       provider: providerConfig
     };
-    config.save();
+    await config.save();
 
     console.log(`Initialized domain: ${domain}`);
     console.log(`Address: ${ethersWallet.address}`);
@@ -133,12 +139,11 @@ export class CliWallet {
    * Load domain wallet from config
    * Throws if domain doesn't exist - use initialize() first
    */
-  static load(domain?: string): CliWallet {
+  static async load(domain?: string): Promise<CliWallet> {
     const config = new Config();
-    const domainName = domain || CliWallet.getDefaultDomain();
+    const domainName = domain || await CliWallet.getDefaultDomain();
 
-    config.setPath(`/${domainName}`);
-    config.load();
+    await config.setPath(`/${domainName}`);
 
     if (!config.data.wallet) {
       throw new Error(

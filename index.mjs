@@ -11,13 +11,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
-function getDomainConfig(domain) {
-  let domainConfig = Utils.GetDomainInfo(domain);
-  if (!domainConfig?.wallet) {
-    Utils.InitServerWallet(domain);
-    domainConfig = Utils.GetDomainInfo(domain);
-  }
-  return domainConfig;
+async function getDomainConfig(domain) {
+  // InitServerWallet warms the per-domain wallet cache (and creates+persists a
+  // wallet on first touch). Awaiting it here keeps the synchronous `get signer()`
+  // getter able to read the cache via Utils.GetServerWalletFor.
+  await Utils.InitServerWallet(domain);
+  return await Utils.GetDomainInfo(domain);
 }
 
 class EpisteryAttach {
@@ -36,7 +35,7 @@ class EpisteryAttach {
 
   async setDomain(domain) {
     this.domainName = domain;
-    this.domain = getDomainConfig(domain);
+    this.domain = await getDomainConfig(domain);
   }
 
   /**
@@ -45,7 +44,9 @@ class EpisteryAttach {
    */
   get signer() {
     if (!this.domainName) return null;
-    return Utils.InitServerWallet(this.domainName) || null;
+    // Synchronous read of the cache warmed by setDomain()→getDomainConfig()→
+    // InitServerWallet. Keeps `.signer` a sync getter despite the async config.
+    return Utils.GetServerWalletFor(this.domainName) || null;
   }
 
   /**

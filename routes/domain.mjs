@@ -24,7 +24,7 @@ export default function domainRoutes(epistery) {
 
       // Check if domain already exists
       const config = Utils.GetConfig();
-      config.setPath(domain);
+      await config.setPath(domain);
 
       let domainConfig = config.data;
       if (!domainConfig.domain) domainConfig.domain = domain;
@@ -37,7 +37,7 @@ export default function domainRoutes(epistery) {
         };
 
       // Save domain config with custom provider (marked as pending)
-      config.save();
+      await config.save();
 
       res.json({
         status: "success",

@@ -43,7 +43,7 @@ export class Epistery {
     return clientWalletInfo;
   }
 
-  public static getStatus(client: ClientWalletInfo, server: DomainConfig): EpisteryStatus {
+  public static async getStatus(client: ClientWalletInfo, server: DomainConfig): Promise<EpisteryStatus> {
     // Build nativeCurrency object from flat fields with sensible defaults
     let nativeCurrency = undefined;
     if (server?.provider?.nativeCurrencySymbol) {
@@ -56,7 +56,7 @@ export class Epistery {
 
     // Read IPFS config from root config
     const config = Utils.GetConfig();
-    const rootConfig = config.read('/');
+    const rootConfig = await config.read('/');
     const ipfsConfig = rootConfig.ipfs;
 
     const status: EpisteryStatus = {
@@ -155,7 +155,7 @@ export class Epistery {
   ): Promise<any> {
     // RPC comes from ~/.epistery via Config (GetDomainInfo falls back to root
     // [provider]); never process.env — env is for deployment vars only.
-    const domainInfo = Utils.GetDomainInfo(domain);
+    const domainInfo = await Utils.GetDomainInfo(domain);
     const rpcUrl = domainInfo?.provider?.rpc;
     if (!rpcUrl) {
       throw new Error(`No provider RPC configured in ~/.epistery for domain "${domain}"`);
@@ -307,7 +307,7 @@ export class Epistery {
     // RPC from ~/.epistery root config via Config — not process.env. A signed
     // tx already encodes its chainId; we just need the network's RPC, which
     // single-domain apps declare once at root [provider].
-    const rootData = Utils.GetConfig().read('/');
+    const rootData = await Utils.GetConfig().read('/');
     const rpcUrl = rootData.provider?.rpc ?? rootData.default?.provider?.rpc;
     if (!rpcUrl) {
       throw new Error('No provider RPC configured in ~/.epistery (root [provider])');
