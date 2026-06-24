@@ -180,11 +180,17 @@ export async function createBotAuthHeader(wallet: ethers.Wallet): Promise<string
 }
 
 /**
- * Create a session cookie for authenticated requests
+ * Create a session cookie for authenticated requests.
+ *
+ * Matches the three-fact session shape the auth middleware reads
+ * (index.mjs: s.signerAddress / s.contractAddress / s.publicKey). The old field
+ * name `rivetAddress` predated the identity-vocabulary migration and was silently
+ * ignored by the middleware (no signerAddress → unauthenticated).
  */
-export function createSessionCookie(rivetAddress: string, publicKey?: string): string {
+export function createSessionCookie(signerAddress: string, publicKey?: string, contractAddress?: string | null): string {
   const sessionData = {
-    rivetAddress,
+    signerAddress,
+    contractAddress: contractAddress || null,
     publicKey: publicKey || '',
     authenticated: true,
     timestamp: new Date().toISOString()

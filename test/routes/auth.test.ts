@@ -119,14 +119,18 @@ describe('Auth Routes', () => {
   });
 
   describe('GET /auth/dns/claim', () => {
-    it('should require address query parameter', async () => {
+    it('should error when no pending claim exists for the domain', async () => {
+      // localhost is regenerated clean by globalSetup (no pending claim), so the
+      // handler returns 400 from the no-pending guard before it ever reaches the
+      // missing-address check. (The 401 "Client address not found" path is only
+      // reachable once a pending claim exists for the domain.)
       const response = await testApp.supertest
         .get('/.well-known/epistery/auth/dns/claim')
         .set('Host', 'localhost')
-        .expect(401);
+        .expect(400);
 
       expect(response.body.status).toBe('error');
-      expect(response.body.message).toContain('address');
+      expect(response.body.message).toContain('pending');
     });
 
     it('should return error when no pending claim exists', async () => {

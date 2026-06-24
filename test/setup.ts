@@ -38,14 +38,14 @@ export default async function globalSetup() {
   process.env.CHAIN_ID = String(TEST_PROVIDER.chainId);
   process.env.SERVER_DOMAIN = 'localhost';
 
-  // 3. Generate test config files from environment variables
-  const localhostDir = path.join(testConfigPath, 'localhost');
-  if (!fs.existsSync(testConfigPath)) {
-    fs.mkdirSync(testConfigPath, { recursive: true });
-  }
-  if (!fs.existsSync(localhostDir)) {
-    fs.mkdirSync(localhostDir, { recursive: true });
-  }
+  // 3. Generate test config files from environment variables.
+  // Config reads HOME/.epistery (configDir = join(HOME, '.epistery')), so the
+  // fixtures must live under .epistery — NOT directly under HOME. (They used to
+  // be written one level too high, so Config never saw them and auto-seeded
+  // defaults + random wallets.)
+  const episteryDir = path.join(testConfigPath, '.epistery');
+  const localhostDir = path.join(episteryDir, 'localhost');
+  fs.mkdirSync(localhostDir, { recursive: true });
 
   // Write root config
   const rootConfig = `[profile]
@@ -63,7 +63,7 @@ nativeCurrencyDecimals=${TEST_PROVIDER.nativeCurrencyDecimals}
 [cli]
 default_domain=localhost
 `;
-  fs.writeFileSync(path.join(testConfigPath, 'config.ini'), rootConfig);
+  fs.writeFileSync(path.join(episteryDir, 'config.ini'), rootConfig);
 
   // Write localhost domain config
   const localhostConfig = `domain=localhost

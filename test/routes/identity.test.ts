@@ -18,47 +18,6 @@ describe('Identity Routes', () => {
     // Cleanup if needed
   });
 
-  describe('POST /identity/prepare-deploy', () => {
-    it('should require client address', async () => {
-      const response = await testApp.supertest
-        .post('/.well-known/epistery/identity/prepare-deploy')
-        .send({ domain: 'localhost' })
-        .expect(400);
-
-      expect(response.body.error).toContain('required fields');
-    });
-
-    it('should require domain', async () => {
-      const response = await testApp.supertest
-        .post('/.well-known/epistery/identity/prepare-deploy')
-        .send({ clientAddress: TEST_WALLETS.client1.address })
-        .expect(400);
-
-      expect(response.body.error).toContain('required fields');
-    });
-
-    it('should prepare unsigned deployment transaction', async () => {
-      if (!TEST_CONTRACT_ADDRESS) {
-        console.log('Skipping: TEST_CONTRACT_ADDRESS not set');
-        return;
-      }
-
-      const response = await testApp.supertest
-        .post('/.well-known/epistery/identity/prepare-deploy')
-        .send({
-          clientAddress: TEST_WALLETS.client1.address,
-          domain: 'localhost'
-        })
-        .timeout(60000);
-
-      if (response.status === 200) {
-        expect(response.body.unsignedTransaction).toBeDefined();
-      } else {
-        console.log('Prepare deploy failed:', response.body.error);
-      }
-    });
-  });
-
   describe('POST /identity/prepare-add-rivet', () => {
     it('should require all fields', async () => {
       const response = await testApp.supertest

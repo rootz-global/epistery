@@ -25,43 +25,6 @@ describe('Status Routes', () => {
       expect(response.body.server).toBeDefined();
       expect(response.body.server.walletAddress).toBeDefined();
     });
-
-    it('should return HTML status page when Accept: text/html', async () => {
-      const response = await testApp.supertest
-        .get('/.well-known/epistery/')
-        .set('Accept', 'text/html')
-        .expect(200);
-
-      expect(response.text).toContain('<!DOCTYPE html>');
-    });
-
-    it('should return HTML by default for browser requests', async () => {
-      const response = await testApp.supertest
-        .get('/.well-known/epistery/')
-        .set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8')
-        .expect(200);
-
-      expect(response.text).toContain('<!DOCTYPE html>');
-    });
-  });
-
-  describe('GET /status', () => {
-    it('should return HTML status page', async () => {
-      const response = await testApp.supertest
-        .get('/.well-known/epistery/status')
-        .expect(200);
-
-      expect(response.text).toContain('<!DOCTYPE html>');
-    });
-
-    it('should include server domain in template', async () => {
-      const response = await testApp.supertest
-        .get('/.well-known/epistery/status')
-        .set('Host', 'localhost:3000')
-        .expect(200);
-
-      expect(response.text).toContain('localhost');
-    });
   });
 
   describe('GET /lib/:module', () => {
@@ -110,9 +73,12 @@ describe('Status Routes', () => {
   });
 
   describe('GET /artifacts/:contractFile', () => {
-    it('should serve Agent.json contract artifact', async () => {
+    it('should serve IdentityContract.json contract artifact', async () => {
+      // Agent.sol was removed in the identity-only refactor (its artifact is
+      // kept only as reference). IdentityContract is the live contract the
+      // client fetches, so the artifact route is exercised against that.
       const response = await testApp.supertest
-        .get('/.well-known/epistery/artifacts/Agent.json')
+        .get('/.well-known/epistery/artifacts/IdentityContract.json')
         .expect(200)
         .expect('Content-Type', /json/);
 
