@@ -177,16 +177,32 @@ export class RemoteConfig implements ConfigStore {
   private currentPath: string = '/';
   private token: string | null = null;
 
+  // Optional per-role subtree on the authority. When set (e.g. '/relay'), every
+  // path the client uses is remapped under it: the client's '/' → authority
+  // '/relay', '/relay.epistery.com' → '/relay/relay.epistery.com'. This lets a
+  // role (and a pool of its instances) share one config + cert subtree without
+  // colliding with other roles on the authority's root. Empty = no remap.
+  private readonly basePath: string;
+
   constructor(
     private readonly baseUrl: string,
     private readonly machineAddress: string,
     private readonly signChallenge: (message: string) => Promise<string>,
+    basePath: string = '',
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.basePath = (!basePath || basePath === '/') ? '' : normalizePath(basePath);
   }
 
   public getPath(): string {
-    return this.currentPath;
+    return this.currentPath;     // the client's logical path (unprefixed)
+  }
+
+  /** Map a client path into the authority's namespace under basePath. */
+  private prefixed(path: string): string {
+    const p = normalizePath(path);
+    if (!this.basePath) return p;
+    return p === '/' ? this.basePath : this.basePath + p;
   }
 
   private async authenticate(): Promise<void> {
@@ -234,15 +250,15 @@ export class RemoteConfig implements ConfigStore {
   }
 
   public async read(path: string): Promise<any> {
-    path = normalizePath(path);
-    const res = await this.authedFetch(`/config${path === '/' ? '/' : path}`);
+    const p = this.prefixed(path);
+    const res = await this.authedFetch(`/config${p === '/' ? '/' : p}`);
     if (!res.ok) return {};
     return (await res.json()).data || {};
   }
 
   public async save(): Promise<void> {
-    const path = this.currentPath;
-    const res = await this.authedFetch(`/config${path === '/' ? '/' : path}`, {
+    const p = this.prefixed(this.currentPath);
+    const res = await this.authedFetch(`/config${p === '/' ? '/' : p}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ data: this.data }),
@@ -251,7 +267,8 @@ export class RemoteConfig implements ConfigStore {
   }
 
   private filePrefix(): string {
-    return this.currentPath === '/' ? '' : this.currentPath;
+    const p = this.prefixed(this.currentPath);
+    return p === '/' ? '' : p;
   }
 
   public async readFile(filename: string): Promise<Buffer> {
@@ -275,7 +292,8 @@ export class RemoteConfig implements ConfigStore {
   }
 
   public async listPaths(): Promise<string[]> {
-    const res = await this.authedFetch(`/paths${this.currentPath === '/' ? '/' : this.currentPath}`);
+    const p = this.prefixed(this.currentPath);
+    const res = await this.authedFetch(`/paths${p === '/' ? '/' : p}`);
     if (!res.ok) return [];
     return (await res.json()).paths || [];
   }
@@ -295,7 +313,11 @@ export class Config implements ConfigStore {
     const authorityUrl = Config.resolveAuthorityUrl(rootName);
     if (authorityUrl) {
       const { machineAddress, sign } = Config.machineSigner(rootName);
-      this.backend = new RemoteConfig(authorityUrl, machineAddress, sign);
+      // Per-role subtree: this host's '/' maps under it on the authority, so a
+      // pool of like role instances shares one config + cert subtree.
+      const root = process.env.EPISTERY_CONFIG_ROOT
+        || Config.readBootstrap(rootName)?.authority?.root || '';
+      this.backend = new RemoteConfig(authorityUrl, machineAddress, sign, root);
     } else {
       this.backend = this.local;
     }
@@ -407,4 +429,6 @@ nativeCurrencyDecimals=18
 ;   [authority]
 ;   url=https://epistery-authority-1.internal:4500
 ;   machineMnemonic=...            ; this machine's rivet (or machineKey=0x…)
+;   root=/relay                    ; optional: this role's subtree on the authority
+;                                  ; (a pool of like instances shares it). EPISTERY_CONFIG_ROOT overrides.
 `;
