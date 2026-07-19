@@ -28,6 +28,11 @@ export class Wallet {
     // every wallet variant exposes the three-fact shape uniformly.
     this.contractAddress = null;
     this.rivetAddress = null;
+    // Capability declaration: true when this wallet holds a rivet key that
+    // implements encryptForPeer/decryptFromPeer. Consumers check THIS flag
+    // — never the source name, never typeof (the base stubs below always
+    // exist). Only a wallet whose key can actually run the ECDH sets it.
+    this.canPeerEncrypt = false;
   }
 
   // The rivet. For wallets that have been upgraded to a contract,
@@ -141,20 +146,57 @@ async function _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes) {
   );
 }
 
-// Web3 Wallet (MetaMask, etc.)
+// Web3 Wallet — a RIVET locked by a plugin wallet (MetaMask, etc.).
+//
+// The common model: every wallet IS a nimble rivet key; the sources differ
+// only in what LOCKS that key. RivetWallet's key is locked by the
+// non-extractable WebCrypto master key; FidoWallet's by the authenticator's
+// PRF secret; here the plugin wallet is the lock. The rivet private key is
+// DERIVED from one deterministic personal_sign over a fixed, domain-
+// separated message:
+//
+//   priv = keccak256( sign("epistery rivet key v1\n<web3Address>") )
+//
+// ECDSA in every major plugin wallet is RFC-6979 deterministic, so the same
+// account always re-derives the same rivet — nothing secret is stored, and
+// the rivet is recoverable on any device that holds the plugin wallet. The
+// wallet's ADDRESS and publicKey are the RIVET's; the plugin account is
+// kept as `web3Address` (the lock, shown in UI, usable as a value/recovery
+// signer on-chain). Everything a rivet does — sign, transact, peer
+// encryption — runs on the derived key, unlocked once per session.
+//
+// Phishing note: any site that convinces the user to sign this exact
+// message could derive the rivet. The message names its purpose and binds
+// the account address; plugin wallets display it verbatim. Same posture as
+// the widely used signature-derived-key pattern (dYdX/StarkEx et al.).
+//
+// Legacy records (pre-lock, address == plugin account, placeholder pubkey)
+// load in a signing-only compatibility mode (`canPeerEncrypt` stays false);
+// re-adding the plugin wallet mints the locked rivet.
+const WEB3_LOCK_MESSAGE_V1 = (addr) =>
+  `epistery rivet key v1\n${addr.toLowerCase()}\n\nSigning this unlocks your epistery device key on this site. Only sign it on a site you trust.`;
+
 export class Web3Wallet extends Wallet {
   constructor() {
     super();
     this.source = "web3";
-    this.signer = null;
+    this.web3Address = null;   // the plugin account that locks the rivet
+    this.label = null;
+    this.createdAt = null;
+    this.signer = null;        // plugin signer (the lock) — session only
     this.provider = null;
+    this._priv = null;         // unlocked rivet key — closure/session only
+    this.canPeerEncrypt = false;   // true once the rivet exists (locked mode)
   }
 
   toJSON() {
-    // Only persist the essential data, not the complex objects
+    // Nothing secret persists: the rivet re-derives from the plugin
+    // signature on unlock. signer/provider/_priv are session-only.
     return {
       ...super.toJSON(),
-      // Don't serialize signer/provider - they'll be recreated
+      web3Address: this.web3Address,
+      label: this.label,
+      createdAt: this.createdAt,
     };
   }
 
@@ -162,100 +204,99 @@ export class Web3Wallet extends Wallet {
     const wallet = new Web3Wallet();
     wallet.address = data.address;
     wallet.publicKey = data.publicKey;
-
-    // Attempt to reconnect to Web3 provider
-    await wallet.reconnectWeb3(ethers);
+    wallet.web3Address = data.web3Address || null;
+    wallet.label = data.label || null;
+    wallet.createdAt = data.createdAt || null;
+    // Locked-rivet records carry web3Address; legacy records (address ==
+    // plugin account) stay signing-only until re-added.
+    wallet.canPeerEncrypt = !!wallet.web3Address;
+    // Lazy: the plugin reconnect + unlock signature happen on first use,
+    // not at restore — a locked wallet still reports address/publicKey.
     return wallet;
   }
 
   static async create(ethers) {
     const wallet = new Web3Wallet();
-
-    if (await wallet.connectWeb3(ethers)) {
+    try {
+      if (!(await wallet._connectPlugin(ethers))) return null;
+      await wallet._unlock(ethers);   // derives + installs the rivet
+      wallet.createdAt = Date.now();
       return wallet;
-    }
-    return null; // Connection failed
-  }
-
-  async connectWeb3(ethers) {
-    try {
-      if (typeof window !== "undefined" && (window.ethereum || window.web3)) {
-        const provider = window.ethereum || window.web3.currentProvider;
-
-        // Request account access
-        const accounts = await provider.request({
-          method: "eth_requestAccounts",
-        });
-
-        if (accounts && accounts.length > 0) {
-          this.address = accounts[0];
-          this.provider = new ethers.providers.Web3Provider(provider);
-          this.signer = this.provider.getSigner();
-
-          // Get public key from first signature
-          this.publicKey = await this.derivePublicKeyPlaceholder();
-
-          return true;
-        }
-      }
-      return false;
     } catch (error) {
-      return false;
+      console.warn("Web3Wallet.create failed:", error.message);
+      return null;   // user declined, or no plugin wallet available
     }
   }
 
-  async reconnectWeb3(ethers) {
-    try {
-      if (typeof window !== "undefined" && (window.ethereum || window.web3)) {
-        const provider = window.ethereum || window.web3.currentProvider;
-        this.provider = new ethers.providers.Web3Provider(provider);
-        this.signer = this.provider.getSigner();
-
-        // Verify the address matches what we have stored
-        const currentAddress = await this.signer.getAddress();
-        if (currentAddress.toLowerCase() !== this.address.toLowerCase()) {
-          this.address = currentAddress;
-        }
-        return true;
-      }
-      return false;
-    } catch (error) {
+  async _connectPlugin(ethers) {
+    if (typeof window === "undefined" || !(window.ethereum || window.web3)) {
       return false;
     }
+    const provider = window.ethereum || window.web3.currentProvider;
+    const accounts = await provider.request({ method: "eth_requestAccounts" });
+    if (!accounts || !accounts.length) return false;
+    this.provider = new ethers.providers.Web3Provider(provider);
+    this.signer = this.provider.getSigner();
+    if (!this.web3Address) this.web3Address = accounts[0];
+    if (accounts[0].toLowerCase() !== this.web3Address.toLowerCase()) {
+      throw new Error(
+        `This wallet is locked by ${this.web3Address} — switch the plugin wallet to that account to unlock it`,
+      );
+    }
+    return true;
+  }
+
+  // Unlock: one deterministic plugin signature → the rivet key, cached for
+  // the session. Verifies against the stored rivet address so a different
+  // plugin account (different derivation) fails closed instead of silently
+  // becoming a different rivet.
+  async _unlock(ethers) {
+    if (this._priv) return this._priv;
+    if (!this.signer && !(await this._connectPlugin(ethers))) {
+      throw new Error("Plugin wallet not available — connect it to unlock this rivet");
+    }
+    const signature = await this.signer.signMessage(WEB3_LOCK_MESSAGE_V1(this.web3Address));
+    const priv = ethers.utils.keccak256(ethers.utils.arrayify(signature));
+    const signingKey = new ethers.utils.SigningKey(priv);
+    const address = ethers.utils.computeAddress(signingKey.publicKey);
+    if (this.address && address.toLowerCase() !== this.address.toLowerCase()) {
+      throw new Error(
+        "Unlock produced a different rivet — sign with the plugin account that created this wallet",
+      );
+    }
+    this._priv = priv;
+    this.address = address;
+    this.publicKey = signingKey.publicKey;   // real uncompressed secp256k1
+    this.canPeerEncrypt = true;
+    return priv;
   }
 
   async sign(message, ethers) {
-    if (!this.signer) {
-      throw new Error("Web3 signer not available");
-    }
-
-    const signature = await this.signer.signMessage(message);
-
-    // Always update public key from signature for Web3 wallets
-    if (ethers) {
-      this.publicKey = await this.derivePublicKeyFromSignature(
-        message,
-        signature,
-        ethers,
-      );
-    }
-
-    return signature;
+    const priv = await this._unlock(ethers);
+    return await new ethers.Wallet(priv).signMessage(message);
   }
 
-  async derivePublicKeyPlaceholder() {
-    // Placeholder until we get a real signature
-    return `0x04${this.address.slice(2)}${"0".repeat(64)}`;
+  async signTransaction(unsignedTx, ethers) {
+    const priv = await this._unlock(ethers);
+    return await new ethers.Wallet(priv).signTransaction(unsignedTx);
   }
 
-  async derivePublicKeyFromSignature(message, signature, ethers) {
-    try {
-      const messageHash = ethers.utils.hashMessage(message);
-      return ethers.utils.recoverPublicKey(messageHash, signature);
-    } catch (error) {
-      console.error("Failed to derive public key from signature:", error);
-      return this.derivePublicKeyPlaceholder();
+  async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
+    if (!this.canPeerEncrypt) {
+      throw new Error("legacy web3 wallet — remove and re-add it to mint its locked rivet");
     }
+    const priv = await this._unlock(ethers);
+    const aesKey = await _deriveAesKeyFromPriv(priv, peerPublicKey, ethers);
+    return await _aesGcmEncrypt(aesKey, plaintextBytes);
+  }
+
+  async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
+    if (!this.canPeerEncrypt) {
+      throw new Error("legacy web3 wallet — remove and re-add it to mint its locked rivet");
+    }
+    const priv = await this._unlock(ethers);
+    const aesKey = await _deriveAesKeyFromPriv(priv, peerPublicKey, ethers);
+    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
 }
 
@@ -265,6 +306,7 @@ export class RivetWallet extends Wallet {
   constructor() {
     super();
     this.source = "rivet";
+    this.canPeerEncrypt = true;
     this.keyId = null;
     this.type = "Browser"; // Browser, Contract, or Web3
     this.label = null;
@@ -1052,6 +1094,7 @@ export class FidoWallet extends Wallet {
   constructor() {
     super();
     this.source = "fido";
+    this.canPeerEncrypt = true;
     this.credentialId = null; // base64url string
     this.encryptedPrivateKey = null; // JSON: { ciphertext, iv } as hex
     this.label = null;
