@@ -152,29 +152,46 @@ async function _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes) {
 // only in what LOCKS that key. RivetWallet's key is locked by the
 // non-extractable WebCrypto master key; FidoWallet's by the authenticator's
 // PRF secret; here the plugin wallet is the lock. The rivet private key is
-// DERIVED from one deterministic personal_sign over a fixed, domain-
-// separated message:
+// DERIVED from one deterministic personal_sign over a fixed message that
+// binds BOTH the site (hostname) and the plugin account:
 //
-//   priv = keccak256( sign("epistery rivet key v1\n<web3Address>") )
+//   priv = keccak256( sign("epistery rivet key v1\n<hostname>\n<web3Address>…") )
 //
 // ECDSA in every major plugin wallet is RFC-6979 deterministic, so the same
-// account always re-derives the same rivet — nothing secret is stored, and
-// the rivet is recoverable on any device that holds the plugin wallet. The
-// wallet's ADDRESS and publicKey are the RIVET's; the plugin account is
-// kept as `web3Address` (the lock, shown in UI, usable as a value/recovery
-// signer on-chain). Everything a rivet does — sign, transact, peer
-// encryption — runs on the derived key, unlocked once per session.
+// account on the same site always re-derives the same rivet — nothing
+// secret is stored, and the rivet is recoverable on any device that holds
+// the plugin wallet. Binding the hostname makes web3 rivets ORIGIN-SCOPED,
+// exactly like browser rivets (whose keys live in origin-scoped
+// localStorage) and consistent with the one-rivet-one-contract policy: a
+// different site derives a different rivet, so identities don't link
+// across sites — and a signature phished on another site derives that
+// site's rivet, useless here. The wallet's ADDRESS and publicKey are the
+// RIVET's; the plugin account is kept as `web3Address` (the lock, shown in
+// UI, usable as a value/recovery signer on-chain). Everything a rivet does
+// — sign, transact, peer encryption — runs on the derived key, unlocked
+// once per session.
 //
-// Phishing note: any site that convinces the user to sign this exact
-// message could derive the rivet. The message names its purpose and binds
-// the account address; plugin wallets display it verbatim. Same posture as
-// the widely used signature-derived-key pattern (dYdX/StarkEx et al.).
+// Phishing note: only a page the user believes is <hostname> can obtain a
+// useful signature. The message names the site and the account; plugin
+// wallets display it verbatim. Same posture as the widely used
+// signature-derived-key pattern (dYdX/StarkEx et al.), tightened by the
+// hostname binding.
 //
 // Legacy records (pre-lock, address == plugin account, placeholder pubkey)
 // load in a signing-only compatibility mode (`canPeerEncrypt` stays false);
 // re-adding the plugin wallet mints the locked rivet.
-const WEB3_LOCK_MESSAGE_V1 = (addr) =>
-  `epistery rivet key v1\n${addr.toLowerCase()}\n\nSigning this unlocks your epistery device key on this site. Only sign it on a site you trust.`;
+const WEB3_LOCK_MESSAGE_V1 = (hostname, addr) =>
+  `epistery rivet key v1\n${hostname}\n${addr.toLowerCase()}\n\nSigning this unlocks your epistery device key on ${hostname}. Only sign it on that site.`;
+
+// The site component of the lock message. hostname (not origin/host): stable
+// across ports and schemes so dev restarts don't orphan rivets, while still
+// separating every domain.
+function _lockHostname() {
+  if (typeof window === "undefined" || !window.location || !window.location.hostname) {
+    throw new Error("web3 rivets exist only in a browser context (no hostname to bind)");
+  }
+  return window.location.hostname.toLowerCase();
+}
 
 export class Web3Wallet extends Wallet {
   constructor() {
@@ -263,7 +280,9 @@ export class Web3Wallet extends Wallet {
     if (!this.signer && !(await this._connectPlugin(ethers))) {
       throw new Error("Plugin wallet not available — connect it to unlock this rivet");
     }
-    const signature = await this.signer.signMessage(WEB3_LOCK_MESSAGE_V1(this.web3Address));
+    const signature = await this.signer.signMessage(
+      WEB3_LOCK_MESSAGE_V1(_lockHostname(), this.web3Address),
+    );
     const priv = ethers.utils.keccak256(ethers.utils.arrayify(signature));
     const signingKey = new ethers.utils.SigningKey(priv);
     const address = ethers.utils.computeAddress(signingKey.publicKey);
