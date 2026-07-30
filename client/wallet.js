@@ -54,7 +54,24 @@ export class Wallet {
       address: this.address,
       publicKey: this.publicKey,
       source: this.source,
+      // Contract binding is a base-class fact — persist it for EVERY rivet
+      // kind, or adopting an identity silently unbinds on reload.
+      contractAddress: this.contractAddress,
+      rivetAddress: this.rivetAddress,
     };
+  }
+
+  // Bind this rivet to an identity contract. A base-class capability: any
+  // rivet kind (browser, FIDO, web3) can be a signer on a contract. Does
+  // NOT flip `address` — the device key stays `address`/`rivetAddress`;
+  // the contract is a separate fact exposed via contractAddress /
+  // identityAddress.
+  upgradeToContract(contractAddress) {
+    if (this.contractAddress) {
+      throw new Error("Rivet is already using an identity contract");
+    }
+    this.rivetAddress = this.address;
+    this.contractAddress = contractAddress;
   }
 
   // Factory method to create appropriate wallet type from saved data.
@@ -231,6 +248,8 @@ export class Web3Wallet extends Wallet {
     wallet.web3Address = data.web3Address || data.address;
     wallet.label = data.label || null;
     wallet.createdAt = data.createdAt || null;
+    wallet.contractAddress = data.contractAddress || null;
+    wallet.rivetAddress = data.rivetAddress || null;
     wallet.canPeerEncrypt = !wallet._legacy;
     // Lazy: the plugin reconnect + unlock signature happen on first use,
     // not at restore — a locked wallet still reports address/publicKey.
@@ -369,8 +388,6 @@ export class RivetWallet extends Wallet {
       createdAt: this.createdAt,
       lastUpdated: this.lastUpdated,
       encryptedPrivateKey: this.encryptedPrivateKey,
-      contractAddress: this.contractAddress,
-      rivetAddress: this.rivetAddress,
       associations: this.associations,
     };
   }
@@ -1093,23 +1110,10 @@ export class RivetWallet extends Wallet {
 
   /**
    * Upgrades this rivet to use an identity contract
-   * Updates the wallet to present the contract address instead of rivet address
    * @param {string} contractAddress - The deployed identity contract address
    */
   upgradeToContract(contractAddress) {
-    if (this.contractAddress) {
-      throw new Error("Rivet is already using an identity contract");
-    }
-
-    // Do NOT flip `address` to the contract. `address` stays the rivet (device
-    // key) for the life of the wallet; the contract is a separate fact exposed
-    // via contractAddress / identityAddress. Flipping used to make the device
-    // wallet masquerade as its contract — the device list then showed the
-    // contract address, and every consumer that read `address` expecting the
-    // signer was wrong. rivetAddress is kept set (== address) for the
-    // signerAddress getter and a stable persisted shape.
-    this.rivetAddress = this.address;
-    this.contractAddress = contractAddress;
+    super.upgradeToContract(contractAddress);
     this.type = "Contract";
     this.lastUpdated = Date.now();
   }
@@ -1162,6 +1166,8 @@ export class FidoWallet extends Wallet {
     wallet.label = data.label;
     wallet.createdAt = data.createdAt;
     wallet.lastUpdated = data.lastUpdated;
+    wallet.contractAddress = data.contractAddress || null;
+    wallet.rivetAddress = data.rivetAddress || null;
     return wallet;
   }
 

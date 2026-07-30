@@ -393,6 +393,12 @@ export default class Witness {
     if (!this.wallet || this.wallet.source !== "web3" || !this.serverInfo) {
       return;
     }
+    // Locked-rivet web3 wallets restore lazily — no provider until first
+    // plugin use. Chain compatibility only matters when the plugin itself
+    // sends a tx (legacy path), and that path switches chains at tx time.
+    if (!this.wallet.provider || typeof this.wallet.provider.getNetwork !== "function") {
+      return;
+    }
 
     try {
       const targetChainId = this.serverInfo.chainId;
