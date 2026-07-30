@@ -186,6 +186,7 @@ export class Web3Wallet extends Wallet {
     this.signer = null;        // plugin signer (the lock) — session only
     this.provider = null;
     this._priv = null;         // unlocked rivet key — closure/session only
+    this._legacy = false;      // pre-lock record: address IS the plugin account
     this.canPeerEncrypt = false;   // true once the rivet exists (locked mode)
   }
 
@@ -194,7 +195,9 @@ export class Web3Wallet extends Wallet {
     // signature on unlock. signer/provider/_priv are session-only.
     return {
       ...super.toJSON(),
-      web3Address: this.web3Address,
+      // A legacy record must round-trip as legacy: writing web3Address
+      // would dress it up as a locked rivet it never minted.
+      web3Address: this._legacy ? null : this.web3Address,
       label: this.label,
       createdAt: this.createdAt,
     };
@@ -204,12 +207,14 @@ export class Web3Wallet extends Wallet {
     const wallet = new Web3Wallet();
     wallet.address = data.address;
     wallet.publicKey = data.publicKey;
-    wallet.web3Address = data.web3Address || null;
+    // Locked-rivet records carry web3Address. Legacy pre-lock records don't:
+    // their address IS the plugin account and no rivet was ever minted —
+    // they stay signing-only (the plugin signs directly) until re-added.
+    wallet._legacy = !data.web3Address;
+    wallet.web3Address = data.web3Address || data.address;
     wallet.label = data.label || null;
     wallet.createdAt = data.createdAt || null;
-    // Locked-rivet records carry web3Address; legacy records (address ==
-    // plugin account) stay signing-only until re-added.
-    wallet.canPeerEncrypt = !!wallet.web3Address;
+    wallet.canPeerEncrypt = !wallet._legacy;
     // Lazy: the plugin reconnect + unlock signature happen on first use,
     // not at restore — a locked wallet still reports address/publicKey.
     return wallet;
@@ -251,6 +256,9 @@ export class Web3Wallet extends Wallet {
   // plugin account (different derivation) fails closed instead of silently
   // becoming a different rivet.
   async _unlock(ethers) {
+    if (this._legacy) {
+      throw new Error("legacy web3 wallet has no rivet — remove and re-add it to mint one");
+    }
     if (this._priv) return this._priv;
     if (!this.signer && !(await this._connectPlugin(ethers))) {
       throw new Error("Plugin wallet not available — connect it to unlock this rivet");
@@ -272,11 +280,24 @@ export class Web3Wallet extends Wallet {
   }
 
   async sign(message, ethers) {
+    if (this._legacy) {
+      // Pre-lock record: its address IS the plugin account, which may
+      // already be a rivet on an IdentityContract — it must keep signing
+      // (that's how the owner authorizes adding a locked rivet later).
+      if (!this.signer && !(await this._connectPlugin(ethers))) {
+        throw new Error("Plugin wallet not available");
+      }
+      return await this.signer.signMessage(message);
+    }
     const priv = await this._unlock(ethers);
     return await new ethers.Wallet(priv).signMessage(message);
   }
 
   async signTransaction(unsignedTx, ethers) {
+    if (this._legacy) {
+      // Plugin signers can't produce raw signed txs (and never could here).
+      throw new Error("legacy web3 wallet cannot sign transactions — remove and re-add it to mint its locked rivet");
+    }
     const priv = await this._unlock(ethers);
     return await new ethers.Wallet(priv).signTransaction(unsignedTx);
   }
