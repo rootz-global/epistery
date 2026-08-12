@@ -637,19 +637,27 @@ export class RivetWallet extends Wallet {
 
       request.onsuccess = () => {
         const db = request.result;
-        const transaction = db.transaction(["masterKeys"], "readwrite");
+        // Strict durability: the browser must fsync this write before the
+        // transaction completes. Default (relaxed) durability acknowledges the
+        // commit before it reaches disk, so an unclean shutdown (browser quit,
+        // sleep, power loss) silently rolls the master key back — leaving the
+        // wrapped private key with no key to unlock it. This key is the sovereign
+        // root; it does not get to be best-effort.
+        const transaction = db.transaction(["masterKeys"], "readwrite", { durability: "strict" });
         const store = transaction.objectStore("masterKeys");
 
-        const putRequest = store.put({ keyId, masterKey });
+        store.put({ keyId, masterKey });
 
-        putRequest.onsuccess = () => {
+        // Resolve on COMMIT, not on the put succeeding. putRequest.onsuccess fires
+        // when the write is staged in the transaction; transaction.oncomplete
+        // fires only once it has durably committed. Reporting "stored" before
+        // commit is the born-orphaned bug (#30) — a rivet whose master key was
+        // never actually persisted.
+        transaction.oncomplete = () => { db.close(); resolve(); };
+        transaction.onerror = () => { db.close(); reject(transaction.error); };
+        transaction.onabort = () => {
           db.close();
-          resolve();
-        };
-
-        putRequest.onerror = () => {
-          db.close();
-          reject(putRequest.error);
+          reject(transaction.error || new Error("storeMasterKey: transaction aborted before commit"));
         };
       };
 
