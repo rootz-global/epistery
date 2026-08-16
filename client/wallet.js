@@ -113,6 +113,22 @@ export class Wallet {
   async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
     throw new Error(`${this.source} wallet does not support peer decryption`);
   }
+
+  // Raw ECDH shared secret — optional capability, implemented by data-capable
+  // wallets (RivetWallet, Web3Wallet). The TreeKEM leaf-decap seam needs the
+  // shared secret BEFORE any KDF so it can run its own HKDF schedule; a
+  // signing-only/legacy wallet fails loudly here rather than silently.
+  async computeSharedSecret(peerPublicKey, ethers) {
+    throw new Error(`${this.source} wallet does not support shared-secret derivation`);
+  }
+}
+
+// The raw ECDH shared secret (32-byte X-coordinate) for a private key and a
+// peer's uncompressed secp256k1 public key. This is the value the AES-key
+// derivation hashes; it is also exactly what the TreeKEM key schedule consumes.
+function _sharedFromPriv(privateKeyHex, peerPublicKeyHex, ethers) {
+  const shared = new ethers.utils.SigningKey(privateKeyHex).computeSharedSecret(peerPublicKeyHex);
+  return ethers.utils.arrayify(shared);
 }
 
 // Shared implementation: given a raw private key (briefly in scope) and a
@@ -121,9 +137,7 @@ export class Wallet {
 // Compatible with apps/dashboard-5.0/ecdh-crypto.js: same SHA-256(sharedSecret)
 // derivation, so messages can flow between wallets and external clients.
 async function _deriveAesKeyFromPriv(privateKeyHex, peerPublicKeyHex, ethers) {
-  const signingKey = new ethers.utils.SigningKey(privateKeyHex);
-  const sharedSecretHex = signingKey.computeSharedSecret(peerPublicKeyHex);
-  const secretBytes = ethers.utils.arrayify(sharedSecretHex);
+  const secretBytes = _sharedFromPriv(privateKeyHex, peerPublicKeyHex, ethers);
   const keyMaterial = await crypto.subtle.digest("SHA-256", secretBytes);
   return await crypto.subtle.importKey(
     "raw",
@@ -356,6 +370,16 @@ export class Web3Wallet extends Wallet {
     const priv = await this._unlock(ethers);
     const aesKey = await _deriveAesKeyFromPriv(priv, peerPublicKey, ethers);
     return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
+  }
+
+  // Raw ECDH shared secret for the TreeKEM leaf-decap seam. The locked rivet key
+  // is derived from the plugin signature in _unlock and used in-closure.
+  async computeSharedSecret(peerPublicKey, ethers) {
+    if (!this.canPeerEncrypt) {
+      throw new Error("legacy web3 wallet — remove and re-add it to mint its locked rivet");
+    }
+    const priv = await this._unlock(ethers);
+    return _sharedFromPriv(priv, peerPublicKey, ethers);
   }
 }
 
@@ -626,6 +650,27 @@ export class RivetWallet extends Wallet {
     const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
     const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
     return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
+  }
+
+  // Raw ECDH shared secret for the TreeKEM leaf-decap seam (EpisteryDataFrontier).
+  // Same key lifecycle as encryptForPeer/decryptFromPeer: the private key is
+  // briefly decrypted in this closure, used, and goes out of scope at return.
+  // Returns the shared BEFORE any KDF so the ratchet tree runs its own schedule.
+  async computeSharedSecret(peerPublicKey, ethers) {
+    const masterKey = await RivetWallet.getMasterKey(this.keyId);
+    if (!masterKey) {
+      throw new Error(
+        "Master key not found - rivet may have been created in a different browser context",
+      );
+    }
+    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
+      masterKey,
+      ethers.utils.arrayify(encrypted),
+    );
+    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
+    return _sharedFromPriv(privateKey, peerPublicKey, ethers); // privateKey GC'd at return
   }
 
   // IndexedDB operations for storing non-extractable CryptoKey
