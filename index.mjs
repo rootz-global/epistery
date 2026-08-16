@@ -6,6 +6,12 @@ import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
 import { chainFor, registerChain, configuredChains, defaultChainId, Chain } from "./dist/chains/index.js";
 import createRoutes from "./routes/index.mjs";
+// The canonical storage-write message builder (shared by every signer and the
+// relay verifier). Lives in client/ as pure ESM so browsers can import the same
+// file; re-exported below for the ergonomic `import { storageWriteMessage } from
+// 'epistery'`. Server consumers may also import it directly from
+// 'epistery/client/storage-message.mjs' to avoid loading the full entry.
+import { storageWriteMessage } from "./client/storage-message.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -261,3 +267,4 @@ class EpisteryAttach {
 }
 
 export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configuredChains, defaultChainId, Chain };
+export { storageWriteMessage };
