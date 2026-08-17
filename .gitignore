@@ -24,3 +24,8 @@ server.cert
 server.key
 dist/
 cache/
+# Solidity compiler output. The shipped contract ABIs/bytecode still reach npm
+# via .npmignore (which does NOT ignore artifacts/), so ignoring them here only
+# keeps the git tree clean of compiler output — it does not affect the published
+# package.
+artifacts/
