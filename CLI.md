@@ -5,8 +5,11 @@ Command-line interface for Epistery authentication and requests.
 ## Quick Start
 
 ```bash
+# See which chains are available (* marks the default for new wallets)
+epistery chains
+
 # Initialize a domain (creates wallet in ~/.epistery/{domain}/)
-epistery initialize localhost
+epistery initialize --chain polygon localhost
 
 # Set as default
 epistery set-default localhost
@@ -17,15 +20,62 @@ epistery curl https://wiki.rootz.global/wiki/Home
 
 ## Commands
 
-### `epistery initialize <domain>`
+### `epistery initialize [-c <chain>] <domain>`
 
 Initialize a domain with a new wallet. Creates `~/.epistery/{domain}/config.ini` with:
 - Wallet (address, keys, mnemonic)
-- Provider configuration (from `~/.epistery/config.ini` default)
+- Provider configuration for the selected chain
+
+**Options:**
+- `-c, --chain <id|name>` - Chain this wallet transacts on: a chainId (`137`),
+  an alias (`polygon`), or a full name (`"Polygon Mainnet"`). Run
+  `epistery chains` for the list.
+
+Without `--chain`, an interactive terminal prompts for the chain (Enter takes
+the default); non-interactive runs (scripts, CI) silently use the default chain.
 
 ```bash
-epistery initialize localhost
-epistery initialize wiki.rootz.global
+epistery initialize localhost                        # prompts, defaults to the configured chain
+epistery initialize --chain polygon wiki.rootz.global
+epistery initialize -c 81 joc.example.com
+```
+
+The chain is written to the domain's `[provider]` block. To move an existing
+domain later, use `epistery set-chain` — the wallet is kept.
+
+### `epistery chains`
+
+List the supported chains with their chainIds and aliases. `*` marks the chain
+new wallets get when `--chain` isn't given.
+
+```bash
+epistery chains
+```
+
+### `epistery set-chain <domain> <chain>`
+
+Point an already-initialized domain at a different chain. Only the domain's
+`[provider]` block is rewritten — the wallet, and therefore the address, is
+chain-agnostic and is kept as-is.
+
+```bash
+epistery set-chain wiki.rootz.global polygon
+epistery set-chain localhost 80002
+```
+
+The same address exists on the new chain, but nothing moves with it: balances,
+deployed contracts and whitelist entries stay on the old chain, and the wallet
+starts unfunded on the new one.
+
+### `epistery set-default-chain <chain>`
+
+Set the chain used for new wallets, in `~/.epistery/config.ini`
+(`[default] defaultChainId` plus the matching `[default.provider]` block).
+Existing wallets are unaffected.
+
+```bash
+epistery set-default-chain polygon
+epistery set-default-chain 137
 ```
 
 ### `epistery curl [options] <url>`
@@ -87,9 +137,11 @@ Epistery CLI uses the same domain configuration system as the server:
 
 ```
 ~/.epistery/
-├── config.ini                    # Root config with [cli] section
-│   └── [cli]
-│       └── default_domain=localhost
+├── config.ini                    # Root config with [cli] and [default] sections
+│   ├── [cli]
+│   │   └── default_domain=localhost
+│   └── [default]
+│       └── defaultChainId=137    # chain new wallets get (epistery set-default-chain)
 ├── localhost/
 │   └── config.ini                # Domain config with wallet & provider
 └── wiki.rootz.global/

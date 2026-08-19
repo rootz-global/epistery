@@ -17,7 +17,7 @@
 
 // Public API
 export { Chain, ChainConfig, ChainFeeData, ChainPolicy } from './Chain';
-export { chainFor, registerChain, hasRegisteredChain, registeredChainIds, registeredChains, configuredChains, defaultChainId } from './registry';
+export { chainFor, registerChain, hasRegisteredChain, registeredChainIds, registeredChains, configuredChains, defaultChainId, findChain, defaultChain, setDefaultChain, providerConfigFor } from './registry';
 // registeredChains: internal use + configuredChains(); not re-exported from index.mjs
 
 // Built-in chains — imported for their registerChain() side effect.

@@ -12,6 +12,7 @@ export class EthereumChain extends Chain {
   static chainId = 1;
   static defaults = {
     name: 'Ethereum Mainnet',
+    aliases: ['ethereum', 'eth', 'mainnet'],
     rpc: 'https://ethereum-rpc.publicnode.com',
     nativeCurrencyName: 'Ether',
     nativeCurrencySymbol: 'ETH',
@@ -26,6 +27,7 @@ export class SepoliaChain extends Chain {
   static chainId = 11155111;
   static defaults = {
     name: 'Sepolia Testnet',
+    aliases: ['sepolia'],
     rpc: 'https://ethereum-sepolia-rpc.publicnode.com',
     nativeCurrencyName: 'Ether',
     nativeCurrencySymbol: 'ETH',

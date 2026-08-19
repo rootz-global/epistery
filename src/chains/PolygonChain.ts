@@ -19,6 +19,7 @@ export class PolygonChain extends Chain {
   static chainId = 137;
   static defaults = {
     name: 'Polygon Mainnet',
+    aliases: ['polygon', 'pol', 'matic'],
     rpc: 'https://polygon-bor-rpc.publicnode.com',
     nativeCurrencyName: 'POL',
     nativeCurrencySymbol: 'POL',
@@ -68,6 +69,7 @@ export class AmoyChain extends PolygonChain {
   static chainId = 80002;
   static defaults = {
     name: 'Polygon Amoy Testnet',
+    aliases: ['amoy', 'polygonamoy'],
     rpc: 'https://rpc-amoy.polygon.technology',
     nativeCurrencyName: 'POL',
     nativeCurrencySymbol: 'POL',

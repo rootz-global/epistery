@@ -1,6 +1,7 @@
 import { ethers, Wallet } from 'ethers';
 import { Config } from './Config';
-import { DomainConfig } from './types';
+import { DomainConfig, ProviderConfig } from './types';
+import { defaultChain, providerConfigFor } from '../chains';
 import fs from 'fs';
 import { join } from 'path';
 
@@ -94,7 +95,7 @@ export class CliWallet {
    * Initialize a new domain with wallet
    * Creates ~/.epistery/{domain}/config.ini with new wallet
    */
-  static async initialize(domain: string, provider?: { name: string, chainId: number, rpc: string }): Promise<CliWallet> {
+  static async initialize(domain: string, provider?: ProviderConfig): Promise<CliWallet> {
     const config = new Config();
 
     // Check if domain already exists
@@ -106,13 +107,12 @@ export class CliWallet {
     // Create new wallet
     const ethersWallet = ethers.Wallet.createRandom();
 
-    // Get provider from root default, argument, or fallback default
-    await config.setPath('/');
-    const providerConfig = provider || config.data.default?.provider || {
-      chainId: 420420422,
-      name: 'polkadot-hub-testnet',
-      rpc: 'https://testnet-passet-hub-eth-rpc.polkadot.io'
-    };
+    // Chain comes from the caller (epistery initialize --chain) or, failing
+    // that, from the configured default chain (registry: root [default]
+    // defaultChainId / [default.provider], else Polygon mainnet).
+    const providerConfig = provider
+      ? providerConfigFor(provider)
+      : providerConfigFor(await defaultChain());
 
     // Create domain config
     await config.setPath(`/${domain}`);
@@ -133,6 +133,31 @@ export class CliWallet {
     console.log(`Provider: ${providerConfig.name}`);
 
     return new CliWallet(config, domain, config.data, ethersWallet);
+  }
+
+  /**
+   * Point an already-initialized domain at a different chain.
+   *
+   * Only the domain's [provider] block changes — the wallet (and therefore the
+   * address) is chain-agnostic and is left exactly as it is. Returns the
+   * previous provider config so callers can report the change.
+   */
+  static async setChain(domain: string, provider: ProviderConfig): Promise<ProviderConfig | undefined> {
+    const config = new Config();
+    await config.setPath(`/${domain}`);
+
+    if (!config.data.wallet) {
+      throw new Error(
+        `Domain '${domain}' not found or has no wallet. ` +
+        `Initialize with: epistery initialize ${domain}`
+      );
+    }
+
+    const previous: ProviderConfig | undefined = config.data.provider;
+    config.data.provider = providerConfigFor(provider);
+    await config.save();
+
+    return previous;
   }
 
   /**

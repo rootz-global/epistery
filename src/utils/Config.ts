@@ -389,21 +389,27 @@ email=
 [ipfs]
 url=https://rootz.digital/api/v0
 
+; Chain used for wallets created by \`epistery initialize\` when it isn't given
+; one. Change it with \`epistery set-default-chain <chainId|name>\`; list the
+; supported chains with \`epistery chains\`.
+[default]
+defaultChainId=137
+
 [default.provider]
-chainId=1
-name=Ethereum Mainnet
-rpc=https://eth.llamarpc.com
-nativeCurrencyName=Ether
-nativeCurrencySymbol=ETH
+chainId=137
+name=Polygon Mainnet
+rpc=https://polygon-bor-rpc.publicnode.com
+nativeCurrencyName=POL
+nativeCurrencySymbol=POL
 nativeCurrencyDecimals=18
 
-; Additional supported chains:
-; Polygon Mainnet (POL):
-;   chainId=137
-;   name=Polygon Mainnet
-;   rpc=https://polygon-rpc.com
-;   nativeCurrencyName=POL
-;   nativeCurrencySymbol=POL
+; Additional supported chains (see \`epistery chains\` for the live list):
+; Ethereum Mainnet (ETH):
+;   chainId=1
+;   name=Ethereum Mainnet
+;   rpc=https://ethereum-rpc.publicnode.com
+;   nativeCurrencyName=Ether
+;   nativeCurrencySymbol=ETH
 ;   nativeCurrencyDecimals=18
 ;
 ; Japan Open Chain (JOC):

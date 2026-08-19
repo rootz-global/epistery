@@ -267,7 +267,8 @@ deciding "who am I right now":
 Stateless bot authentication (each request independently signed):
 
 ```bash
-epistery initialize localhost
+epistery chains                         # list supported chains
+epistery initialize -c polygon localhost
 epistery set-default localhost
 epistery info localhost
 epistery curl https://api.example.com/data
@@ -276,8 +277,8 @@ epistery curl -b -w production.example.com https://api.example.com/data   # -b b
 epistery mcp https://api.example.com    # stdio MCP bridge with bot-auth
 ```
 
-Commands: `initialize`, `set-default`, `info`, `curl`, `mcp`, `help`. See
-[CLI.md](CLI.md).
+Commands: `initialize`, `set-default`, `chains`, `set-default-chain`,
+`set-chain`, `info`, `curl`, `mcp`, `help`. See [CLI.md](CLI.md).
 
 ---
 
@@ -286,6 +287,10 @@ Commands: `initialize`, `set-default`, `info`, `curl`, `mcp`, `help`. See
 Each EVM chain is a `Chain` object owning its RPC, fee policy, and gas strategy.
 Only `chainId` is required; everything else comes from the class. Use
 `chainFor({ chainId })`; add a chain by extending `Chain` + `registerChain()`.
+A wallet's chain is chosen at `epistery initialize --chain <id|alias>` time and
+stored in its domain config; `epistery set-chain <domain> <chain>` moves an
+existing domain (keeping its wallet), and `epistery set-default-chain` sets what
+new wallets get (Polygon mainnet out of the box).
 See [src/chains/README.md](src/chains/README.md).
 
 ---

@@ -18,6 +18,7 @@ export class JapanOpenChain extends Chain {
   static chainId = 81;
   static defaults = {
     name: 'Japan Open Chain',
+    aliases: ['joc', 'japan'],
     rpc: 'https://rpc-2.japanopenchain.org:8545',
     nativeCurrencyName: 'JOC',
     nativeCurrencySymbol: 'JOC',

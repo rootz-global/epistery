@@ -5,6 +5,9 @@
  *
  * Usage:
  *   epistery initialize <domain>         Initialize domain with wallet
+ *   epistery chains                      List supported chains
+ *   epistery set-chain <domain> <chain>  Move a domain to another chain
+ *   epistery set-default-chain <chain>   Set chain used for new wallets
  *   epistery curl [options] <url>        Make authenticated HTTP request
  *   epistery mcp [options] <url>         Stdio MCP bridge with bot-auth
  *   epistery info [domain]               Show domain information
@@ -15,6 +18,13 @@
 
 import { CliWallet } from "../dist/utils/CliWallet.js";
 import { Utils } from "../dist/utils/Utils.js";
+import {
+  configuredChains,
+  defaultChain,
+  findChain,
+  providerConfigFor,
+  setDefaultChain,
+} from "../dist/chains/index.js";
 import { ethers } from "ethers";
 import { spawn } from "child_process";
 import dotenv from "dotenv";
@@ -48,6 +58,30 @@ function extractGlobalOptions(args) {
   }
 
   return { options, remainingArgs };
+}
+
+/**
+ * Extract the -c/--chain option from initialize args.
+ * Returns { chain, remainingArgs }
+ */
+function extractChainOption(args) {
+  let chain = null;
+  const remainingArgs = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "-c" || arg === "--chain") {
+      chain = args[++i];
+      if (!chain) {
+        console.error("Error: --chain requires a chainId or name");
+        process.exit(1);
+      }
+    } else {
+      remainingArgs.push(arg);
+    }
+  }
+
+  return { chain, remainingArgs };
 }
 
 /**
@@ -108,7 +142,7 @@ function showHelp() {
   console.log("");
   console.log("Usage:");
   console.log(
-    "  epistery initialize <domain>              Initialize domain with wallet",
+    "  epistery initialize [-c chain] <domain>   Initialize domain with wallet",
   );
   console.log(
     "  epistery mcp [-w domain] <url>            Stdio MCP bridge with bot-auth",
@@ -121,6 +155,26 @@ function showHelp() {
   );
   console.log(
     "  epistery set-default <domain>             Set default domain for CLI",
+  );
+  console.log(
+    "  epistery chains                           List supported chains",
+  );
+  console.log(
+    "  epistery set-default-chain <chain>        Set chain used for new wallets",
+  );
+  console.log(
+    "  epistery set-chain <domain> <chain>       Move a domain to another chain",
+  );
+  console.log("");
+  console.log("initialize options:");
+  console.log(
+    "  -c, --chain <id|name>    Chain for this wallet (e.g. 137 or polygon).",
+  );
+  console.log(
+    "                           Omitted: prompts, or uses the default chain",
+  );
+  console.log(
+    "                           when not on a terminal. See: epistery chains",
   );
   console.log("");
   console.log("Global Options:");
@@ -148,6 +202,13 @@ function showHelp() {
   console.log("Examples:");
   console.log("  # Initialize a domain (creates wallet)");
   console.log("  epistery initialize localhost");
+  console.log("  epistery initialize --chain polygon geist.social");
+  console.log("");
+  console.log("  # Put every new wallet on Polygon mainnet from here on");
+  console.log("  epistery set-default-chain 137");
+  console.log("");
+  console.log("  # Move an existing domain's wallet to another chain");
+  console.log("  epistery set-chain geist.social polygon");
   console.log("");
   console.log("  # MCP bridge (use with Claude Code or any MCP client)");
   console.log("  claude mcp add --transport stdio geist-social -- epistery mcp https://geist.social");
@@ -160,7 +221,121 @@ function showHelp() {
   console.log("Default domain set in: ~/.epistery/config.ini [cli] section");
 }
 
-async function initializeDomain(domain) {
+/**
+ * Print the supported chains, marking the one new wallets get by default.
+ * Shown by `epistery chains`, and again whenever a chain selector fails.
+ */
+async function printChains(prefix = "") {
+  const chains = await configuredChains();
+  let current = null;
+  try {
+    current = await defaultChain();
+  } catch {
+    // No default resolvable (unregistered chainId in config) — just list.
+  }
+
+  for (const chain of chains) {
+    const isDefault = current && Number(current.chainId) === Number(chain.chainId);
+    const marker = isDefault ? "*" : " ";
+    const id = String(chain.chainId).padEnd(9);
+    const alias = (chain.aliases || [])[0];
+    const name = alias ? `${chain.name} (${alias})` : chain.name;
+    console.log(`${prefix}${marker} ${id} ${name}`);
+  }
+  console.log(`${prefix}  (* = default for new wallets; use the id or the name in parens)`);
+}
+
+/**
+ * Resolve a --chain selector, or fail with the list of valid chains.
+ */
+async function resolveChainOrExit(selector) {
+  let chain = null;
+  try {
+    chain = await findChain(selector);
+  } catch (error) {
+    // Ambiguous abbreviation
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+
+  if (!chain) {
+    console.error(`Error: Unknown chain '${selector}'`);
+    console.error("");
+    console.error("Supported chains:");
+    await printChains("  ");
+    process.exit(1);
+  }
+  return chain;
+}
+
+/**
+ * Ask which chain to use, defaulting to the configured default. Only called
+ * on an interactive terminal; scripts get the default without a prompt.
+ */
+async function promptForChain() {
+  const fallback = await defaultChain();
+
+  console.log("Available chains:");
+  await printChains("  ");
+  console.log("");
+
+  const readline = await import("readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((resolve) =>
+    rl.question(`Chain [${fallback.chainId} ${fallback.name}]: `, resolve),
+  );
+  rl.close();
+  console.log("");
+
+  // Answers are chainIds or names, the same selectors --chain takes — no
+  // menu numbers, so "1" always means Ethereum mainnet and never "the first
+  // row".
+  const choice = answer.trim();
+  return choice ? await resolveChainOrExit(choice) : fallback;
+}
+
+async function listChains() {
+  console.log("Supported chains:");
+  await printChains("  ");
+  console.log("");
+  console.log("Use one for a new wallet:  epistery initialize -c <chain> <domain>");
+  console.log("Change the default:        epistery set-default-chain <chain>");
+}
+
+async function setDefaultChainCommand(selector) {
+  const chain = await resolveChainOrExit(selector);
+  await setDefaultChain(chain.chainId);
+  console.log(`✓ Default chain set to: ${chain.name} (${chain.chainId})`);
+  console.log("");
+  console.log("New wallets use this chain. Existing wallets keep theirs;");
+  console.log("check with: epistery info <domain>");
+}
+
+/**
+ * Re-point an existing domain at another chain. The wallet is chain-agnostic,
+ * so the address survives — only the domain's [provider] block changes.
+ */
+async function setChainCommand(domain, selector) {
+  const chain = await resolveChainOrExit(selector);
+  const previous = await CliWallet.setChain(domain, providerConfigFor(chain));
+
+  if (previous && Number(previous.chainId) === Number(chain.chainId)) {
+    console.log(`${domain} is already on ${chain.name} (${chain.chainId})`);
+    return;
+  }
+
+  const wallet = await CliWallet.load(domain);
+  console.log(`✓ ${domain} moved to ${chain.name} (${chain.chainId})`);
+  if (previous) {
+    console.log(`  was: ${previous.name || "unknown"} (${previous.chainId})`);
+  }
+  console.log("");
+  console.log(`Wallet ${wallet.address} is unchanged — the same address on the`);
+  console.log("new chain. Balances, contracts and whitelist entries do NOT move;");
+  console.log("this wallet starts unfunded on the new chain.");
+}
+
+async function initializeDomain(domain, chainSelector) {
   try {
     // Reject domains with colons (ports) - macOS can't handle colons in filenames
     if (domain.includes(':')) {
@@ -174,10 +349,22 @@ async function initializeDomain(domain) {
       process.exit(1);
     }
 
+    // Chain: --chain wins; otherwise ask when we have a terminal, and fall
+    // back to the configured default when we don't (scripts, CI).
+    let chain;
+    if (chainSelector) {
+      chain = await resolveChainOrExit(chainSelector);
+    } else if (process.stdin.isTTY && process.stdout.isTTY) {
+      chain = await promptForChain();
+    } else {
+      chain = await defaultChain();
+    }
+
     console.log(`Initializing domain: ${domain}`);
+    console.log(`Chain: ${chain.name} (${chain.chainId})`);
     console.log("");
 
-    const wallet = await CliWallet.initialize(domain);
+    const wallet = await CliWallet.initialize(domain, providerConfigFor(chain));
 
     console.log("");
     console.log("Domain initialized successfully");
@@ -606,13 +793,43 @@ async function main() {
 
   try {
     switch (command) {
-      case "initialize":
-        if (!args[0]) {
+      case "initialize": {
+        const { chain, remainingArgs: initArgs } = extractChainOption(args);
+        if (!initArgs[0]) {
           console.error("Error: Domain name required");
-          console.error("Usage: epistery initialize <domain>");
+          console.error("Usage: epistery initialize [-c <chain>] <domain>");
           process.exit(1);
         }
-        await initializeDomain(args[0]);
+        await initializeDomain(initArgs[0], chain);
+        break;
+      }
+
+      case "chains":
+        await listChains();
+        break;
+
+      case "set-chain":
+        if (!args[0] || !args[1]) {
+          console.error("Error: Domain and chain required");
+          console.error("Usage: epistery set-chain <domain> <chainId|name>");
+          console.error("");
+          console.error("Supported chains:");
+          await printChains("  ");
+          process.exit(1);
+        }
+        await setChainCommand(args[0], args[1]);
+        break;
+
+      case "set-default-chain":
+        if (!args[0]) {
+          console.error("Error: Chain required");
+          console.error("Usage: epistery set-default-chain <chainId|name>");
+          console.error("");
+          console.error("Supported chains:");
+          await printChains("  ");
+          process.exit(1);
+        }
+        await setDefaultChainCommand(args[0]);
         break;
 
       case "mcp":

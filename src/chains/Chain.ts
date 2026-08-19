@@ -40,6 +40,12 @@ export interface ChainConfig extends ProviderConfig {
   publicRpc?: string;
   privateRpc?: string;
   policy?: ChainPolicy;
+  /**
+   * Short names a user may type instead of the chainId — `epistery
+   * initialize --chain polygon`. Lowercase, no spaces. Must be unique across
+   * registered chains; the first exact alias match wins.
+   */
+  aliases?: string[];
 }
 
 /**

@@ -20,6 +20,17 @@ import { registerChain } from './registry';
 export class MyNewChain extends Chain {
   static chainId = 1234;
 
+  // Network details + the short names `epistery initialize --chain` accepts.
+  // Aliases must be unique across registered chains.
+  static defaults = {
+    name: 'My New Chain',
+    aliases: ['mynew', 'mnc'],
+    rpc: 'https://rpc.mynewchain.example',
+    nativeCurrencyName: 'MNC',
+    nativeCurrencySymbol: 'MNC',
+    nativeCurrencyDecimals: 18,
+  };
+
   // Override only what's actually different from the EIP-1559 default.
   // Skip this method entirely if the network behaves normally.
   async getFeeData(): Promise<ChainFeeData> {
@@ -52,7 +63,8 @@ import 'my-app/chains/MyNewChain';
 ```
 
 The registry is a module-scoped `Map`, so the registration is idempotent
-and survives across the entire process.
+and survives across the entire process. Once registered, the chain shows up in
+`epistery chains` and can be selected with `epistery initialize --chain`.
 
 ## What goes in a Chain subclass
 

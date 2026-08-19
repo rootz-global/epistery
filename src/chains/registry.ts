@@ -120,3 +120,96 @@ export function hasRegisteredChain(chainId: number): boolean {
 export function registeredChainIds(): number[] {
   return Array.from(REGISTRY.keys());
 }
+
+/**
+ * Resolve a user-supplied chain selector to a chain config.
+ *
+ * Accepts a chainId (`137`), one of the chain's aliases (`polygon`, `pol`),
+ * or its name (`"Polygon Mainnet"`, `polygon-mainnet`) — matching is
+ * case-insensitive and ignores spaces, dashes and underscores. A name may be
+ * abbreviated as long as exactly one chain matches; an ambiguous
+ * abbreviation throws with the candidates.
+ *
+ * Returns the *configured* chain (privateRpc overlaid from root config), or
+ * null when nothing matches, so callers can print the available list.
+ */
+export async function findChain(selector: string | number): Promise<ChainConfig | null> {
+  const chains = await configuredChains();
+  const raw = String(selector).trim();
+  if (!raw) return null;
+
+  if (/^\d+$/.test(raw)) {
+    return chains.find(c => Number(c.chainId) === Number(raw)) || null;
+  }
+
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, '');
+  const want = norm(raw);
+
+  const alias = chains.filter(c => (c.aliases || []).some(a => norm(a) === want));
+  if (alias.length >= 1) return alias[0];
+
+  const exact = chains.filter(c => norm(c.name || '') === want);
+  if (exact.length === 1) return exact[0];
+
+  const partial = chains.filter(c => norm(c.name || '').startsWith(want));
+  if (partial.length === 1) return partial[0];
+  if (partial.length > 1) {
+    throw new Error(
+      `Chain '${raw}' is ambiguous: ${partial.map(c => `${c.name} (${c.chainId})`).join(', ')}`
+    );
+  }
+  return null;
+}
+
+/**
+ * Resolve the chain a new wallet should use when the caller didn't name one:
+ * root config's `[default] defaultChainId` / `[default.provider] chainId`,
+ * else Polygon mainnet. Falls back to the raw `[default.provider]` block when
+ * that chainId has no registered subclass, so a hand-configured chain keeps
+ * working.
+ */
+export async function defaultChain(): Promise<ChainConfig> {
+  const id = await defaultChainId();
+  const found = await findChain(id);
+  if (found) return found;
+
+  const rootData = await new Config().read('/');
+  const provider = rootData?.default?.provider;
+  if (provider?.chainId) return { ...provider, chainId: Number(provider.chainId) };
+
+  throw new Error(`No chain registered for chainId ${id} and no [default.provider] in ~/.epistery/config.ini`);
+}
+
+/**
+ * Set the chain used by default for new wallets, in root config. Writes both
+ * `[default] defaultChainId` and the `[default.provider]` block so consumers
+ * that read either one agree. Returns the chain that was set.
+ */
+export async function setDefaultChain(selector: string | number): Promise<ChainConfig> {
+  const chain = await findChain(selector);
+  if (!chain) throw new Error(`Unknown chain: ${selector}`);
+
+  const config = new Config();
+  await config.setPath('/');
+  if (!config.data.default) config.data.default = {};
+  config.data.default.defaultChainId = String(chain.chainId);
+  config.data.default.provider = providerConfigFor(chain);
+  await config.save();
+  return chain;
+}
+
+/**
+ * Flatten a chain into the `provider` block shape stored in config.ini
+ * (domain configs and root `[default.provider]`). Prefers a configured
+ * privateRpc over the chain's public RPC.
+ */
+export function providerConfigFor(chain: ChainConfig): ChainConfig {
+  return {
+    chainId: Number(chain.chainId),
+    name: chain.name,
+    rpc: chain.privateRpc || chain.rpc,
+    nativeCurrencyName: chain.nativeCurrencyName,
+    nativeCurrencySymbol: chain.nativeCurrencySymbol,
+    nativeCurrencyDecimals: chain.nativeCurrencyDecimals,
+  };
+}
