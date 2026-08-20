@@ -143,7 +143,20 @@ rivets — different ways of presenting a device-locked signing key). This is ho
 the system enforces one-key-one-identity without a hard cross-context check: the
 user mints another isolated rivet rather than pointing one key at two contracts.
 
-Server/domain wallets live in `~/.epistery/<domain>/config.ini` (0600).
+Server/domain wallets live in `~/.epistery/<domain>/config.ini` as **cleartext**
+mnemonics — there is no browser-style non-extractable key on the server side, and
+even once keys move into device hardware this stays as the fallback. The floor is
+filesystem-level: epistery creates every directory in that tree `0700` and every
+file `0600`, tightens a file that predates the rule as it writes it, and warns on
+stderr when it loads key material from a file other users can read.
+
+```bash
+epistery permissions          # audit ~/.epistery (exit 1 if anything is group/other-readable)
+epistery permissions --fix    # tighten it
+```
+
+`auditTree` / `secureTree` are exported from the package so a host can run the
+same check at startup.
 
 ### The `/connect` handshake & contract binding
 
@@ -208,7 +221,7 @@ resolves). Authorize against `identityAddress`.
 `resolveClient(req)` (auth resolution for non-middleware contexts, e.g. WebSocket
 upgrades), `buildStatus`, `routes`.
 
-Also exported: `Config`, `chainFor`, `registerChain`, `configuredChains`,
+Also exported: `auditTree`, `secureTree`, `Config`, `chainFor`, `registerChain`, `configuredChains`,
 `defaultChainId`, `Chain`.
 
 The core `Epistery` static API (`src/epistery.ts`): `initialize`, `createWallet`,
@@ -278,7 +291,7 @@ epistery mcp https://api.example.com    # stdio MCP bridge with bot-auth
 ```
 
 Commands: `initialize`, `set-default`, `chains`, `set-default-chain`,
-`set-chain`, `info`, `curl`, `mcp`, `help`. See [CLI.md](CLI.md).
+`set-chain`, `permissions`, `info`, `curl`, `mcp`, `help`. See [CLI.md](CLI.md).
 
 ---
 

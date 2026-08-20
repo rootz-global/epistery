@@ -5,6 +5,9 @@ Command-line interface for Epistery authentication and requests.
 ## Quick Start
 
 ```bash
+# Check that ~/.epistery is owner-only (keys are cleartext there)
+epistery permissions
+
 # See which chains are available (* marks the default for new wallets)
 epistery chains
 
@@ -147,6 +150,31 @@ Epistery CLI uses the same domain configuration system as the server:
 └── wiki.rootz.global/
     └── config.ini
 ```
+
+Wallet mnemonics and private keys are stored in cleartext, so the whole tree is
+owner-only: directories `0700`, files `0600`. Epistery creates them that way and
+repairs a too-open file when it writes it; `epistery permissions` checks what is
+already on disk.
+
+### `epistery permissions [--fix]`
+
+Audit the modes of everything under `~/.epistery`. The tree holds wallet
+mnemonics and private keys in cleartext, so anything readable by group or other
+is a finding; the command exits `1` when it finds something.
+
+```bash
+epistery permissions          # report
+epistery permissions --fix    # chmod files to 0600, directories to 0700
+```
+
+New installs are created owner-only and each write tightens the file it touches,
+so this is mainly for trees created before that rule (`config.ini` at `0664` is
+the common case) — the new-machine check that prompted it.
+
+Note that `--fix` walks the *whole* tree, including files other tools put there.
+If a local service running as another user legitimately reads something from
+`~/.epistery` (a TLS key, say), give it access deliberately — group ownership on
+that one path — rather than leaving the tree world-readable.
 
 ### Authentication
 
@@ -295,11 +323,14 @@ nativeCurrencySymbol=JOC
 nativeCurrencyDecimals=18
 ```
 
-To configure a specific chain for a domain, edit `~/.epistery/{domain}/config.ini` and update the `[provider]` section with the desired chain configuration.
+To move a domain to a different chain, use `epistery set-chain <domain> <chain>`
+(it rewrites that `[provider]` section and keeps the wallet).
 
 ## Security
 
-- Domain configs stored with 0600 permissions (user only)
+- Domain configs stored with 0600 permissions, their directories 0700 (owner
+  only). Keys are cleartext on disk, so this is the only thing between them and
+  another local account — verify with `epistery permissions`
 - Private keys never transmitted (only signatures)
 - Each domain has its own isolated wallet
 - Each request is signed with fresh timestamp to prevent replay attacks

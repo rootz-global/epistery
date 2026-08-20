@@ -3,6 +3,15 @@ import fsp from 'fs/promises';
 import { join } from 'path';
 import ini from 'ini';
 import { ethers } from 'ethers';
+import {
+  SECRET_DIR_MODE,
+  SECRET_FILE_MODE,
+  holdsSecrets,
+  secureDir,
+  secureFile,
+  secureToSync,
+  warnIfTooOpen,
+} from './Permissions';
 
 /**
  * Epistery Config — async path-based configuration store.
@@ -52,6 +61,11 @@ function normalizePath(path: string): string {
  * LocalConfig — the filesystem backend under ~/.epistery. This is the original
  * Config behavior, with all IO made async. It is also what the epistery-authority
  * server mounts as its own storage backend (one implementation, not two).
+ *
+ * The tree holds wallet mnemonics and private keys in cleartext, so every
+ * directory it creates is 0700 and every file it writes is 0600 — and a file
+ * that already exists too open is tightened on write (see utils/Permissions).
+ * `epistery permissions [--fix]` audits/repairs what is already on disk.
  */
 export class LocalConfig implements ConfigStore {
   public readonly rootName: string;
@@ -82,10 +96,15 @@ export class LocalConfig implements ConfigStore {
 
   private initializeSync(): void {
     if (!fs.existsSync(this.currentDir)) {
-      fs.mkdirSync(this.currentDir, { recursive: true });
+      fs.mkdirSync(this.currentDir, { recursive: true, mode: SECRET_DIR_MODE });
     }
+    // mkdir's mode is masked by umask, and an existing dir keeps its own mode,
+    // so chmod is what actually guarantees 0700 here.
+    secureToSync(this.currentDir, SECRET_DIR_MODE);
+
     const defaultContent = this.currentPath === '/' ? defaultIni : '';
-    fs.writeFileSync(this.currentFile, defaultContent);
+    fs.writeFileSync(this.currentFile, defaultContent, { mode: SECRET_FILE_MODE });
+    secureToSync(this.currentFile, SECRET_FILE_MODE);
     this.data = ini.decode(defaultContent);
   }
 
@@ -112,6 +131,7 @@ export class LocalConfig implements ConfigStore {
     try {
       const fileData = await fsp.readFile(this.currentFile, 'utf8');
       this.data = ini.decode(fileData);
+      if (holdsSecrets(this.data)) warnIfTooOpen(this.currentFile);
     } catch {
       this.data = {};
     }
@@ -124,15 +144,21 @@ export class LocalConfig implements ConfigStore {
       : join(this.configDir, path.slice(1), 'config.ini');
     try {
       const fileData = await fsp.readFile(configFile, 'utf8');
-      return ini.decode(fileData);
+      const data = ini.decode(fileData);
+      if (holdsSecrets(data)) warnIfTooOpen(configFile);
+      return data;
     } catch {
       return {};
     }
   }
 
   public async save(): Promise<void> {
-    await fsp.mkdir(this.currentDir, { recursive: true });
-    await fsp.writeFile(this.currentFile, ini.stringify(this.data));
+    await fsp.mkdir(this.currentDir, { recursive: true, mode: SECRET_DIR_MODE });
+    await fsp.writeFile(this.currentFile, ini.stringify(this.data), { mode: SECRET_FILE_MODE });
+    // Repair the mode of a directory/file that predates this rule (or that a
+    // permissive umask widened at create time).
+    await secureDir(this.currentDir);
+    await secureFile(this.currentFile);
   }
 
   public async readFile(filename: string): Promise<Buffer> {
@@ -140,8 +166,12 @@ export class LocalConfig implements ConfigStore {
   }
 
   public async writeFile(filename: string, data: string | Buffer): Promise<void> {
-    await fsp.mkdir(this.currentDir, { recursive: true });
-    await fsp.writeFile(join(this.currentDir, filename), data);
+    await fsp.mkdir(this.currentDir, { recursive: true, mode: SECRET_DIR_MODE });
+    const target = join(this.currentDir, filename);
+    // TLS keys under .ssl/ live here too — same owner-only rule.
+    await fsp.writeFile(target, data, { mode: SECRET_FILE_MODE });
+    await secureDir(this.currentDir);
+    await secureFile(target);
   }
 
   public async exists(): Promise<boolean> {

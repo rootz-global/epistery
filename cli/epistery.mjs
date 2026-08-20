@@ -7,6 +7,7 @@
  *   epistery initialize <domain>         Initialize domain with wallet
  *   epistery chains                      List supported chains
  *   epistery set-chain <domain> <chain>  Move a domain to another chain
+ *   epistery permissions [--fix]         Audit/repair ~/.epistery file modes
  *   epistery set-default-chain <chain>   Set chain used for new wallets
  *   epistery curl [options] <url>        Make authenticated HTTP request
  *   epistery mcp [options] <url>         Stdio MCP bridge with bot-auth
@@ -18,6 +19,11 @@
 
 import { CliWallet } from "../dist/utils/CliWallet.js";
 import { Utils } from "../dist/utils/Utils.js";
+import {
+  auditTree,
+  formatMode,
+  secureTree,
+} from "../dist/utils/Permissions.js";
 import {
   configuredChains,
   defaultChain,
@@ -165,6 +171,9 @@ function showHelp() {
   console.log(
     "  epistery set-chain <domain> <chain>       Move a domain to another chain",
   );
+  console.log(
+    "  epistery permissions [--fix]              Audit (or repair) key file modes",
+  );
   console.log("");
   console.log("initialize options:");
   console.log(
@@ -219,6 +228,9 @@ function showHelp() {
   console.log("");
   console.log("Domain configs stored in: ~/.epistery/{domain}/config.ini");
   console.log("Default domain set in: ~/.epistery/config.ini [cli] section");
+  console.log("");
+  console.log("Wallet keys are cleartext on disk — files 0600, directories 0700.");
+  console.log("Check with: epistery permissions");
 }
 
 /**
@@ -333,6 +345,64 @@ async function setChainCommand(domain, selector) {
   console.log(`Wallet ${wallet.address} is unchanged — the same address on the`);
   console.log("new chain. Balances, contracts and whitelist entries do NOT move;");
   console.log("this wallet starts unfunded on the new chain.");
+}
+
+/**
+ * Audit — or with --fix, repair — the modes of everything under ~/.epistery.
+ * The tree holds wallet mnemonics and private keys in cleartext, so anything
+ * readable by group or other is a finding.
+ */
+async function permissionsCommand(fix) {
+  const { Config } = await import("../dist/utils/Config.js");
+  const root = new Config().configDir;
+
+  if (process.platform === "win32") {
+    console.log("Windows uses ACLs rather than mode bits — nothing to audit here.");
+    console.log(`Check that only your account can read: ${root}`);
+    return;
+  }
+
+  if (!fix) {
+    const findings = await auditTree(root);
+    if (findings.length === 0) {
+      console.log(`✓ ${root} is owner-only (files 0600, directories 0700)`);
+      return;
+    }
+
+    console.log(`${findings.length} path(s) under ${root} are readable by other users:`);
+    console.log("");
+    for (const entry of findings) {
+      console.log(
+        `  ${formatMode(entry.mode)} → ${formatMode(entry.expected)}  ${entry.type === "dir" ? "dir " : "file"}  ${entry.path}`,
+      );
+    }
+    console.log("");
+    console.log("Repair with: epistery permissions --fix");
+    process.exitCode = 1;
+    return;
+  }
+
+  const { fixed, failed } = await secureTree(root);
+
+  if (fixed.length === 0 && failed.length === 0) {
+    console.log(`✓ ${root} was already owner-only — nothing to change`);
+    return;
+  }
+
+  for (const entry of fixed) {
+    console.log(`  ${formatMode(entry.mode)} → ${formatMode(entry.expected)}  ${entry.path}`);
+  }
+  console.log("");
+  console.log(`✓ Tightened ${fixed.length} path(s) under ${root}`);
+
+  if (failed.length > 0) {
+    console.log("");
+    console.log(`Could not change ${failed.length} path(s) — check the owner:`);
+    for (const entry of failed) {
+      console.log(`  ${formatMode(entry.mode)}  ${entry.path}`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 async function initializeDomain(domain, chainSelector) {
@@ -806,6 +876,10 @@ async function main() {
 
       case "chains":
         await listChains();
+        break;
+
+      case "permissions":
+        await permissionsCommand(args.includes("--fix") || args.includes("-f"));
         break;
 
       case "set-chain":
