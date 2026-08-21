@@ -1325,9 +1325,16 @@ export class FidoWallet extends Wallet {
   }
 
   static _rootPath() {
-    return (
-      (typeof Witness !== "undefined" && Witness.instance?.rootPath) || ".."
-    );
+    // The server mounts epistery routes at attach()'s rootPath, and other client
+    // calls (witness /connect, /identity/*) address them off that SAME base —
+    // which is "" when the app attaches at site root (the console does
+    // Witness.connect({rootPath:'/'}), normalized to ""). Preserve "" (a valid
+    // base meaning site root); only fall back to ".." when Witness is unavailable.
+    // A prior `|| ".."` swallowed "" and sent blob requests to the wrong origin-
+    // relative path — the server-backup then 404'd silently ("blob is local-only").
+    const rp =
+      typeof Witness !== "undefined" ? Witness.instance?.rootPath : undefined;
+    return rp === undefined || rp === null ? ".." : rp;
   }
 
   static async create(ethers, options = {}) {
@@ -1371,7 +1378,7 @@ export class FidoWallet extends Wallet {
     // local storage purges (iOS ITP). The server holds ciphertext only.
     if (!options.skipServerBackup) {
       try {
-        await fetch(`${FidoWallet._rootPath()}/epistery/fido/blob`, {
+        await fetch(`${FidoWallet._rootPath()}/fido/blob`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1396,7 +1403,7 @@ export class FidoWallet extends Wallet {
   static async fetchBlob(credentialId) {
     try {
       const res = await fetch(
-        `${FidoWallet._rootPath()}/epistery/fido/blob/${encodeURIComponent(credentialId)}`,
+        `${FidoWallet._rootPath()}/fido/blob/${encodeURIComponent(credentialId)}`,
       );
       if (!res.ok) return null;
       const body = await res.json();
