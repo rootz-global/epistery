@@ -1478,37 +1478,6 @@ export class FidoWallet extends Wallet {
     const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
     return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
-
-  // Submit a whitelist access request for this rivet address.
-  // The proposed `name` should match the existing name the user is known
-  // by on this domain (Tier 1 multi-device-per-name).
-  async requestWhitelisting({ name, listName, message } = {}) {
-    if (!this.address) {
-      throw new Error("FidoWallet has no address");
-    }
-    if (!listName) {
-      throw new Error("listName is required");
-    }
-    const res = await fetch(
-      `${FidoWallet._rootPath()}/epistery/whitelist/request-access`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          address: this.address,
-          listName,
-          name: name || this.label,
-          walletType: "fido",
-          message: message || "FIDO-backed device registration",
-        }),
-      },
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `Whitelist request failed: ${res.status}`);
-    }
-    return await res.json();
-  }
 }
 
 if (typeof window !== "undefined") {
