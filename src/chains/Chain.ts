@@ -99,16 +99,28 @@ export class Chain {
 
   /**
    * Lazily-built provider with explicit network info.
-   * Passing `{ name, chainId }` to the JsonRpcProvider constructor avoids
-   * ethers' "could not detect network" error when the RPC is briefly
-   * unreachable at startup — ethers will skip its eth_chainId probe.
+   *
+   * Passing `{ name, chainId }` to the constructor avoids ethers' "could not
+   * detect network" error when the RPC is briefly unreachable at startup, but
+   * it does NOT stop the per-read probe: ethers v5 runs
+   * getNetwork() -> detectNetwork() before EVERY read (eth_call, getBalance,
+   * etc.), and detectNetwork re-sends eth_chainId each time (its memo only
+   * survives a single event-loop tick, so sequentially-awaited reads each fire
+   * their own). That doubled reads into "eth_chainId + <read>" pairs.
+   *
+   * Overriding detectNetwork to return the known static network collapses each
+   * pair into one RPC call — roughly halving read volume on hot paths. This is
+   * pure liveness plumbing: it's independent of which RPC endpoint is chosen,
+   * so it stays correct behind an owned node or a fallback provider.
    */
   get provider(): ethers.providers.JsonRpcProvider {
     if (!this._provider) {
-      this._provider = new ethers.providers.JsonRpcProvider(this.rpc, {
+      const network: ethers.providers.Network = {
         name: this.name,
         chainId: this.chainId,
-      });
+      };
+      this._provider = new ethers.providers.JsonRpcProvider(this.rpc, network);
+      this._provider.detectNetwork = async () => network;
     }
     return this._provider;
   }
