@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { createHash, randomBytes } from 'crypto';
 import express, { Express } from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
@@ -42,10 +43,13 @@ export async function createTestApp(options?: {
   process.env.SERVER_DOMAIN = 'localhost';
 
   // Dynamic import to ensure environment is set first
-  const { Epistery } = await import('../index.mjs');
+  const { Epistery, captureRawBody } = await import('../index.mjs');
 
   const app = express();
-  app.use(express.json());
+  // Bot signatures commit to a digest of the raw body, and express.json()
+  // consumes the stream. captureRawBody keeps the bytes so the verifier can
+  // reproduce what was signed. Hosts accepting bot-signed bodies must do this.
+  app.use(express.json({ verify: captureRawBody }));
   app.use(cookieParser());
 
   // Initialize Epistery
@@ -164,18 +168,48 @@ export async function performKeyExchange(
 }
 
 /**
- * Create a Bot authentication header
+ * Create a Bot authentication header bound to a specific request.
+ *
+ * Mirrors CliWallet.createBotAuthHeader; both build their bytes with
+ * client/bot-auth-message.mjs so a drift between signer and verifier shows up
+ * as a test failure rather than as an accepted signature.
+ *
+ * Overrides let a test mint a deliberately wrong envelope (stale ts, foreign
+ * audience, mismatched body hash) without hand-rolling the wire shape.
  */
-export async function createBotAuthHeader(wallet: ethers.Wallet): Promise<string> {
-  const message = `Whitelist auth ${Date.now()}`;
-  const signature = await wallet.signMessage(message);
+export async function createBotAuthHeader(
+  wallet: ethers.Wallet,
+  req: {
+    method?: string;
+    uri?: string;
+    aud?: string;
+    body?: string | Buffer | null;
+  } = {},
+  overrides: Partial<{ ts: number; nonce: string; bodyHash: string; aud: string; uri: string; method: string }> = {}
+): Promise<string> {
+  const { botAuthMessage, audienceFor, EMPTY_BODY_SHA256 } = await import(
+    '../client/bot-auth-message.mjs' as string
+  );
 
-  const payload = {
-    address: wallet.address,
-    signature,
-    message
-  };
+  const method = (overrides.method ?? req.method ?? 'POST').toUpperCase();
+  const uri = overrides.uri ?? req.uri ?? '/';
+  const aud = audienceFor(overrides.aud ?? req.aud ?? 'localhost');
+  const body = req.body;
+  const bodyHash =
+    overrides.bodyHash ??
+    (body === undefined || body === null || body.length === 0
+      ? EMPTY_BODY_SHA256
+      : createHash('sha256')
+          .update(Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8'))
+          .digest('hex'));
+  const ts = overrides.ts ?? Date.now();
+  const nonce = overrides.nonce ?? randomBytes(16).toString('hex');
 
+  const signature = await wallet.signMessage(
+    botAuthMessage({ method, uri, aud, bodyHashHex: bodyHash, ts, nonce })
+  );
+
+  const payload = { v: '1', address: wallet.address, signature, method, uri, aud, bodyHash, ts, nonce };
   return 'Bot ' + Buffer.from(JSON.stringify(payload)).toString('base64');
 }
 

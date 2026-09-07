@@ -47,7 +47,11 @@ downstream service **never** trusts a client-supplied identity header and
 ## What Epistery DOES
 
 - **Authenticates every request** to a trusted address (`req.episteryClient`),
-  via signed `_epistery` session cookie or `Bot` signature.
+  via signed `_epistery` session cookie or `Bot` signature. A `Bot` signature
+  covers the request it authorises — method, URI, audience host and a digest of
+  the body, with a timestamp and single-use nonce — so it is a message signature,
+  not a bearer token. The bytes are built by `client/bot-auth-message.mjs`, the
+  single definition shared by every signer and the verifier.
 - **Mints/loads wallets** for the browser (rivet / FIDO / web3) and server
   (per-domain).
 - **Binds a device to an IdentityContract** and verifies that binding on-chain.
@@ -350,6 +354,22 @@ Where the code currently fails the contract above. Dated; remove as fixed.
   matches the wallet's `identityAddress`. The pre-cutover wire shape
   (`clientAddress` / `clientPublicKey`) is removed without aliases — old
   consumers fail at the handshake instead of silently degrading.
+
+**Resolved in v2.3.0 (2026-09-06 bot-auth message binding)**
+
+- **`Bot` auth was a bearer token.** `createBotAuthHeader()` signed the fixed
+  string `"Rhonda Bot Authentication - <ISO ts>"` and the server checked only that
+  the signature recovered the claimed address — no method, URI, audience, body
+  digest, freshness or replay check. One captured header authorised any endpoint,
+  on any epistery host, with any body, indefinitely. The signed bytes now come from
+  `client/bot-auth-message.mjs` (same pattern as `storage-message.mjs`) and cover
+  method + URI + audience host + body digest + timestamp + nonce. The pre-binding
+  wire is removed without an alias: an old signer fails at the header rather than
+  degrading silently.
+- **Duplicated identity resolution.** `resolveClient()` and the `attach()`
+  middleware each carried their own copy of bot verification. Both now call the
+  single exported `verifyBotAuth()` — the README's rule that no consumer may
+  re-derive identity applies to epistery itself first.
 
 **Outstanding**
 

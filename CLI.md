@@ -181,16 +181,32 @@ that one path — rather than leaving the tree world-readable.
 The CLI uses **bot authentication mode**, which signs each request individually with the domain wallet's private key:
 
 1. Load domain wallet from `~/.epistery/{domain}/config.ini`
-2. Create authentication message with current timestamp
-3. Sign message with wallet's private key
-4. Send signature in `Authorization: Bot <base64-encoded-json>` header
-5. Server verifies signature and authenticates request
+2. Build the canonical bot-auth message for **this request** — method, URI,
+   audience host, SHA-256 of the body, timestamp, single-use nonce
+   (`client/bot-auth-message.mjs`, the one definition both signer and verifier use)
+3. Sign those bytes with the wallet's private key
+4. Send the envelope in `Authorization: Bot <base64-encoded-json>` header
+5. Server rebuilds the same bytes from the request it actually received and
+   verifies the signature, freshness, audience, and nonce
 
 **Benefits:**
 - Stateless - no session management needed
 - Secure - private keys never leave your machine
 - Simple - works immediately after initialization
-- Reliable - each request is independently authenticated
+- Bound - the signature authorises *that* request. A captured header cannot be
+  replayed, retargeted at another endpoint or host, or reused with a different body.
+
+**Note for host applications:** body parsers consume the request stream, so a host
+that accepts bot-signed requests carrying a body must preserve the raw bytes:
+
+```js
+import express from 'express';
+import { captureRawBody } from 'epistery';
+
+app.use(express.json({ verify: captureRawBody }));
+```
+
+Without it, a bot request with a body is refused rather than assumed valid.
 
 ## Usage Patterns
 

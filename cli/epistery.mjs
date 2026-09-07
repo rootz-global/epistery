@@ -674,8 +674,14 @@ async function performCurl(options) {
 
     // Authentication
     if (options.bot) {
-      // Bot mode: Use Authorization header
-      const authHeader = await wallet.createBotAuthHeader();
+      // Bot mode: the signature covers this exact request — method, URI,
+      // audience host and body digest — so it cannot be lifted onto another
+      // call. Everything the header commits to must match what curl sends.
+      const authHeader = await wallet.createBotAuthHeader({
+        method: options.method,
+        url: options.url,
+        body: options.data,
+      });
       curlArgs.push("-H", `Authorization: ${authHeader}`);
     } else {
       // Session mode: Check for existing session or perform key exchange
@@ -801,8 +807,15 @@ async function performMcp(args) {
     const isNotification = msg.id === undefined || msg.id === null;
 
     try {
-      // Fresh bot-auth header per request (timestamp-based replay protection)
-      const authHeader = await wallet.createBotAuthHeader();
+      // Fresh bot-auth header per request. The signature covers this JSON-RPC
+      // message: swap the body and the signature stops verifying, so a captured
+      // header cannot be used to call a different tool.
+      const payload = JSON.stringify(msg);
+      const authHeader = await wallet.createBotAuthHeader({
+        method: 'POST',
+        url: mcpUrl,
+        body: payload
+      });
 
       const res = await fetch(mcpUrl, {
         method: 'POST',
@@ -811,7 +824,7 @@ async function performMcp(args) {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify(msg)
+        body: payload
       });
 
       if (res.status === 204) {
