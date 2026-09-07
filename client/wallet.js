@@ -1245,7 +1245,18 @@ export class FidoWallet extends Wallet {
 
   // Registration ceremony: create credential, derive PRF, return both.
   // Some authenticators don't return PRF on create() — follow up with get().
-  static async _prfDeriveOnCreate(label) {
+  //
+  // `excludeCredentials` (base64url credential ids we already know about) makes
+  // the authenticator REFUSE to mint a duplicate for a credential this device
+  // already holds — so re-running the offer while a passkey is still known does
+  // not proliferate passkeys. It can only exclude ids we can see locally; the
+  // post-purge case (no local ids) is handled by recover(), not here.
+  //
+  // residentKey is "required" (not "preferred") so the passkey is DISCOVERABLE:
+  // recover() asserts with an empty allowCredentials list, which only surfaces
+  // resident credentials. Without this, a purged device couldn't find its own
+  // passkey to reference and would be pushed to mint a new one.
+  static async _prfDeriveOnCreate(label, excludeCredentials = []) {
     const credential = await navigator.credentials.create({
       publicKey: {
         challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -1262,8 +1273,11 @@ export class FidoWallet extends Wallet {
         authenticatorSelection: {
           authenticatorAttachment: "platform",
           userVerification: "required",
-          residentKey: "preferred",
+          residentKey: "required",
         },
+        excludeCredentials: (excludeCredentials || [])
+          .filter(Boolean)
+          .map((id) => ({ type: "public-key", id: FidoWallet._b64uDecode(id) })),
         extensions: {
           prf: { eval: { first: FIDO_PRF_INPUT } },
         },
@@ -1319,6 +1333,33 @@ export class FidoWallet extends Wallet {
     return new Uint8Array(prfOutput);
   }
 
+  // Discovery ceremony: assert WITHOUT naming a credential (empty
+  // allowCredentials) so the platform surfaces the user's existing discoverable
+  // passkeys for this RP. Returns the chosen credential's id AND its PRF output
+  // — the basis for recover(): reference an existing passkey instead of minting
+  // a new one. Rejects (NotAllowedError) if the user has no passkey here or
+  // cancels — the caller falls back to create() for a genuine first registration.
+  static async _prfAssertDiscoverable() {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [], // discoverable credentials only
+        userVerification: "required",
+        extensions: { prf: { eval: { first: FIDO_PRF_INPUT } } },
+      },
+    });
+
+    const prfOutput =
+      assertion.getClientExtensionResults()?.prf?.results?.first;
+    if (!prfOutput) {
+      throw new Error("PRF output missing from authenticator assertion");
+    }
+    return {
+      credentialId: FidoWallet._b64uEncode(assertion.rawId),
+      prfBytes: new Uint8Array(prfOutput),
+    };
+  }
+
   static async _aesKeyFromPRF(prfBytes, usage) {
     return await crypto.subtle.importKey(
       "raw",
@@ -1346,16 +1387,33 @@ export class FidoWallet extends Wallet {
     if (!window.PublicKeyCredential || !navigator.credentials?.create) {
       throw new Error("WebAuthn not available in this browser");
     }
+    const label = options.label || "FIDO Wallet";
+    // Register a NEW passkey (or refuse to duplicate one we already know about),
+    // then wrap a fresh rivet under its PRF secret.
+    const { credentialId, prfBytes } = await FidoWallet._prfDeriveOnCreate(
+      label,
+      options.excludeCredentials || [],
+    );
+    return await FidoWallet._wrapNewRivet(ethers, {
+      credentialId,
+      prfBytes,
+      label,
+      skipServerBackup: options.skipServerBackup,
+    });
+  }
 
+  // Mint a fresh secp256k1 rivet, AES-GCM-wrap its private key with the PRF
+  // secret of the given (already-asserted-or-registered) FIDO credential, back
+  // the ciphertext up to the epistery server, and return a ready FidoWallet with
+  // the key cached in _priv. Sole owner of "wrap a rivet under a FIDO credential"
+  // — shared by create() (fresh passkey) and recover() (existing passkey whose
+  // server blob is gone), so the two paths can never drift apart.
+  static async _wrapNewRivet(ethers, { credentialId, prfBytes, label, skipServerBackup }) {
     const wallet = new FidoWallet();
-    wallet.label = options.label || "FIDO Wallet";
+    wallet.credentialId = credentialId;
+    wallet.label = label || "FIDO Wallet";
     wallet.createdAt = Date.now();
     wallet.lastUpdated = wallet.createdAt;
-
-    const { credentialId, prfBytes } = await FidoWallet._prfDeriveOnCreate(
-      wallet.label,
-    );
-    wallet.credentialId = credentialId;
 
     const aesKey = await FidoWallet._aesKeyFromPRF(prfBytes, ["encrypt"]);
 
@@ -1378,10 +1436,11 @@ export class FidoWallet extends Wallet {
       ciphertext: ciphertextHex,
       iv: ivHex,
     });
+    wallet._priv = ethersWallet.privateKey; // session cache — no re-ceremony to sign now
 
     // Back up the encrypted blob to the epistery server so it survives
     // local storage purges (iOS ITP). The server holds ciphertext only.
-    if (!options.skipServerBackup) {
+    if (!skipServerBackup) {
       try {
         await fetch(`${FidoWallet._rootPath()}/fido/blob`, {
           method: "POST",
@@ -1403,8 +1462,70 @@ export class FidoWallet extends Wallet {
     return wallet;
   }
 
-  // Fetch the encrypted blob from the epistery server (post-purge recovery).
-  // Returns { ciphertext, iv } as hex strings, or null on failure.
+  // Recover a FIDO identity by REFERENCING an existing passkey instead of
+  // minting a new one — the post-ITP-purge path EpisteryMobileIdentity specifies.
+  // One Face ID / Touch ID:
+  //   1. Assert a discoverable credential (empty allowCredentials) → credentialId + PRF.
+  //   2. Fetch the server blob for that credentialId.
+  //      - Found → decrypt with the PRF key, verify the derived address matches
+  //        the stored rivet, and restore the ORIGINAL rivet.
+  //      - Missing → reuse the SAME passkey to wrap a fresh rivet (no new passkey,
+  //        no second prompt); the identity address is new but the credential is not.
+  // Throws if the user has no passkey for this RP or cancels — the caller then
+  // offers create() for a genuine first registration.
+  static async recover(ethers) {
+    if (!window.PublicKeyCredential || !navigator.credentials?.get) {
+      throw new Error("WebAuthn not available in this browser");
+    }
+    const { credentialId, prfBytes } = await FidoWallet._prfAssertDiscoverable();
+    const blob = await FidoWallet.fetchBlob(credentialId);
+
+    if (blob && blob.ciphertext && blob.iv) {
+      const aesKey = await FidoWallet._aesKeyFromPRF(prfBytes, ["decrypt"]);
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: ethers.utils.arrayify(blob.iv) },
+        aesKey,
+        ethers.utils.arrayify(blob.ciphertext),
+      );
+      const priv = ethers.utils.hexlify(new Uint8Array(plaintext));
+      const signingKey = new ethers.utils.SigningKey(priv);
+      const address = ethers.utils.computeAddress(signingKey.publicKey);
+      if (
+        blob.rivetAddress &&
+        address.toLowerCase() !== blob.rivetAddress.toLowerCase()
+      ) {
+        throw new Error(
+          "FidoWallet recover: decrypted key does not match the stored rivet address",
+        );
+      }
+      const wallet = new FidoWallet();
+      wallet.credentialId = credentialId;
+      wallet.address = address;
+      wallet.publicKey = signingKey.publicKey;
+      wallet.label = blob.label || "FIDO Wallet";
+      wallet.createdAt = Date.now();
+      wallet.lastUpdated = wallet.createdAt;
+      wallet.encryptedPrivateKey = JSON.stringify({
+        ciphertext: blob.ciphertext,
+        iv: blob.iv,
+      });
+      wallet._priv = priv; // session cache
+      return wallet;
+    }
+
+    // Passkey exists but its server blob is gone: reuse the passkey, mint a
+    // fresh rivet under it. No NEW passkey, no second biometric prompt.
+    return await FidoWallet._wrapNewRivet(ethers, {
+      credentialId,
+      prfBytes,
+      label: "FIDO Wallet",
+    });
+  }
+
+  // Fetch the stored blob from the epistery server (post-purge recovery).
+  // Returns the record ({ ciphertext, iv, rivetAddress, publicKey, label }) or
+  // null on failure. _decryptPrivateKey uses only ciphertext/iv; recover() also
+  // reads rivetAddress/label — the server returns the full record either way.
   static async fetchBlob(credentialId) {
     try {
       const res = await fetch(
@@ -1413,7 +1534,13 @@ export class FidoWallet extends Wallet {
       if (!res.ok) return null;
       const body = await res.json();
       if (!body?.ciphertext || !body?.iv) return null;
-      return { ciphertext: body.ciphertext, iv: body.iv };
+      return {
+        ciphertext: body.ciphertext,
+        iv: body.iv,
+        rivetAddress: body.rivetAddress || null,
+        publicKey: body.publicKey || null,
+        label: body.label || null,
+      };
     } catch {
       return null;
     }
