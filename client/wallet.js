@@ -1197,6 +1197,11 @@ export class FidoWallet extends Wallet {
     this.label = null;
     this.createdAt = null;
     this.lastUpdated = null;
+    this._priv = null;         // unlocked rivet key — session only, never persisted.
+                               // Cached like Web3Wallet/RivetWallet so the FIDO
+                               // (Face ID / Touch ID) ceremony runs once per session
+                               // instead of on every sign/encrypt/decrypt. Dies with
+                               // the instance (fromJSON/create mint a fresh one).
   }
 
   toJSON() {
@@ -1414,11 +1419,16 @@ export class FidoWallet extends Wallet {
     }
   }
 
-  // Decrypts the rivet private key in memory via a fresh PRF ceremony.
-  // Falls back to the server-stored blob if the local copy is missing
-  // (the iOS ITP purge recovery path). Returns a hex private key — caller
-  // is responsible for letting it go out of scope after signing.
+  // Decrypts the rivet private key in memory, then caches it for the wallet's
+  // session lifetime (this._priv) so a subsequent sign/encrypt/decrypt reuses
+  // it without another FIDO ceremony — one Face ID / Touch ID per session, not
+  // per operation (the "invisible after unlock" behaviour EpisteryMobileIdentity
+  // specifies, matching RivetWallet/Web3Wallet._unlock). Falls back to the
+  // server-stored blob if the local copy is missing (the iOS ITP purge recovery
+  // path). The cached key is session-only: toJSON never serialises it, and it is
+  // discarded when the instance is (wallet switch/reload re-mints via fromJSON).
   async _decryptPrivateKey(ethers) {
+    if (this._priv) return this._priv;
     if (!this.credentialId) {
       throw new Error("FidoWallet missing credentialId");
     }
@@ -1446,7 +1456,8 @@ export class FidoWallet extends Wallet {
       ethers.utils.arrayify(blob.ciphertext),
     );
 
-    return ethers.utils.hexlify(new Uint8Array(plaintext));
+    this._priv = ethers.utils.hexlify(new Uint8Array(plaintext));
+    return this._priv;
   }
 
   async sign(message, ethers) {
