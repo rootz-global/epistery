@@ -37,28 +37,100 @@ const BOT_AUTH_MAX_AGE_MS = 120_000;
 const BOT_AUTH_MAX_SKEW_MS = 30_000;
 
 /**
- * Bounded replay store. A nonce is single-use inside its validity window; past
- * the window the envelope fails on freshness anyway, so entries are dropped.
- * In-process by design: a multi-process deployment that needs a shared store
- * can swap this for one — the interface is has()/add().
+ * Replay store. A nonce is single-use inside its validity window; past the
+ * window the envelope fails on freshness anyway, so entries are dropped.
+ *
+ * The store is one method:
+ *
+ *   claim(nonce, expiresAtMs) -> boolean | Promise<boolean>
+ *     true  — the nonce was NOT seen before and is now reserved until expiry
+ *     false — already reserved: a replay
+ *
+ * `claim` MUST be atomic — check-and-reserve in one indivisible step. That is
+ * what lets it be the single replay gate, with no check-then-set gap for two
+ * concurrent replays to slip through.
+ *
+ * The default below is in-process, and single-use only WITHIN one process. A
+ * multi-instance deployment (e.g. the relay behind a load balancer) MUST inject
+ * a shared store via setBotNonceStore — otherwise a header replayed against a
+ * different instance is not caught. createMongoNonceStore is a ready shared
+ * implementation.
  */
-const _botNonces = new Map(); // nonce -> expiresAtMs
-function _botNonceSeen(nonce, now) {
-  const exp = _botNonces.get(nonce);
-  if (exp === undefined) return false;
-  if (exp <= now) {
-    _botNonces.delete(nonce);
-    return false;
-  }
-  return true;
+function createInProcessNonceStore() {
+  const seen = new Map(); // nonce -> expiresAtMs
+  return {
+    // Synchronous: the whole check-and-reserve runs in one tick with nothing
+    // interleaved — atomic by construction on a single event loop.
+    claim(nonce, expiresAtMs) {
+      const now = Date.now();
+      const exp = seen.get(nonce);
+      if (exp !== undefined && exp > now) return false; // still valid -> replay
+      seen.set(nonce, expiresAtMs);
+      if (seen.size > 10000) {
+        for (const [k, v] of seen) if (v <= now) seen.delete(k);
+      }
+      return true;
+    },
+  };
 }
-function _botNonceRemember(nonce, now) {
-  _botNonces.set(nonce, now + BOT_AUTH_MAX_AGE_MS + BOT_AUTH_MAX_SKEW_MS);
-  if (_botNonces.size > 10000) {
-    for (const [k, v] of _botNonces) {
-      if (v <= now) _botNonces.delete(k);
-    }
+
+let _botNonceStore = createInProcessNonceStore();
+
+/**
+ * Replace the bot-auth replay store. Call once at startup, before serving.
+ * The store must implement `claim(nonce, expiresAtMs)` atomically (see above).
+ * A multi-instance host MUST call this with a shared store.
+ */
+export function setBotNonceStore(store) {
+  if (!store || typeof store.claim !== "function") {
+    throw new Error(
+      "setBotNonceStore: store must implement claim(nonce, expiresAtMs)",
+    );
   }
+  _botNonceStore = store;
+}
+
+/** A fresh in-process store (the default). Exported so a host or test can reset. */
+export { createInProcessNonceStore };
+
+/**
+ * A shared, cross-instance nonce store backed by a MongoDB collection. The
+ * document `_id` IS the nonce, so a duplicate insert is rejected atomically by
+ * the server (E11000) — that IS the replay check, and it holds across every
+ * instance writing the same collection. A TTL index on `expireAt` lets Mongo
+ * purge spent nonces on its own.
+ *
+ * No `mongodb` dependency here: the collection is duck-typed (insertOne +
+ * createIndex), so the host passes in whatever driver handle it already has:
+ *
+ *   import { setBotNonceStore, createMongoNonceStore } from 'epistery';
+ *   setBotNonceStore(createMongoNonceStore(db.collection('bot_nonces')));
+ *
+ * Fail-closed: if the store throws (Mongo unreachable), verifyBotAuth catches
+ * it and rejects the request rather than admit an unverifiable nonce.
+ */
+export function createMongoNonceStore(collection, { ensureIndex = true } = {}) {
+  let indexed = ensureIndex ? null : Promise.resolve();
+  function ensure() {
+    if (!indexed) {
+      indexed = Promise.resolve(
+        collection.createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      ).catch(() => {}); // a missing TTL index only delays purge, never correctness
+    }
+    return indexed;
+  }
+  return {
+    async claim(nonce, expiresAtMs) {
+      await ensure();
+      try {
+        await collection.insertOne({ _id: nonce, expireAt: new Date(expiresAtMs) });
+        return true; // first writer wins
+      } catch (e) {
+        if (e && (e.code === 11000 || e.code === 11001)) return false; // duplicate -> replay
+        throw e; // real failure -> caller fails closed
+      }
+    },
+  };
 }
 
 /**
@@ -159,12 +231,6 @@ export async function verifyBotAuth(req, nowMs) {
       return null;
     }
 
-    // Replay: a nonce is good once inside its window.
-    if (_botNonceSeen(env.nonce, now)) {
-      console.warn("[epistery] Bot auth rejected: nonce replay");
-      return null;
-    }
-
     const { ethers } = await import("ethers");
     const recovered = ethers.utils.verifyMessage(messageForEnvelope(env), env.signature);
     if (recovered.toLowerCase() !== env.address.toLowerCase()) {
@@ -172,7 +238,20 @@ export async function verifyBotAuth(req, nowMs) {
       return null;
     }
 
-    _botNonceRemember(env.nonce, now);
+    // Replay is the LAST gate, one atomic step: claim the nonce or reject. After
+    // signature verification, so only an authentic request can consume a nonce
+    // (an unauthenticated flood can't burn the store), and there is no
+    // check-then-set window. With a shared store (setBotNonceStore) this holds
+    // across every instance; with the in-process default, within one process.
+    const nonceOk = await _botNonceStore.claim(
+      env.nonce,
+      now + BOT_AUTH_MAX_AGE_MS + BOT_AUTH_MAX_SKEW_MS,
+    );
+    if (!nonceOk) {
+      console.warn("[epistery] Bot auth rejected: nonce replay");
+      return null;
+    }
+
     return {
       signerAddress: env.address,
       contractAddress: null,
