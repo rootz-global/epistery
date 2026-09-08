@@ -196,17 +196,21 @@ The CLI uses **bot authentication mode**, which signs each request individually 
 - Bound - the signature authorises *that* request. A captured header cannot be
   replayed, retargeted at another endpoint or host, or reused with a different body.
 
-**Note for host applications:** body parsers consume the request stream, so a host
-that accepts bot-signed requests carrying a body must preserve the raw bytes:
+**Note for host applications:** nothing to do. `epistery.attach(app)` captures the
+raw request bytes its signatures commit to — but only for requests that carry an
+`Authorization: Bot` header, so a bot request with a body just works while all
+other traffic (uploads, streams, your own parser and its size limit) is left
+completely untouched. The one optional knob is the bot body-size limit, default
+100mb:
 
 ```js
-import express from 'express';
-import { captureRawBody } from 'epistery';
-
-app.use(express.json({ verify: captureRawBody }));
+await epistery.attach(app, undefined, { bodyLimit: '250mb' });
 ```
 
-Without it, a bot request with a body is refused rather than assumed valid.
+`captureRawBody` is still exported for the one case that is not a host: a server
+that verifies epistery-signed data **without** installing epistery (e.g. a relay
+running its own storage-message check). There you wire the hook into your own
+parser by hand — `app.use(express.json({ verify: captureRawBody }))`.
 
 ## Usage Patterns
 
