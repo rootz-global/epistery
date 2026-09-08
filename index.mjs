@@ -134,14 +134,20 @@ export function createMongoNonceStore(collection, { ensureIndex = true } = {}) {
 }
 
 /**
- * Body parsers consume the request stream, so the bytes a signature commits to
- * are gone by the time the auth middleware runs. Hosts that accept bot-signed
- * requests with a body must hand express.json (or urlencoded/text) this hook:
+ * Body parsers consume the request stream, so the exact bytes a signature
+ * commits to (bot auth, storage writes) are gone by the time the auth
+ * middleware runs. That raw body is epistery's OWN input, so epistery captures
+ * it itself — see attach()/_installBotBodyCapture, which parses+captures the
+ * body ONLY for requests carrying an `Authorization: Bot` header (non-bot
+ * traffic is never touched). A host that mounts epistery does NOT have to
+ * remember any express.json({ verify: captureRawBody }) incantation; if it
+ * forgot, a bodied bot request would silently fail, and that obscure
+ * requirement is exactly the foot-gun this ownership removes.
  *
- *   app.use(express.json({ verify: captureRawBody }));
- *
- * Without it, a request that carries a body cannot be verified and is refused —
- * fail closed, never "assume the body matched".
+ * This function stays exported for the one legitimate external case: a server
+ * that verifies epistery-signed data WITHOUT installing epistery (e.g. a relay
+ * doing its own storage-message check). There, and only there, the operator
+ * wires the hook into their own parser by hand.
  */
 export function captureRawBody(req, _res, buf) {
   if (buf && buf.length) req.rawBody = Buffer.from(buf);
@@ -356,9 +362,17 @@ class EpisteryAttach {
     return null;
   }
 
-  async attach(app, rootPath) {
+  async attach(app, rootPath, options = {}) {
     this.rootPath = rootPath || "/.well-known/epistery";
     app.locals.epistery = this;
+
+    // Capture the raw bytes a bot signature commits to — but ONLY for requests
+    // that actually present a Bot credential (the sole consumer of req.rawBody
+    // in epistery is verifyBotAuth). Every other request is left completely
+    // untouched: its body is not read here, so uploads, streams, proxies and
+    // the host's own parser (and the host's own size limit) all behave exactly
+    // as before. See _installBotBodyCapture.
+    this._installBotBodyCapture(app, options.bodyLimit || "100mb");
 
     // Domain middleware - set domain from hostname
     app.use(async (req, res, next) => {
@@ -413,6 +427,61 @@ class EpisteryAttach {
 
     // Mount routes - RFC 8615 compliant well-known URI
     app.use(this.rootPath, this.routes());
+  }
+
+  /**
+   * Capture the raw request bytes bot-auth verification needs — and ONLY for
+   * requests that carry an `Authorization: Bot` header. A bot request is one
+   * epistery is going to read to authorise anyway, so parsing its body here is
+   * not "eating" anything the app wanted to stream. Every non-bot request falls
+   * straight through untouched: we never read its stream, so the host's own
+   * parser, size limit, uploads, proxies and streaming routes are unaffected.
+   *
+   * Mechanism: a single guard middleware, moved to the FRONT of the stack so it
+   * precedes any parser the host mounted (regardless of when attach() ran). For
+   * a bot request it invokes json/urlencoded parsers (content-type gated, each
+   * a no-op on a non-matching type) carrying captureRawBody; a host parser
+   * mounted anyway then no-ops (body-parser skips once req._body is set), so a
+   * bot JSON body is parsed exactly once. Because only bot requests reach these
+   * parsers, `limit` (default 100mb, generous on purpose) governs bot bodies
+   * only — it never overrides the host's limit for ordinary traffic.
+   *
+   * Idempotent: guarded so repeated attach()/multi-domain setups install once.
+   */
+  _installBotBodyCapture(app, limit) {
+    if (app.locals._episteryBotBodyCapture) return;
+    app.locals._episteryBotBodyCapture = true;
+
+    const jsonParser = express.json({ limit, verify: captureRawBody });
+    const urlParser = express.urlencoded({ extended: true, limit, verify: captureRawBody });
+
+    const guard = (req, res, next) => {
+      const auth = req.headers?.authorization;
+      // Not a bot request → do not touch the body at all.
+      if (!auth || !auth.startsWith("Bot ")) return next();
+      // Bot request → capture raw bytes via the matching parser (each self-skips
+      // if the content-type does not match, leaving e.g. a multipart body alone).
+      jsonParser(req, res, (err) => (err ? next(err) : urlParser(req, res, next)));
+    };
+
+    // Express 5 exposes app.router; Express 4 used app._router (created on first
+    // app.use). Accessing app.router in 5 lazily creates it.
+    const router = app.router || app._router;
+    const before = router && Array.isArray(router.stack) ? router.stack.length : -1;
+
+    app.use(guard);
+
+    if (before < 0) {
+      console.warn(
+        "[epistery] could not front-mount bot-body capture (unrecognised router). " +
+          "If a host body parser runs before epistery.attach(), a bodied bot request may be refused.",
+      );
+      return;
+    }
+
+    // Move our guard to the front so it precedes any parser the host mounted.
+    const added = router.stack.splice(before, router.stack.length - before);
+    router.stack.unshift(...added);
   }
 
   /**
