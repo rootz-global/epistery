@@ -15,9 +15,255 @@ import createRoutes from "./routes/index.mjs";
 // 'epistery'`. Server consumers may also import it directly from
 // 'epistery/client/storage-message.mjs' to avoid loading the full entry.
 import { storageWriteMessage } from "./client/storage-message.mjs";
+// The canonical `Bot` auth message — the same module the CLI signs with. Same
+// reason as storage-message.mjs: one definition, imported by both sides, never
+// re-inlined. See client/bot-auth-message.mjs for the wire shape.
+import {
+  audienceFor,
+  parseBotEnvelope,
+  messageForEnvelope,
+  EMPTY_BODY_SHA256,
+} from "./client/bot-auth-message.mjs";
+import { createHash } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// How far a bot envelope's `ts` may sit from our clock, and how long a nonce is
+// remembered. Bot auth is a live-request credential, not an archival record —
+// the window is deliberately short. (Archival signing has different needs and
+// belongs in the signed-result envelope, not here.)
+const BOT_AUTH_MAX_AGE_MS = 120_000;
+const BOT_AUTH_MAX_SKEW_MS = 30_000;
+
+/**
+ * Replay store. A nonce is single-use inside its validity window; past the
+ * window the envelope fails on freshness anyway, so entries are dropped.
+ *
+ * The store is one method:
+ *
+ *   claim(nonce, expiresAtMs) -> boolean | Promise<boolean>
+ *     true  — the nonce was NOT seen before and is now reserved until expiry
+ *     false — already reserved: a replay
+ *
+ * `claim` MUST be atomic — check-and-reserve in one indivisible step. That is
+ * what lets it be the single replay gate, with no check-then-set gap for two
+ * concurrent replays to slip through.
+ *
+ * The default below is in-process, and single-use only WITHIN one process. A
+ * multi-instance deployment (e.g. the relay behind a load balancer) MUST inject
+ * a shared store via setBotNonceStore — otherwise a header replayed against a
+ * different instance is not caught. createMongoNonceStore is a ready shared
+ * implementation.
+ */
+function createInProcessNonceStore() {
+  const seen = new Map(); // nonce -> expiresAtMs
+  return {
+    // Synchronous: the whole check-and-reserve runs in one tick with nothing
+    // interleaved — atomic by construction on a single event loop.
+    claim(nonce, expiresAtMs) {
+      const now = Date.now();
+      const exp = seen.get(nonce);
+      if (exp !== undefined && exp > now) return false; // still valid -> replay
+      seen.set(nonce, expiresAtMs);
+      if (seen.size > 10000) {
+        for (const [k, v] of seen) if (v <= now) seen.delete(k);
+      }
+      return true;
+    },
+  };
+}
+
+let _botNonceStore = createInProcessNonceStore();
+
+/**
+ * Replace the bot-auth replay store. Call once at startup, before serving.
+ * The store must implement `claim(nonce, expiresAtMs)` atomically (see above).
+ * A multi-instance host MUST call this with a shared store.
+ */
+export function setBotNonceStore(store) {
+  if (!store || typeof store.claim !== "function") {
+    throw new Error(
+      "setBotNonceStore: store must implement claim(nonce, expiresAtMs)",
+    );
+  }
+  _botNonceStore = store;
+}
+
+/** A fresh in-process store (the default). Exported so a host or test can reset. */
+export { createInProcessNonceStore };
+
+/**
+ * A shared, cross-instance nonce store backed by a MongoDB collection. The
+ * document `_id` IS the nonce, so a duplicate insert is rejected atomically by
+ * the server (E11000) — that IS the replay check, and it holds across every
+ * instance writing the same collection. A TTL index on `expireAt` lets Mongo
+ * purge spent nonces on its own.
+ *
+ * No `mongodb` dependency here: the collection is duck-typed (insertOne +
+ * createIndex), so the host passes in whatever driver handle it already has:
+ *
+ *   import { setBotNonceStore, createMongoNonceStore } from 'epistery';
+ *   setBotNonceStore(createMongoNonceStore(db.collection('bot_nonces')));
+ *
+ * Fail-closed: if the store throws (Mongo unreachable), verifyBotAuth catches
+ * it and rejects the request rather than admit an unverifiable nonce.
+ */
+export function createMongoNonceStore(collection, { ensureIndex = true } = {}) {
+  let indexed = ensureIndex ? null : Promise.resolve();
+  function ensure() {
+    if (!indexed) {
+      indexed = Promise.resolve(
+        collection.createIndex({ expireAt: 1 }, { expireAfterSeconds: 0 }),
+      ).catch(() => {}); // a missing TTL index only delays purge, never correctness
+    }
+    return indexed;
+  }
+  return {
+    async claim(nonce, expiresAtMs) {
+      await ensure();
+      try {
+        await collection.insertOne({ _id: nonce, expireAt: new Date(expiresAtMs) });
+        return true; // first writer wins
+      } catch (e) {
+        if (e && (e.code === 11000 || e.code === 11001)) return false; // duplicate -> replay
+        throw e; // real failure -> caller fails closed
+      }
+    },
+  };
+}
+
+/**
+ * Body parsers consume the request stream, so the bytes a signature commits to
+ * are gone by the time the auth middleware runs. Hosts that accept bot-signed
+ * requests with a body must hand express.json (or urlencoded/text) this hook:
+ *
+ *   app.use(express.json({ verify: captureRawBody }));
+ *
+ * Without it, a request that carries a body cannot be verified and is refused —
+ * fail closed, never "assume the body matched".
+ */
+export function captureRawBody(req, _res, buf) {
+  if (buf && buf.length) req.rawBody = Buffer.from(buf);
+}
+
+/** Raw bytes for hashing, or null when the body was consumed unrecoverably. */
+function _botRawBody(req) {
+  if (req.rawBody !== undefined && req.rawBody !== null) {
+    return Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(String(req.rawBody), "utf8");
+  }
+  const b = req.body;
+  if (b === undefined || b === null) return Buffer.alloc(0);
+  if (Buffer.isBuffer(b)) return b;
+  if (typeof b === "string") return Buffer.from(b, "utf8");
+  // An object here means a parser ran without captureRawBody. Re-serialising it
+  // would not reproduce the signed bytes (key order, whitespace, unicode escapes),
+  // so we refuse rather than guess.
+  if (typeof b === "object" && Object.keys(b).length === 0) return Buffer.alloc(0);
+  return null;
+}
+
+/**
+ * Verify an `Authorization: Bot` header against the request it claims to
+ * authorise. The single implementation — both resolveClient() and the attach()
+ * middleware call this, so there is exactly one place identity is decided.
+ *
+ * Exported so non-express hosts (WebSocket upgrades, other frameworks) verify
+ * with the same code path rather than re-deriving it — the README's rule that
+ * no consumer may duplicate identity resolution applies to us first.
+ *
+ * `req` needs only: headers.authorization, method, originalUrl|url, hostname or
+ * headers.host, and rawBody|body.
+ *
+ * Returns the episteryClient shape, or null. Never throws.
+ *
+ * Today the bot wire proves a signer only; contractAddress stays null. A future
+ * bot path that wants to claim a contract signs the claim and the server
+ * verifies isAuthorized — same shape as cookie sessions.
+ */
+export async function verifyBotAuth(req, nowMs) {
+  const header = req?.headers?.authorization;
+  if (!header || !header.startsWith("Bot ")) return null;
+  const now = nowMs ?? Date.now();
+  try {
+    const decoded = Buffer.from(header.substring(4), "base64").toString("utf8");
+    const env = parseBotEnvelope(JSON.parse(decoded));
+    if (!env) {
+      console.warn("[epistery] Bot auth rejected: malformed or unsupported envelope version");
+      return null;
+    }
+
+    // Freshness before anything expensive.
+    const age = now - env.ts;
+    if (age > BOT_AUTH_MAX_AGE_MS || age < -BOT_AUTH_MAX_SKEW_MS) {
+      console.warn("[epistery] Bot auth rejected: stale or future-dated envelope");
+      return null;
+    }
+
+    // Audience: a signature minted for another host does not verify here.
+    const host = req.hostname || req.headers?.host?.split(":")[0] || "";
+    if (env.aud !== audienceFor(host)) {
+      console.warn(`[epistery] Bot auth rejected: audience ${env.aud} != ${audienceFor(host)}`);
+      return null;
+    }
+
+    // Method and URI: a signature for one call does not authorise another.
+    const method = (req.method || "").toUpperCase();
+    const uri = req.originalUrl || req.url || "";
+    if (env.method !== method || env.uri !== uri) {
+      console.warn("[epistery] Bot auth rejected: method/uri mismatch");
+      return null;
+    }
+
+    // Body commitment.
+    const raw = _botRawBody(req);
+    if (raw === null) {
+      console.warn(
+        "[epistery] Bot auth rejected: request body was parsed without captureRawBody, so the signed bytes cannot be reproduced. Mount express.json({ verify: captureRawBody }).",
+      );
+      return null;
+    }
+    const bodyHash = raw.length === 0
+      ? EMPTY_BODY_SHA256
+      : createHash("sha256").update(raw).digest("hex");
+    if (bodyHash !== env.bodyHash) {
+      console.warn("[epistery] Bot auth rejected: body digest mismatch");
+      return null;
+    }
+
+    const { ethers } = await import("ethers");
+    const recovered = ethers.utils.verifyMessage(messageForEnvelope(env), env.signature);
+    if (recovered.toLowerCase() !== env.address.toLowerCase()) {
+      console.warn("[epistery] Bot auth rejected: signature does not recover the claimed address");
+      return null;
+    }
+
+    // Replay is the LAST gate, one atomic step: claim the nonce or reject. After
+    // signature verification, so only an authentic request can consume a nonce
+    // (an unauthenticated flood can't burn the store), and there is no
+    // check-then-set window. With a shared store (setBotNonceStore) this holds
+    // across every instance; with the in-process default, within one process.
+    const nonceOk = await _botNonceStore.claim(
+      env.nonce,
+      now + BOT_AUTH_MAX_AGE_MS + BOT_AUTH_MAX_SKEW_MS,
+    );
+    if (!nonceOk) {
+      console.warn("[epistery] Bot auth rejected: nonce replay");
+      return null;
+    }
+
+    return {
+      signerAddress: env.address,
+      contractAddress: null,
+      identityAddress: env.address,
+      authenticated: true,
+      authType: "bot",
+    };
+  } catch (error) {
+    console.warn("[epistery] Bot auth rejected:", error.message);
+    return null;
+  }
+}
 
 // Helper function to get or create domain configurations src/utils/Config.ts system
 async function getDomainConfig(domain) {
@@ -70,33 +316,10 @@ class EpisteryAttach {
    * contractAddress || signerAddress and is always non-null when the rest is.
    */
   async resolveClient(req) {
-    // 1. Bot auth (CLI / programmatic). Today the bot wire proves a signer
-    // only; contractAddress stays null. A future bot path that wants to
-    // claim a contract will sign a contract claim and the server will
-    // verify isAuthorized — same shape as cookie sessions.
-    if (req?.headers?.authorization?.startsWith("Bot ")) {
-      try {
-        const authHeader = req.headers.authorization.substring(4);
-        const decoded = Buffer.from(authHeader, "base64").toString("utf8");
-        const payload = JSON.parse(decoded);
-        const { address, signature, message } = payload;
-        if (address && signature && message) {
-          const { ethers } = await import("ethers");
-          const recoveredAddress = ethers.utils.verifyMessage(message, signature);
-          if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
-            return {
-              signerAddress: address,
-              contractAddress: null,
-              identityAddress: address,
-              authenticated: true,
-              authType: "bot",
-            };
-          }
-        }
-      } catch (error) {
-        console.error("[epistery] Bot auth error:", error.message);
-      }
-    }
+    // 1. Bot auth (CLI / programmatic). One implementation, shared with the
+    // attach() middleware — see verifyBotAuth above.
+    const bot = await verifyBotAuth(req);
+    if (bot) return bot;
 
     // 2. Session cookie (_epistery). Prefer the express-parsed jar; fall
     // back to parsing the raw Cookie header so WS upgrades work too.
@@ -157,33 +380,11 @@ class EpisteryAttach {
     // Downstream code authorizes against identityAddress.
     app.use(async (req, res, next) => {
       // 1. Bot authentication (CLI / programmatic). Signer-only today;
-      // no contract claim path in the bot wire.
-      if (!req.episteryClient && req.headers.authorization?.startsWith("Bot ")) {
-        try {
-          const authHeader = req.headers.authorization.substring(4);
-          const decoded = Buffer.from(authHeader, "base64").toString("utf8");
-          const payload = JSON.parse(decoded);
-
-          const { address, signature, message } = payload;
-
-          if (address && signature && message) {
-            const { ethers } = await import("ethers");
-            const recoveredAddress = ethers.utils.verifyMessage(message, signature);
-
-            if (recoveredAddress.toLowerCase() === address.toLowerCase()) {
-              req.episteryClient = {
-                signerAddress: address,
-                contractAddress: null,
-                identityAddress: address,
-                authenticated: true,
-                authType: "bot",
-              };
-            }
-          }
-        } catch (error) {
-          console.error("[epistery] Bot auth error:", error.message);
-          // Continue to try other auth methods
-        }
+      // no contract claim path in the bot wire. Single implementation —
+      // the same verifyBotAuth() resolveClient() uses.
+      if (!req.episteryClient) {
+        const bot = await verifyBotAuth(req);
+        if (bot) req.episteryClient = bot;
       }
 
       // 2. Session cookie (_epistery). Set at /connect after signer proof and

@@ -4,6 +4,20 @@ import { DomainConfig, ProviderConfig } from './types';
 import { defaultChain, providerConfigFor } from '../chains';
 import fs from 'fs';
 import { join } from 'path';
+import { createHash, randomBytes } from 'crypto';
+
+/**
+ * The request a bot signature authorises. Either `url`, or both `uri` and
+ * `aud`, must be supplied — a bot signature that names no request is a bearer
+ * token, which is the thing this shape exists to prevent.
+ */
+export interface BotAuthRequest {
+  method?: string;
+  uri?: string;
+  aud?: string;
+  url?: string;
+  body?: string | Buffer | null;
+}
 
 /**
  * CliWallet - Manages wallet operations for CLI/bot contexts
@@ -338,17 +352,76 @@ export class CliWallet {
   }
 
   /**
-   * Create bot authentication header
+   * Create bot authentication header for a specific request.
+   *
+   * The signature covers the request: method, URI, audience host and a digest
+   * of the body, plus a timestamp and a single-use nonce. A header minted for
+   * one call cannot be replayed against a different endpoint, a different host,
+   * or the same endpoint with a different body.
+   *
+   * The signed bytes are built by `client/bot-auth-message.mjs`, which is also
+   * what the server verifier uses. Never inline the message here.
+   *
    * Format: Authorization: Bot <base64-json>
+   *
+   * @param req.method  HTTP method
+   * @param req.uri     path + query exactly as it will be sent
+   * @param req.url     alternative to uri: a full URL, from which the uri and
+   *                    audience host are derived
+   * @param req.aud     audience host; defaults to the host in `req.url`
+   * @param req.body    request body as sent — string, Buffer or undefined
    */
-  async createBotAuthHeader(): Promise<string> {
-    const message = `Rhonda Bot Authentication - ${new Date().toISOString()}`;
+  async createBotAuthHeader(req: BotAuthRequest = {}): Promise<string> {
+    const { botAuthMessage, audienceFor, EMPTY_BODY_SHA256 } = await import(
+      '../../client/bot-auth-message.mjs' as string
+    );
+
+    let uri = req.uri;
+    let aud = req.aud;
+    if (req.url) {
+      const u = new URL(req.url);
+      if (uri === undefined) uri = u.pathname + u.search;
+      if (aud === undefined) aud = u.host;
+    }
+    if (uri === undefined || aud === undefined) {
+      throw new Error(
+        'createBotAuthHeader: pass { url } or both { uri, aud } — a bot signature must name the request it authorises'
+      );
+    }
+
+    const body = req.body;
+    const bodyHash =
+      body === undefined || body === null || body.length === 0
+        ? EMPTY_BODY_SHA256
+        : createHash('sha256')
+            .update(Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8'))
+            .digest('hex');
+
+    const ts = Date.now();
+    const nonce = randomBytes(16).toString('hex');
+    const method = (req.method || 'POST').toUpperCase();
+    const audience = audienceFor(aud);
+
+    const message = botAuthMessage({
+      method,
+      uri,
+      aud: audience,
+      bodyHashHex: bodyHash,
+      ts,
+      nonce
+    });
     const signature = await this.sign(message);
 
     const payload = {
+      v: '1',
       address: this.address,
       signature,
-      message
+      method,
+      uri,
+      aud: audience,
+      bodyHash,
+      ts,
+      nonce
     };
 
     return `Bot ${Buffer.from(JSON.stringify(payload)).toString('base64')}`;
