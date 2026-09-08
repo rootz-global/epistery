@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=9";
+} from "./wallet.js?v=10";
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -691,8 +691,17 @@ export default class Witness {
 
   async addFidoWallet(label = null) {
     await ensureEthers();
+    // Exclude passkeys this device already knows about so create() can't mint a
+    // duplicate for a credential we still hold (the offer re-firing while storage
+    // is intact). Post-purge there are no local ids — recoverFidoWallet covers that.
+    const excludeCredentials = this.loadStorageData()
+      .wallets.map((w) => w.wallet || w)
+      .filter((w) => w?.source === "fido" && w?.credentialId)
+      .map((w) => w.credentialId);
+
     const newWallet = await FidoWallet.create(ethers, {
       label: label || "FIDO Wallet",
+      excludeCredentials,
     });
 
     if (!newWallet) {
@@ -714,6 +723,35 @@ export default class Witness {
       address: newWallet.address,
       source: newWallet.source,
       label: newWallet.label,
+    };
+  }
+
+  // Recover an existing passkey identity (post-ITP-purge, or a new browser)
+  // instead of minting a new one. Unlike addFidoWallet, this installs the
+  // recovered wallet as the LIVE active + default wallet directly — keeping the
+  // in-memory _priv the recover ceremony just cached, so the caller's immediate
+  // performKeyExchange signs without a second biometric prompt. (Going through
+  // setDefaultWallet would rebuild the wallet via fromJSON and drop that cache.)
+  // Returns the wallet summary, or null if no passkey was found / the user
+  // cancelled — the caller then falls back to addFidoWallet for a first-timer.
+  async recoverFidoWallet() {
+    await ensureEthers();
+    const recovered = await FidoWallet.recover(ethers);
+    if (!recovered) return null;
+
+    this.wallet = recovered; // live instance — retains _priv
+    this.save(); // assigns id, appends to wallets[]
+
+    const storageData = this.loadStorageData();
+    storageData.defaultWalletId = this.wallet.id;
+    storageData.server = this.server;
+    localStorage.setItem("epistery", JSON.stringify(storageData));
+
+    return {
+      id: this.wallet.id,
+      address: this.wallet.address,
+      source: this.wallet.source,
+      label: this.wallet.label,
     };
   }
 
