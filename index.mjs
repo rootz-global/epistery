@@ -437,9 +437,11 @@ class EpisteryAttach {
    * straight through untouched: we never read its stream, so the host's own
    * parser, size limit, uploads, proxies and streaming routes are unaffected.
    *
-   * Mechanism: a single guard middleware, moved to the FRONT of the stack so it
-   * precedes any parser the host mounted (regardless of when attach() ran). For
-   * a bot request it invokes json/urlencoded parsers (content-type gated, each
+   * Mechanism: a single guard middleware, moved ahead of the host's parsers
+   * (just after Express's own query/init layers) so it precedes any parser the
+   * host mounted, regardless of when attach() ran or which Express major the
+   * host is on (v4 keeps app._router, v5 uses app.router — see _routerStack).
+   * For a bot request it invokes json/urlencoded parsers (content-type gated,
    * a no-op on a non-matching type) carrying captureRawBody; a host parser
    * mounted anyway then no-ops (body-parser skips once req._body is set), so a
    * bot JSON body is parsed exactly once. Because only bot requests reach these
@@ -464,24 +466,46 @@ class EpisteryAttach {
       jsonParser(req, res, (err) => (err ? next(err) : urlParser(req, res, next)));
     };
 
-    // Express 5 exposes app.router; Express 4 used app._router (created on first
-    // app.use). Accessing app.router in 5 lazily creates it.
-    const router = app.router || app._router;
-    const before = router && Array.isArray(router.stack) ? router.stack.length : -1;
-
     app.use(guard);
 
-    if (before < 0) {
+    // Move the guard ahead of any body parser the host already mounted. If we
+    // can't reach the router stack, leave the guard where it is — it is still
+    // correct when attach() runs before the host's own parser.
+    const stack = this._routerStack(app);
+    if (!stack) {
       console.warn(
-        "[epistery] could not front-mount bot-body capture (unrecognised router). " +
+        "[epistery] could not reorder bot-body capture (unrecognised router). " +
           "If a host body parser runs before epistery.attach(), a bodied bot request may be refused.",
       );
       return;
     }
 
-    // Move our guard to the front so it precedes any parser the host mounted.
-    const added = router.stack.splice(before, router.stack.length - before);
-    router.stack.unshift(...added);
+    // The guard is the layer app.use() just appended.
+    const [layer] = stack.splice(stack.length - 1, 1);
+    // Insert it after Express's own leading layers — `query`/`expressInit` on
+    // Express 4, none on Express 5 — so it never runs before req/res are set up,
+    // but still precedes the host's body parser.
+    let at = 0;
+    while (at < stack.length && (stack[at].name === "query" || stack[at].name === "expressInit")) at++;
+    stack.splice(at, 0, layer);
+  }
+
+  /**
+   * The active router's middleware stack, or null if it cannot be reached.
+   * Express 4 keeps it on app._router and makes app.router a getter that THROWS
+   * ("'app.router' is deprecated!"); Express 5 removed app._router and exposes
+   * app.router. Resolve _router first so we never trip the v4 throw.
+   */
+  _routerStack(app) {
+    let router = app._router;
+    if (!router) {
+      try {
+        router = app.router;
+      } catch {
+        router = null;
+      }
+    }
+    return router && Array.isArray(router.stack) ? router.stack : null;
   }
 
   /**
