@@ -450,6 +450,26 @@ export class RivetWallet extends Wallet {
   }
 
   static async create(ethers) {
+    // A fresh browser rivet is a random secp256k1 key put through the standard
+    // rivet custody (fromPrivateKey). Kept as a thin alias so there is one owner
+    // of "wrap a key under a non-extractable master key" — the mint path and the
+    // paper-backup recovery path can't drift apart.
+    return await RivetWallet.fromPrivateKey(
+      ethers.Wallet.createRandom().privateKey,
+      ethers,
+      "Browser Wallet",
+    );
+  }
+
+  // Wrap an EXISTING secp256k1 private key as a non-extractable browser rivet —
+  // the same custody as create(), but for a key supplied from elsewhere rather
+  // than freshly randomised. This is how a paper (BIP39) backup is RE-HOMED onto
+  // a device on recovery: the phrase re-derives the key, that key is encrypted
+  // under a fresh non-extractable master key here, and the caller then discards
+  // the plaintext key and the phrase. The stored rivet is indistinguishable from
+  // one minted by create() (source "rivet") — no new wallet type, no secret ever
+  // persisted in the clear.
+  static async fromPrivateKey(privateKeyHex, ethers, label = "Browser Wallet") {
     const wallet = new RivetWallet();
 
     try {
@@ -458,7 +478,7 @@ export class RivetWallet extends Wallet {
         "rivet-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
       wallet.createdAt = Date.now();
       wallet.lastUpdated = Date.now();
-      wallet.label = "Browser Wallet";
+      wallet.label = label;
 
       // The unextractable-key guarantee REQUIRES Web Crypto. If it's missing,
       // refuse — Epistery never persists an extractable private key.
@@ -467,6 +487,12 @@ export class RivetWallet extends Wallet {
           "Web Crypto API unavailable: cannot create a secure (unextractable) rivet wallet.",
         );
       }
+
+      // Derive the address/publicKey from the supplied key. (createRandom gives
+      // these for free; a re-homed paper key needs them computed.)
+      const signingKey = new ethers.utils.SigningKey(privateKeyHex);
+      wallet.address = ethers.utils.computeAddress(signingKey.publicKey);
+      wallet.publicKey = signingKey.publicKey;
 
       // Generate non-extractable AES-GCM key for encrypting the secp256k1 private key
       const masterKey = await crypto.subtle.generateKey(
@@ -481,13 +507,8 @@ export class RivetWallet extends Wallet {
       // Store master key in IndexedDB (non-extractable CryptoKey)
       await RivetWallet.storeMasterKey(wallet.keyId, masterKey);
 
-      // Generate secp256k1 wallet for Ethereum compatibility
-      const ethersWallet = ethers.Wallet.createRandom();
-      wallet.address = ethersWallet.address;
-      wallet.publicKey = ethersWallet.publicKey;
-
       // Encrypt the private key with the master key
-      const privateKeyBytes = ethers.utils.arrayify(ethersWallet.privateKey);
+      const privateKeyBytes = ethers.utils.arrayify(privateKeyHex);
       const iv = crypto.getRandomValues(new Uint8Array(12));
 
       const encryptedBuffer = await crypto.subtle.encrypt(
@@ -510,6 +531,58 @@ export class RivetWallet extends Wallet {
       console.error("Failed to create rivet wallet:", error);
       throw error;
     }
+  }
+
+  // --- Paper (BIP39) backup rivets -------------------------------------------
+  // A "paper" rivet is an ordinary secp256k1 rivet whose key is derived from a
+  // BIP39 phrase the human holds OFFLINE — the backup signer with no agency on
+  // any device until it is reconstructed. The phrase↔rivet mapping lives here so
+  // it has one owner; the witness composes these into add-backup / recover, and a
+  // recovered phrase is re-homed as a normal browser rivet via fromPrivateKey.
+  // (EpisteryCore: "Recovery is another signer on the same contract, never a
+  // custodian" — the paper phrase is that other signer, held by the human.)
+
+  // A fresh 12-word BIP39 phrase (ethers' own English wordlist). This is the
+  // ONLY copy the user gets — callers show it once and advise writing it down.
+  static generatePaperPhrase(ethers) {
+    return ethers.Wallet.createRandom().mnemonic.phrase;
+  }
+
+  // Derive the rivet identity (address + public key) from a phrase WITHOUT
+  // building or storing a wallet — Add backup authorizes this address on-chain,
+  // then discards everything. Throws on an invalid phrase. Uses the ethers
+  // default derivation path, matching generatePaperPhrase, so a generated phrase
+  // and its re-entry resolve to the SAME address.
+  static paperAddressFromPhrase(phrase, ethers) {
+    const normalized = RivetWallet.normalizePaperPhrase(phrase);
+    if (!ethers.utils.isValidMnemonic(normalized)) {
+      throw new Error("That is not a valid recovery phrase.");
+    }
+    const w = ethers.Wallet.fromMnemonic(normalized);
+    return { address: w.address, publicKey: w.publicKey };
+  }
+
+  // Reconstruct a DURABLE device rivet from a phrase (Recover identity): the key
+  // is re-homed under a fresh non-extractable master key on THIS device, exactly
+  // like any browser rivet — the phrase is then pure offline backup. Throws on an
+  // invalid phrase.
+  static async fromPhrase(phrase, ethers, label = "Recovered Wallet") {
+    const normalized = RivetWallet.normalizePaperPhrase(phrase);
+    if (!ethers.utils.isValidMnemonic(normalized)) {
+      throw new Error("That is not a valid recovery phrase.");
+    }
+    const w = ethers.Wallet.fromMnemonic(normalized);
+    return await RivetWallet.fromPrivateKey(w.privateKey, ethers, label);
+  }
+
+  // Canonicalize a user-entered phrase: trim, collapse internal whitespace,
+  // lowercase (the BIP39 English wordlist is lowercase). Generation already
+  // yields this shape; hand entry may not.
+  static normalizePaperPhrase(phrase) {
+    return String(phrase || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
   }
 
   /**
