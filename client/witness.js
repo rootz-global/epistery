@@ -755,6 +755,57 @@ export default class Witness {
     };
   }
 
+  // --- Paper (BIP39) backup rivets -------------------------------------------
+  // A paper rivet is the offline backup signer: a BIP39 phrase the human holds,
+  // authorized as a signer on the identity, with no agency on any device until
+  // reconstructed. These three are the witness façade over RivetWallet's paper
+  // helpers; the console composes them with its existing on-chain addRivet (for
+  // Add backup) and rivetContracts→adopt (for Recover).
+
+  // Generate a fresh 12-word backup phrase. The caller derives its address
+  // (paperRivetAddress), authorizes that address as a signer, then shows the
+  // phrase once — it is the only copy.
+  async generatePaperPhrase() {
+    await ensureEthers();
+    return RivetWallet.generatePaperPhrase(ethers);
+  }
+
+  // Resolve a phrase (generated or user-entered) to the rivet address/publicKey
+  // it authorizes. No wallet is built or stored — Add backup only needs the
+  // address to put on-chain. Throws on an invalid phrase.
+  async paperRivetAddress(phrase) {
+    await ensureEthers();
+    return RivetWallet.paperAddressFromPhrase(phrase, ethers);
+  }
+
+  // Recover an identity from its paper backup phrase on a fresh device. The
+  // phrase re-derives the rivet, which is re-homed as a DURABLE non-extractable
+  // browser rivet here (RivetWallet custody) and installed as the LIVE active +
+  // default wallet — mirroring recoverFidoWallet (setDefaultWallet would rebuild
+  // via fromJSON; installing the live instance keeps this one canonical). The
+  // caller then runs performKeyExchange and the existing rivetContracts→adopt
+  // discovery to re-root on the IdentityContract this signer is authorized on.
+  // Throws on an invalid phrase.
+  async recoverPaperIdentity(phrase) {
+    await ensureEthers();
+    const recovered = await RivetWallet.fromPhrase(phrase, ethers, "Recovered Wallet");
+
+    this.wallet = recovered; // live instance
+    this.save(); // assigns id, appends to wallets[]
+
+    const storageData = this.loadStorageData();
+    storageData.defaultWalletId = this.wallet.id;
+    storageData.server = this.server;
+    localStorage.setItem("epistery", JSON.stringify(storageData));
+
+    return {
+      id: this.wallet.id,
+      address: this.wallet.address,
+      source: this.wallet.source,
+      label: this.wallet.label,
+    };
+  }
+
   // Bind this origin's local rivet to an existing IdentityContract owned by
   // the user at another epistery host (defaults to epistery.io). This is the
   // cross-host counterpart of the in-browser `acceptJoinToken` flow — the
