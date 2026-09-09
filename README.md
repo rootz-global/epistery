@@ -147,6 +147,19 @@ rivets — different ways of presenting a device-locked signing key). This is ho
 the system enforces one-key-one-identity without a hard cross-context check: the
 user mints another isolated rivet rather than pointing one key at two contracts.
 
+**Paper backup rivets.** A rivet can also be derived from a secret the user keeps
+**offline** — either a generated 12-word BIP39 phrase or an arbitrary passphrase
+(e.g. `peanut butter`, stretched with PBKDF2). Its address is authorized as an
+ordinary signer on the IdentityContract, but its key lives only on paper, so it
+has **no agency on any device until it is used to recover**. On recovery the
+secret re-derives the key and it is **re-homed as a normal RivetWallet**
+(non-extractable, encrypted at rest) on the recovering device — no new wallet
+type, no secret persisted in the clear. This is the sovereign counterpart to
+server-side FIDO blob backup: nothing is escrowed; the human holds the only copy.
+A passphrase must be at least 10 characters (letters, numbers, spaces and
+punctuation); its strength beyond that is the user's choice. See the paper
+helpers under Client API below.
+
 Server/domain wallets live in `~/.epistery/<domain>/config.ini` as **cleartext**
 mnemonics — there is no browser-style non-extractable key on the server side, and
 even once keys move into device hardware this stays as the fallback. The floor is
@@ -267,6 +280,20 @@ Public surface: `connect`, `performKeyExchange`, `getWallets`, `getStatus`,
 `removeWallet`, `updateWalletLabel`, `bindToEpisteryIdentity` (cross-host identity
 ferry). Wallet classes: `RivetWallet`, `FidoWallet`, `Web3Wallet`; binding via
 `wallet.upgradeToContract`.
+
+**Paper backup (BIP39 phrase or passphrase):**
+
+| Method | Purpose |
+|--------|---------|
+| `witness.generatePaperPhrase()` | A fresh 12-word BIP39 phrase to show the user once (the only copy). |
+| `witness.paperRivetAddress(secret)` | Resolve a phrase **or** passphrase to `{ address, publicKey }` — authorize that address as a signer (via your on-chain `addRivet`) to register a backup. No wallet is stored. |
+| `witness.recoverPaperIdentity(secret)` | Re-derive the rivet from the secret, re-home it as a durable non-extractable `RivetWallet`, and install it live + default. Follow with `performKeyExchange` and contract discovery/adopt to re-root on the identity. |
+
+The underlying derivation is `RivetWallet.paperPrivateKeyFromInput(secret, ethers)`:
+a standard-length valid BIP39 phrase is HD-derived (ethers default path); any
+other non-empty string is a passphrase, PBKDF2-stretched (fixed app salt, 210k
+iterations, SHA-256). Both are case- and whitespace-normalized, so the same
+secret always resolves to the same address.
 
 Identity properties on every wallet — the canonical surface for client code
 deciding "who am I right now":

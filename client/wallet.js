@@ -533,14 +533,22 @@ export class RivetWallet extends Wallet {
     }
   }
 
-  // --- Paper (BIP39) backup rivets -------------------------------------------
+  // --- Paper backup rivets (BIP39 phrase OR passphrase) ----------------------
   // A "paper" rivet is an ordinary secp256k1 rivet whose key is derived from a
-  // BIP39 phrase the human holds OFFLINE — the backup signer with no agency on
-  // any device until it is reconstructed. The phrase↔rivet mapping lives here so
-  // it has one owner; the witness composes these into add-backup / recover, and a
-  // recovered phrase is re-homed as a normal browser rivet via fromPrivateKey.
-  // (EpisteryCore: "Recovery is another signer on the same contract, never a
-  // custodian" — the paper phrase is that other signer, held by the human.)
+  // secret the human holds OFFLINE — the backup signer with no agency on any
+  // device until it is reconstructed. Two kinds of secret are accepted, detected
+  // deterministically so backup and recovery always agree:
+  //   • a valid BIP39 phrase (what generatePaperPhrase produces) → HD-derived at
+  //     the ethers default path;
+  //   • ANY other non-empty string — a human passphrase like "peanut butter" —
+  //     → stretched with PBKDF2 into the key (a brainwallet). Deliberately weaker
+  //     than a generated phrase (guessable if short/common); the user's tradeoff
+  //     for something memorable.
+  // The secret↔rivet mapping lives here so it has one owner; the witness composes
+  // these into add-backup / recover, and a recovered secret is re-homed as a
+  // normal browser rivet via fromPrivateKey. (EpisteryCore: "Recovery is another
+  // signer on the same contract, never a custodian" — the paper secret is that
+  // other signer, held by the human.)
 
   // A fresh 12-word BIP39 phrase (ethers' own English wordlist). This is the
   // ONLY copy the user gets — callers show it once and advise writing it down.
@@ -548,31 +556,80 @@ export class RivetWallet extends Wallet {
     return ethers.Wallet.createRandom().mnemonic.phrase;
   }
 
-  // Derive the rivet identity (address + public key) from a phrase WITHOUT
-  // building or storing a wallet — Add backup authorizes this address on-chain,
-  // then discards everything. Throws on an invalid phrase. Uses the ethers
-  // default derivation path, matching generatePaperPhrase, so a generated phrase
-  // and its re-entry resolve to the SAME address.
-  static paperAddressFromPhrase(phrase, ethers) {
-    const normalized = RivetWallet.normalizePaperPhrase(phrase);
-    if (!ethers.utils.isValidMnemonic(normalized)) {
-      throw new Error("That is not a valid recovery phrase.");
+  // Resolve a backup secret to a private key, branching on what it is (see the
+  // section header). normalizePaperPhrase makes both kinds case- and whitespace-
+  // insensitive, so a human need not reproduce exact spacing or capitalization.
+  // Throws only on empty input — any non-empty string is a usable passphrase.
+  static async paperPrivateKeyFromInput(secret, ethers) {
+    const normalized = RivetWallet.normalizePaperPhrase(secret);
+    if (!normalized) throw new Error("Enter a backup phrase or passphrase.");
+    // Treat as a BIP39 phrase only at a STANDARD word count — ethers'
+    // isValidMnemonic also accepts short (3/6/9-word) checksum coincidences that
+    // fromMnemonic then rejects ("invalid entropy"), which would crash a human
+    // passphrase like "peanut butter jelly". Gating on length routes every real
+    // passphrase to the brainwallet branch below.
+    const wordCount = normalized.split(" ").length;
+    if (
+      [12, 15, 18, 21, 24].includes(wordCount) &&
+      ethers.utils.isValidMnemonic(normalized)
+    ) {
+      return ethers.Wallet.fromMnemonic(normalized).privateKey;
     }
-    const w = ethers.Wallet.fromMnemonic(normalized);
-    return { address: w.address, publicKey: w.publicKey };
+    // Otherwise it is a passphrase. Minimal rules only — a length floor and a
+    // character set; how strong it is beyond that is the user's call, not ours.
+    if (normalized.length < 10) {
+      throw new Error("Passphrase must be at least 10 characters.");
+    }
+    if (!/^[ -~]+$/.test(normalized)) {
+      throw new Error("Passphrase may use only letters, numbers, spaces and punctuation.");
+    }
+    // Passphrase brainwallet: PBKDF2(secret, fixed app salt, 210k, SHA-256) → a
+    // 32-byte private key. The salt is a FIXED constant (not per-user) because
+    // recovery has only the passphrase — determinism is the whole point; the
+    // iterations just raise an attacker's per-guess cost. Versioned so the
+    // derivation can change later without breaking existing backups (a v2 would
+    // be a new branch, not an edit to this one).
+    const enc = new TextEncoder();
+    const baseKey = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(normalized),
+      "PBKDF2",
+      false,
+      ["deriveBits"],
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: enc.encode("epistery/paper-passphrase/v1"),
+        iterations: 210000,
+        hash: "SHA-256",
+      },
+      baseKey,
+      256,
+    );
+    return ethers.utils.hexlify(new Uint8Array(bits));
   }
 
-  // Reconstruct a DURABLE device rivet from a phrase (Recover identity): the key
-  // is re-homed under a fresh non-extractable master key on THIS device, exactly
-  // like any browser rivet — the phrase is then pure offline backup. Throws on an
-  // invalid phrase.
-  static async fromPhrase(phrase, ethers, label = "Recovered Wallet") {
-    const normalized = RivetWallet.normalizePaperPhrase(phrase);
-    if (!ethers.utils.isValidMnemonic(normalized)) {
-      throw new Error("That is not a valid recovery phrase.");
-    }
-    const w = ethers.Wallet.fromMnemonic(normalized);
-    return await RivetWallet.fromPrivateKey(w.privateKey, ethers, label);
+  // Derive the rivet identity (address + public key) from a backup secret WITHOUT
+  // building or storing a wallet — Add backup authorizes this address on-chain,
+  // then discards everything. Deterministic: the same secret always resolves to
+  // the same address (a generated phrase and its re-entry, or a passphrase and
+  // its re-entry).
+  static async paperAddressFromPhrase(secret, ethers) {
+    const priv = await RivetWallet.paperPrivateKeyFromInput(secret, ethers);
+    const signingKey = new ethers.utils.SigningKey(priv);
+    return {
+      address: ethers.utils.computeAddress(signingKey.publicKey),
+      publicKey: signingKey.publicKey,
+    };
+  }
+
+  // Reconstruct a DURABLE device rivet from a backup secret (Recover identity):
+  // the key is re-homed under a fresh non-extractable master key on THIS device,
+  // exactly like any browser rivet — the secret is then pure offline backup.
+  static async fromPhrase(secret, ethers, label = "Recovered Wallet") {
+    const priv = await RivetWallet.paperPrivateKeyFromInput(secret, ethers);
+    return await RivetWallet.fromPrivateKey(priv, ethers, label);
   }
 
   // Canonicalize a user-entered phrase: trim, collapse internal whitespace,
