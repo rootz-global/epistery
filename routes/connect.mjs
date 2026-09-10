@@ -11,6 +11,41 @@ const IDENTITY_AUTHORIZED_ABI = [
   "function isAuthorized(address) view returns (bool)",
 ];
 
+// Distinguish a CHAIN-READ FAILURE (we could not get an answer from the chain —
+// RPC transport error, HTTP 4xx/5xx, rate-limit, timeout, provider down) from a
+// definitive on-chain answer. The two mean OPPOSITE things to the caller: a read
+// failure is "ask again in a moment", a false/revert is "this signer is not a
+// member". Conflating them is what let a provider outage read as a rejection.
+//
+// ethers v5 pitfall (the exact failure this hardening is for): when the RPC
+// endpoint returns a non-result — e.g. Infura HTTP 403 "rejected due to project
+// ID settings", or a rate-limit — ethers does NOT surface it as a plain transport
+// error. For an eth_call it fabricates a CALL_EXCEPTION with data="0x" ("missing
+// revert data; reverted without a reason string"), indistinguishable at a glance
+// from a real revert. So a dead/limited provider looks exactly like "the contract
+// rejected you". We detect that shape (no revert bytes, and/or a transport error
+// nested in e.error) and treat it as a read failure, not an authorization denial.
+function isChainReadFailure(e) {
+  if (!e) return false;
+  // Direct transport / connectivity failures.
+  if (e.code === "SERVER_ERROR" || e.code === "TIMEOUT" || e.code === "NETWORK_ERROR") {
+    return true;
+  }
+  // Fabricated CALL_EXCEPTION over a provider that returned no execution result.
+  // A GENUINE revert carries revert bytes in e.data (something other than "0x").
+  if (e.code === "CALL_EXCEPTION") {
+    const noRevertData = e.data == null || e.data === "0x";
+    const inner = e.error || {};
+    const transportUnderneath =
+      inner.code === "SERVER_ERROR" ||
+      inner.code === "TIMEOUT" ||
+      inner.code === "NETWORK_ERROR" ||
+      typeof inner.status === "number"; // HTTP status carried on the JSON-RPC error
+    if (noRevertData || transportUnderneath) return true;
+  }
+  return false;
+}
+
 /**
  * Connect routes - key exchange and wallet creation
  * @param {Object} epistery - The EpisteryAttach instance
@@ -92,7 +127,30 @@ export default function connectRoutes(epistery) {
           }
           verifiedContractAddress = data.contractAddress;
         } catch (e) {
-          console.error("[connect] Identity contract verification failed:", e.message);
+          // A CHAIN-READ FAILURE is NOT an authorization decision — we simply
+          // could not ask the chain. Returning 401 here told clients "you are
+          // not authorized" and, downstream, made the console offer to ERASE the
+          // device key over a transient provider outage. Return a retryable 503
+          // that says exactly that, and log LOUD with the real upstream cause
+          // instead of ethers' misleading "reverted without a reason string".
+          if (isChainReadFailure(e)) {
+            const inner = e.error || {};
+            console.error(
+              `[connect] CHAIN READ FAILED — could NOT verify isAuthorized(${data.signerAddress}) ` +
+                `on ${data.contractAddress}. Provider/RPC failure, NOT an authorization denial. ` +
+                `code=${e.code} httpStatus=${inner.status ?? "?"} ` +
+                `upstream=${inner.body || e.shortMessage || e.message}`,
+            );
+            return res.status(503).json({
+              error:
+                "Identity verification is temporarily unavailable — the chain could not be reached. This is not an authorization denial; retry shortly.",
+              reason: "chain_unreachable",
+              retryable: true,
+            });
+          }
+          // Otherwise the call reached the chain and failed there (a real revert
+          // or an unexpected execution error) — a genuine verification failure.
+          console.error("[connect] Identity contract verification failed (on-chain):", e.message);
           return res.status(401).json({
             error: `Identity contract verification failed: ${e.message}`,
           });
