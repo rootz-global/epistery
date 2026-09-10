@@ -88,7 +88,7 @@ Make authenticated HTTP requests using bot authentication (signs each request wi
 **Options:**
 - `-w, --wallet <domain>` - Use specific domain wallet (overrides default)
 - `-X, --request <method>` - HTTP method (default: GET)
-- `-d, --data <data>` - Request body data (must be quoted JSON string)
+- `-d, --data <data>` - Request body: a quoted JSON string, or `@path` to read the body from a file
 - `-H, --header <header>` - Additional headers
 - `-v, --verbose` - Show detailed output
 
@@ -102,6 +102,11 @@ epistery curl -w localhost https://localhost:4080/wiki/Home
 
 # PUT request with JSON data (note single quotes around JSON)
 epistery curl -X PUT -d '{"title":"Test","body":"# Test"}' https://wiki.rootz.global/wiki/Test
+
+# PUT a large or multi-line body from a file. Bot auth signs a hash of the body,
+# so the file is read here and sent verbatim — the sent bytes match what was
+# signed. Prefer this over inline -d for anything big or with awkward quoting.
+epistery curl -X PUT -d @page.json https://wiki.rootz.global/wiki/Test
 
 # POST request
 epistery curl -X POST -d '{"name":"value"}' https://api.example.com/endpoint
