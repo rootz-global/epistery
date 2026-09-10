@@ -33,6 +33,7 @@ import {
 } from "../dist/chains/index.js";
 import { ethers } from "ethers";
 import { spawn } from "child_process";
+import { readFileSync } from "fs";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -201,7 +202,7 @@ function showHelp() {
     "  -w, --wallet <domain>    Use specific domain wallet (overrides default)",
   );
   console.log("  -X, --request <method>   HTTP method (default: GET)");
-  console.log("  -d, --data <data>        Request body data");
+  console.log("  -d, --data <data>        Request body; use @path to read the body from a file");
   console.log("  -H, --header <header>    Additional headers");
   console.log(
     "  -b, --bot                Use bot auth header (default: session cookie)",
@@ -225,6 +226,8 @@ function showHelp() {
   console.log("  # Make authenticated requests");
   console.log("  epistery curl https://example.com/api/data");
   console.log('  epistery curl --bot -X POST -d \'{"title":"Test"}\' <url>');
+  console.log("  # a large or multi-line body from a file (read and signed intact):");
+  console.log("  epistery curl -X POST -d @page.json <url>");
   console.log("");
   console.log("Domain configs stored in: ~/.epistery/{domain}/config.ini");
   console.log("Default domain set in: ~/.epistery/config.ini [cli] section");
@@ -621,9 +624,16 @@ function parseCurlArgs(args) {
   return options;
 }
 
-async function executeCurl(curlArgs) {
+async function executeCurl(curlArgs, stdinData) {
   return new Promise((resolve, reject) => {
     const curl = spawn("curl", curlArgs);
+
+    // Feed the request body over stdin when curl was told to read it from `@-`,
+    // so the transmitted bytes are exactly what we signed.
+    if (stdinData !== undefined) {
+      curl.stdin.write(stdinData);
+      curl.stdin.end();
+    }
 
     let stdout = "";
     let stderr = "";
@@ -672,6 +682,21 @@ async function performCurl(options) {
     // HTTP method
     curlArgs.push("-X", options.method);
 
+    // Resolve the request body up front, so the SAME bytes are both signed and
+    // sent. curl reads `-d @file` from disk, but bot-auth (below) hashes
+    // whatever we pass as `body`; signing the literal "@path" while curl sent
+    // the file's contents made the body digest mismatch and the server reject
+    // an otherwise-authorized bot write. Read the file ourselves instead.
+    let requestBody = options.data;
+    if (typeof requestBody === "string" && requestBody.startsWith("@")) {
+      const bodyPath = requestBody.slice(1);
+      try {
+        requestBody = readFileSync(bodyPath, "utf8");
+      } catch (e) {
+        throw new Error(`Cannot read request body file "${bodyPath}": ${e.message}`);
+      }
+    }
+
     // Authentication
     if (options.bot) {
       // Bot mode: the signature covers this exact request — method, URI,
@@ -680,7 +705,7 @@ async function performCurl(options) {
       const authHeader = await wallet.createBotAuthHeader({
         method: options.method,
         url: options.url,
-        body: options.data,
+        body: requestBody,
       });
       curlArgs.push("-H", `Authorization: ${authHeader}`);
     } else {
@@ -719,10 +744,13 @@ async function performCurl(options) {
       }
     }
 
-    // Request body
+    // Request body. Send the resolved bytes over stdin (`--data-binary @-`) so
+    // curl transmits them verbatim — no newline stripping, and no re-reading a
+    // leading "@" as a filename — keeping the sent body byte-identical to what
+    // the bot signature hashed above.
     if (options.data) {
       curlArgs.push("-H", "Content-Type: application/json");
-      curlArgs.push("-d", options.data);
+      curlArgs.push("--data-binary", "@-");
     }
 
     // Additional headers
@@ -738,7 +766,10 @@ async function performCurl(options) {
       console.error("");
     }
 
-    const { stdout, stderr } = await executeCurl(curlArgs);
+    const { stdout, stderr } = await executeCurl(
+      curlArgs,
+      options.data ? requestBody : undefined,
+    );
 
     if (stderr && options.verbose) {
       console.error(stderr);

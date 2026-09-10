@@ -317,6 +317,7 @@ epistery set-default localhost
 epistery info localhost
 epistery curl https://api.example.com/data
 epistery curl -X PUT -d '{"title":"Test"}' https://api.example.com/wiki/Test
+epistery curl -X PUT -d @page.json https://api.example.com/wiki/Test      # body from a file (read & signed intact)
 epistery curl -b -w production.example.com https://api.example.com/data   # -b bot, -w wallet, -v verbose
 epistery mcp https://api.example.com    # stdio MCP bridge with bot-auth
 ```
