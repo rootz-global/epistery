@@ -3,6 +3,7 @@ secrets.mjs
 .nginx/domains/*
 .nginx/nginx.conf
 .certs/*
+.claude
 .http01-challenge/*
 .logs/*
 .idea
