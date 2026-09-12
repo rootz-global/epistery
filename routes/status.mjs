@@ -26,6 +26,7 @@ export default function statusRoutes(epistery) {
   const library = {
     "client.js": path.resolve(rootDir, "client/client.js"),
     "witness.js": path.resolve(rootDir, "client/witness.js"),
+    "tab.js": path.resolve(rootDir, "client/tab.js"),
     "wallet.js": path.resolve(rootDir, "client/wallet.js"),
     "export.js": path.resolve(rootDir, "client/export.js"),
     "ethers.js": path.resolve(rootDir, "client/ethers.js"),

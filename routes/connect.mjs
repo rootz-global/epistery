@@ -1,6 +1,7 @@
 import express from "express";
 import { createRequire } from "module";
 import { Epistery } from "../dist/epistery.js";
+import * as jar from "../session-jar.mjs";
 
 const require = createRequire(import.meta.url);
 const ethers = require("ethers");
@@ -56,7 +57,9 @@ export default function connectRoutes(epistery) {
 
   // Session check — surface the three facts the middleware exposes, no more.
   // Witness compares its current identityAddress against this; matching means
-  // the cookie already names us, so no re-handshake needed.
+  // the cookie already names us, so no re-handshake needed. The middleware
+  // resolved this against the CALLING TAB's slot, so a tab being a different
+  // rivet sees {} here and goes on to handshake for itself.
   router.get("/connect", (req, res) => {
     const c = req.episteryClient;
     if (!c) return res.json({});
@@ -187,8 +190,15 @@ export default function connectRoutes(epistery) {
         authenticated: clientInfo.authenticated || false,
         timestamp: new Date().toISOString(),
       };
-      const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString(
-        "base64",
+      // The cookie holds one slot PER TAB, not one session for the origin, so
+      // proving an identity here cannot displace what another tab already
+      // proved. The tab names its slot with X-Epistery-Tab; a client that names
+      // none gets the anonymous slot, which is also what a page load reads.
+      // See session-jar.mjs.
+      const sessionToken = jar.put(
+        jar.cookieFromRequest(req),
+        jar.tabFromRequest(req),
+        sessionData,
       );
 
       // Cookie must be strictly scoped to this specific domain
