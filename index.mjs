@@ -16,6 +16,12 @@ import createRoutes from "./routes/index.mjs";
 // 'epistery'`. Server consumers may also import it directly from
 // 'epistery/client/storage-message.mjs' to avoid loading the full entry.
 import { storageWriteMessage } from "./client/storage-message.mjs";
+// The canonical Boost statement — the signed claim that releases gas money from
+// an identity's treasury to one of its own devices. Same reason as the two
+// modules above: the bytes are defined once and imported, never re-inlined,
+// because BoostVerifier.sol recomputes them on chain and a drift breaks every
+// Boost ever issued. See contracts/BoostVerifier.sol.
+import { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost } from "./client/boost-message.mjs";
 // The canonical `Bot` auth message — the same module the CLI signs with. Same
 // reason as storage-message.mjs: one definition, imported by both sides, never
 // re-inlined. See client/bot-auth-message.mjs for the wire shape.
@@ -556,3 +562,4 @@ class EpisteryAttach {
 export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configuredChains, defaultChainId, Chain };
 export { auditTree, secureTree };
 export { storageWriteMessage };
+export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };
