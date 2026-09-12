@@ -5,6 +5,7 @@ import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
 import { chainFor, registerChain, configuredChains, defaultChainId, Chain } from "./dist/chains/index.js";
+import * as sessionJar from "./session-jar.mjs";
 // Permission floor for ~/.epistery (wallet keys are cleartext there): hosts can
 // audit/repair the tree at startup the same way `epistery permissions` does.
 import { auditTree, secureTree } from "./dist/utils/Permissions.js";
@@ -271,6 +272,33 @@ export async function verifyBotAuth(req, nowMs) {
   }
 }
 
+/**
+ * Resolve the _epistery cookie session a request is entitled to — the ONE
+ * implementation, shared by the attach() middleware and resolveClient(), so an
+ * ordinary request and a WebSocket upgrade never disagree about who a tab is.
+ *
+ * The cookie is a jar of slots, one per tab (see session-jar.mjs). The request
+ * says which slot it means: X-Epistery-Tab on fetch/XHR, ?_tab= on an upgrade,
+ * nothing at all on a document navigation. Naming a slot the jar does not hold
+ * yields null — never the default. A tab that cannot be recognised handshakes
+ * again; it does not inherit the identity another tab proved.
+ *
+ * Returns the episteryClient shape, or null. Never throws.
+ */
+export function sessionFromJar(req) {
+  const jar = sessionJar.decode(sessionJar.cookieFromRequest(req));
+  const s = sessionJar.select(jar, sessionJar.tabFromRequest(req));
+  if (!s?.signerAddress) return null;
+  return {
+    signerAddress: s.signerAddress,
+    contractAddress: s.contractAddress || null,
+    identityAddress: s.contractAddress || s.signerAddress,
+    publicKey: s.publicKey,
+    authenticated: !!s.authenticated,
+    authType: "cookie",
+  };
+}
+
 // Helper function to get or create domain configurations src/utils/Config.ts system
 async function getDomainConfig(domain) {
   // InitServerWallet warms the per-domain wallet cache (and creates+persists a
@@ -327,39 +355,13 @@ class EpisteryAttach {
     const bot = await verifyBotAuth(req);
     if (bot) return bot;
 
-    // 2. Session cookie (_epistery). Prefer the express-parsed jar; fall
-    // back to parsing the raw Cookie header so WS upgrades work too.
-    let cookieValue = req?.cookies?._epistery;
-    if (!cookieValue && req?.headers?.cookie) {
-      for (const part of req.headers.cookie.split(";")) {
-        const trimmed = part.trim();
-        const eq = trimmed.indexOf("=");
-        if (eq < 1) continue;
-        if (trimmed.slice(0, eq) !== "_epistery") continue;
-        cookieValue = decodeURIComponent(trimmed.slice(eq + 1));
-        break;
-      }
-    }
-    if (cookieValue) {
-      try {
-        const s = JSON.parse(
-          Buffer.from(cookieValue, "base64").toString("utf8"),
-        );
-        if (s?.signerAddress) {
-          return {
-            signerAddress: s.signerAddress,
-            contractAddress: s.contractAddress || null,
-            identityAddress: s.contractAddress || s.signerAddress,
-            publicKey: s.publicKey,
-            authenticated: !!s.authenticated,
-            authType: "cookie",
-          };
-        }
-      } catch {
-        // Invalid session cookie — fall through to null.
-      }
-    }
-    return null;
+    // 2. Session cookie (_epistery) — a jar of one proven session PER TAB, so
+    // two tabs can be two different rivets. The request names its slot with
+    // X-Epistery-Tab, or ?_tab= on a WebSocket upgrade, which carries no
+    // headers; naming nothing means the default slot. See session-jar.mjs for
+    // why a named-but-absent slot resolves to NO session rather than falling
+    // back — it is the whole point.
+    return sessionFromJar(req);
   }
 
   async attach(app, rootPath, options = {}) {
@@ -402,25 +404,13 @@ class EpisteryAttach {
       }
 
       // 2. Session cookie (_epistery). Set at /connect after signer proof and
-      // (if a contract was claimed) on-chain isAuthorized verification.
-      if (!req.episteryClient && req.cookies?._epistery) {
-        try {
-          const s = JSON.parse(
-            Buffer.from(req.cookies._epistery, "base64").toString("utf8"),
-          );
-          if (s?.signerAddress) {
-            req.episteryClient = {
-              signerAddress: s.signerAddress,
-              contractAddress: s.contractAddress || null,
-              identityAddress: s.contractAddress || s.signerAddress,
-              publicKey: s.publicKey,
-              authenticated: !!s.authenticated,
-              authType: "cookie",
-            };
-          }
-        } catch (e) {
-          // Invalid session cookie, ignore
-        }
+      // (if a contract was claimed) on-chain isAuthorized verification. One
+      // slot per tab — the same single resolver resolveClient() uses, so a
+      // middleware request and a WebSocket upgrade can never disagree about
+      // who a tab is.
+      if (!req.episteryClient) {
+        const session = sessionFromJar(req);
+        if (session) req.episteryClient = session;
       }
       next();
     });

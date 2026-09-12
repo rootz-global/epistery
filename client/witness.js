@@ -11,6 +11,19 @@ import {
   RivetWallet,
   FidoWallet,
 } from "./wallet.js?v=10";
+import {
+  tabId,
+  armTab,
+  activeWalletId,
+  pinWallet,
+  unpinWallet,
+  installTabHeader,
+} from "./tab.js?v=1";
+
+// Every same-origin request from this tab names this tab, from module load —
+// before any code below runs a fetch. Inert until the tab is armed by its first
+// key exchange. See tab.js for why the rule lives in one shim.
+installTabHeader();
 
 // Global ethers variable - will be loaded dynamically if needed
 let ethers;
@@ -137,10 +150,15 @@ async function reset_master_key({ confirm = true } = {}) {
     if (orphanIds.has(data.defaultWalletId)) {
       data.defaultWalletId = data.wallets[0]?.id || null;
     }
+    // This tab's pin outranks the device default on the next load, so an
+    // orphaned pin would undo the whole recovery. Drop it and let the tab fall
+    // back to the default we just repointed.
+    if (orphanIds.has(activeWalletId())) unpinWallet();
     localStorage.setItem("epistery", JSON.stringify(data));
   } else {
     // Legacy shape: the single wallet is the orphan.
     localStorage.removeItem("epistery");
+    unpinWallet();
   }
 
   console.log(
@@ -287,12 +305,21 @@ export default class Witness {
       }
     }
 
-    // Load the default wallet if it exists. fromJSON returns null for an
+    // Which rivet is THIS TAB being? The tab's own pin wins; the device default
+    // is what an unpinned (brand new) tab starts as. A pin naming a wallet this
+    // origin no longer holds is stale — drop it and fall back, rather than
+    // leaving the tab with no identity at all.
+    let activeId = activeWalletId();
+    if (activeId && !storageData.wallets.some((w) => w.id === activeId)) {
+      unpinWallet();
+      activeId = null;
+    }
+    activeId = activeId || storageData.defaultWalletId;
+
+    // Load the active wallet if it exists. fromJSON returns null for an
     // unsupported source — skip rather than crash.
-    if (storageData.defaultWalletId && ethers) {
-      const walletData = storageData.wallets.find(
-        (w) => w.id === storageData.defaultWalletId,
-      );
+    if (activeId && ethers) {
+      const walletData = storageData.wallets.find((w) => w.id === activeId);
       if (walletData) {
         const wallet = await Wallet.fromJSON(walletData.wallet, ethers);
         if (wallet) {
@@ -300,6 +327,10 @@ export default class Witness {
           this.wallet.id = walletData.id;
           this.wallet.label = walletData.label;
           this.wallet.createdAt = walletData.createdAt;
+          // Pin what we resolved. A tab holds its rivet from the moment it
+          // loads, so a switch in ANOTHER tab (which moves defaultWalletId)
+          // can never change what this tab is on its next reload.
+          pinWallet(walletData.id);
         }
       }
     }
@@ -365,6 +396,7 @@ export default class Witness {
           `Wallet initialized: ${this.wallet.source} (${this.wallet.address})`,
         );
         this.save();
+        pinWallet(this.wallet.id);
       } else {
         throw new Error("Failed to create rivet wallet");
       }
@@ -485,6 +517,12 @@ export default class Witness {
         throw new Error("No wallet available for key exchange");
       }
 
+      // Claim this tab's session slot BEFORE the first request below, so both
+      // the /connect probe and the handshake itself carry X-Epistery-Tab and
+      // read/write this tab's slot rather than the shared default. Arming is
+      // what turns tab isolation on for this tab; see tab.js.
+      armTab();
+
       // Two facts the wallet states; one of them carries a proof.
       //   signerAddress    — the rivet we sign with (proven by `signature`).
       //   contractAddress  — the IdentityContract we CLAIM to speak for, or
@@ -596,6 +634,7 @@ export default class Witness {
 
   getWallets() {
     const storageData = this.loadStorageData();
+    const active = activeWalletId() || storageData.defaultWalletId;
     return {
       wallets: storageData.wallets.map((w) => {
         // Derive the three-fact shape from RAW storage so it's correct even
@@ -617,10 +656,16 @@ export default class Witness {
           label: w.label,
           createdAt: w.createdAt,
           lastUsed: w.lastUsed,
+          // TWO different facts, deliberately not merged: isDefault is the
+          // DEVICE default (what a new tab starts as), isActive is what THIS
+          // TAB is being right now. They differ whenever a tab has switched.
           isDefault: w.id === storageData.defaultWalletId,
+          isActive: w.id === active,
         };
       }),
       defaultWalletId: storageData.defaultWalletId,
+      activeWalletId: active,
+      tabId: tabId(),
     };
   }
 
@@ -746,6 +791,7 @@ export default class Witness {
     storageData.defaultWalletId = this.wallet.id;
     storageData.server = this.server;
     localStorage.setItem("epistery", JSON.stringify(storageData));
+    pinWallet(this.wallet.id);
 
     return {
       id: this.wallet.id,
@@ -797,6 +843,7 @@ export default class Witness {
     storageData.defaultWalletId = this.wallet.id;
     storageData.server = this.server;
     localStorage.setItem("epistery", JSON.stringify(storageData));
+    pinWallet(this.wallet.id);
 
     return {
       id: this.wallet.id,
@@ -840,6 +887,10 @@ export default class Witness {
       localRivet.label = "Browser Wallet";
       this.wallet = localRivet;
       this.save();
+      // save() only claims defaultWalletId when the origin had none, so state
+      // the tab's choice explicitly — otherwise this tab is signing as a rivet
+      // that neither the tab nor the device names.
+      pinWallet(localRivet.id);
     }
 
     // Step 2: open the issuer's auth popup and await the join token.
@@ -968,7 +1019,13 @@ export default class Witness {
     });
   }
 
-  async setDefaultWallet(walletId) {
+  // Become this rivet: in THIS TAB now, and as the device default for tabs
+  // opened from here on. Other open tabs keep the rivet they loaded with — their
+  // pin already names it, so moving defaultWalletId cannot reach them. The
+  // caller must follow with performKeyExchange() to move the server session in
+  // this tab's slot too; switching the client alone would leave the two halves
+  // disagreeing.
+  async setActiveWallet(walletId) {
     const storageData = this.loadStorageData();
     const walletData = storageData.wallets.find((w) => w.id === walletId);
 
@@ -984,7 +1041,11 @@ export default class Witness {
     this.wallet.label = walletData.label;
     this.wallet.createdAt = walletData.createdAt;
 
-    // Update default in storage
+    // This tab is this wallet, stated before anything else — a failure after
+    // here leaves the tab pointing at the wallet it actually loaded.
+    pinWallet(walletId);
+
+    // And it becomes the device default: what the next new tab starts as.
     storageData.defaultWalletId = walletId;
     storageData.wallets = storageData.wallets.map((w) => {
       if (w.id === walletId) {
@@ -1007,6 +1068,11 @@ export default class Witness {
     };
   }
 
+  // Pre-tab name for setActiveWallet, kept so existing consumers keep working.
+  async setDefaultWallet(walletId) {
+    return this.setActiveWallet(walletId);
+  }
+
   removeWallet(walletId) {
     const storageData = this.loadStorageData();
 
@@ -1019,6 +1085,15 @@ export default class Witness {
     if (storageData.defaultWalletId === walletId) {
       throw new Error(
         "Cannot remove default wallet. Switch to another wallet first.",
+      );
+    }
+
+    // Nor the one THIS TAB is being — the tab's pin is as real a claim on a
+    // wallet as the device default is, and removing it would leave this tab
+    // signing as something it never chose.
+    if (activeWalletId() === walletId) {
+      throw new Error(
+        "Cannot remove the wallet this tab is using. Switch to another wallet first.",
       );
     }
 

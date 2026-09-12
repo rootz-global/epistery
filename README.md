@@ -129,6 +129,48 @@ would force the receiver to guess which role the address plays. The server
 derives `identityAddress` from the two facts and exposes it on
 `req.episteryClient`; the client never tells the server what its identity *is*.
 
+### Tab sessions — two tabs, two rivets
+
+A browser origin can hold several rivets. Which one is active is a property of
+the **tab**, not of the device, so two tabs can be two different identities at
+once and neither disturbs the other.
+
+| Where | What it holds |
+|-------|---------------|
+| `sessionStorage["epistery.tab"]` | This tab's id. Per-tab by construction; survives reload, dies with the tab. |
+| `sessionStorage["epistery.wallet"]` | The wallet id this tab is being. Outranks the device default. |
+| `localStorage["epistery"].defaultWalletId` | The **device** default — what a brand new tab starts as. Last switch wins. |
+| `_epistery` cookie | A jar of proven sessions, **one slot per tab**. Still httpOnly; still facts only. |
+
+A request says which slot it means:
+
+- `X-Epistery-Tab: <tab>` — added to every same-origin `fetch` by
+  `client/tab.js`'s shim.
+- `?_tab=<tab>` — for a WebSocket upgrade, which cannot carry a header.
+- Nothing at all — resolves to the jar's **default** slot, the one written by the
+  most recent key exchange.
+
+Two rules make the isolation real rather than decorative:
+
+1. A request that names a slot the jar does **not** hold resolves to **no
+   session**, never the default. Falling back would hand a tab an identity it
+   never proved; instead the tab hand-shakes for itself.
+2. The tab header is sent only **after** that tab has performed a key exchange.
+   Until then a request carries no tab header and reads the default slot — which
+   is exactly the pre-tab behaviour, so an older client, a `curl`, and a page
+   that never hand-shakes all keep working unchanged.
+
+`sessionFromJar(req)` is the single resolver; the attach middleware and
+`resolveClient()` both call it, so an ordinary request and a WebSocket upgrade
+can never disagree about who a tab is.
+
+**Two limits, not papered over.** A document navigation cannot carry a header and
+a cookie cannot be scoped to a tab, so the HTML request for a page resolves
+against the default slot — tab identity covers the API surface, not the page
+load. And "Duplicate tab" copies `sessionStorage`, so the copy starts out
+sharing the original's slot until it switches; opening a new tab normally gives a
+fresh, independent one.
+
 ---
 
 ## Identity & key custody
@@ -276,10 +318,18 @@ const witness = await Witness.connect({ rootPath: '/' }); // creates/loads walle
 ```
 
 Public surface: `connect`, `performKeyExchange`, `getWallets`, `getStatus`,
-`addBrowserWallet` / `addFidoWallet` / `addWeb3Wallet`, `setDefaultWallet`,
+`addBrowserWallet` / `addFidoWallet` / `addWeb3Wallet`, `setActiveWallet`,
 `removeWallet`, `updateWalletLabel`, `bindToEpisteryIdentity` (cross-host identity
 ferry). Wallet classes: `RivetWallet`, `FidoWallet`, `Web3Wallet`; binding via
 `wallet.upgradeToContract`.
+
+`setActiveWallet(id)` makes a rivet active **in the calling tab** and the device
+default for tabs opened after it; other open tabs keep the rivet they loaded
+with. Follow it with `performKeyExchange()` so the server session in this tab's
+slot moves too. `setDefaultWallet` is the pre-tab name for it, kept working.
+`getWallets()` reports both facts per wallet — `isActive` (what this tab is
+being) and `isDefault` (what a new tab starts as) — plus `activeWalletId` and
+`tabId`. See [Tab sessions](#tab-sessions--two-tabs-two-rivets).
 
 **Paper backup (BIP39 phrase or passphrase):**
 
