@@ -22,6 +22,19 @@ import { storageWriteMessage } from "./client/storage-message.mjs";
 // because BoostVerifier.sol recomputes them on chain and a drift breaks every
 // Boost ever issued. See contracts/BoostVerifier.sol.
 import { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost } from "./client/boost-message.mjs";
+// The canonical origin certificate — the domain's countersignature on a device
+// key, {rivet, domain, ts} signed by the domain's own wallet at key exchange.
+// Same reason again: a rivet key is origin-scoped, but a domain NAME asserted by
+// page JS is a commitment rather than proof, and every verifier of that proof has
+// to rebuild the identical bytes. See client/origin-certificate.mjs.
+import {
+  ORIGIN_CERT_TAG,
+  ORIGIN_CERT_VERSION,
+  ORIGIN_CERT_MAX_AGE_MS,
+  originCertificateMessage,
+  issueOriginCertificate,
+  verifyOriginCertificate,
+} from "./client/origin-certificate.mjs";
 // The canonical `Bot` auth message — the same module the CLI signs with. Same
 // reason as storage-message.mjs: one definition, imported by both sides, never
 // re-inlined. See client/bot-auth-message.mjs for the wire shape.
@@ -563,3 +576,11 @@ export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configured
 export { auditTree, secureTree };
 export { storageWriteMessage };
 export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };
+export {
+  ORIGIN_CERT_TAG,
+  ORIGIN_CERT_VERSION,
+  ORIGIN_CERT_MAX_AGE_MS,
+  originCertificateMessage,
+  issueOriginCertificate,
+  verifyOriginCertificate,
+};

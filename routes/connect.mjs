@@ -2,6 +2,7 @@ import express from "express";
 import { createRequire } from "module";
 import { Epistery } from "../dist/epistery.js";
 import * as jar from "../session-jar.mjs";
+import { issueOriginCertificate } from "../client/origin-certificate.mjs";
 
 const require = createRequire(import.meta.url);
 const ethers = require("ethers");
@@ -217,10 +218,51 @@ export default function connectRoutes(epistery) {
         await epistery.options.onAuthenticated(clientInfo, req, res);
       }
 
+      // The ORIGIN CERTIFICATE — the domain's countersignature on THIS device key.
+      //
+      // handleKeyExchange has already recovered data.signerAddress from the
+      // client's own signature, so what the domain signs here is something it
+      // verified rather than a claim it was handed. Until now the response signed
+      // `Epistery Server Response - <serverAddress> - <challenge>`, which named
+      // only itself: it proved the server held a key and bound nothing to the
+      // device or the domain, leaving a third party nothing to check. That old
+      // signature is still sent, so this is purely additive and an older client
+      // keeps verifying exactly what it always did.
+      //
+      // The host comes from the REQUEST, and nothing is signed unless the loaded
+      // domain config is for that same host. `epistery.domain` is one shared
+      // instance mutated per request by the domain middleware, so a concurrent
+      // request for another hostname can leave the two out of step. A certificate
+      // naming the wrong domain would be a lie, which is worse than no
+      // certificate, so this fails closed and logs which condition stopped it.
+      let certificate = null;
+      const certHost = req.hostname || req.headers.host?.split(":")[0] || null;
+      if (!certHost) {
+        console.warn("[connect] no host on the request — issuing no origin certificate");
+      } else if (epistery.domainName !== certHost) {
+        console.warn(
+          `[connect] domain config is "${epistery.domainName}" but this request is for "${certHost}" — issuing no origin certificate`,
+        );
+      } else if (!serverWallet.wallet?.mnemonic) {
+        console.warn(`[connect] no domain wallet for "${certHost}" — issuing no origin certificate`);
+      } else {
+        try {
+          certificate = await issueOriginCertificate(
+            { rivet: data.signerAddress, domain: certHost },
+            ethers.Wallet.fromMnemonic(serverWallet.wallet.mnemonic),
+          );
+        } catch (e) {
+          console.warn(
+            `[connect] could not issue an origin certificate for ${data.signerAddress}@${certHost}: ${e.message}`,
+          );
+        }
+      }
+
       res.json(
         Object.assign(keyExchangeResponse, {
           profile: clientInfo.profile,
           authenticated: clientInfo.authenticated,
+          certificate,
         }),
       );
     } catch (error) {

@@ -593,6 +593,15 @@ export default class Witness {
             rpc: this.serverInfo?.rpc,
             rpcProxy: this.serverInfo?.rpcProxy,
             nativeCurrency: this.serverInfo?.nativeCurrency,
+            // The domain's countersignature on THIS device key — {rivet, domain,
+            // ts} signed by the domain's own wallet. Kept because it is the only
+            // part of this handshake a THIRD party can check: the rivet's own
+            // signature binds an event to the device, and this binds the device to
+            // the domain. save() persists `server` wholesale, so it survives a
+            // reload and can be presented later. Null against a server that does
+            // not issue one, which is how an older host reads — absent, not
+            // invalid. See client/origin-certificate.mjs.
+            certificate: serverResponse.certificate || null,
           };
 
           this.save();
