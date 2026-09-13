@@ -2,6 +2,35 @@
 
 _Epistemology is the study of knowledge. An Epistery, it follows, is a place to share the knowledge of knowledge._
 
+> ## ⚠️ Cross-repo contract — `authority-interface/1`
+>
+> Before touching delegation, rivets, IdentityContracts or anything an authorized person or agent does,
+> read [`docs/AUTHORITY-INTERFACE.md`](docs/AUTHORITY-INTERFACE.md) — the contract binding `epistery`,
+> `corpid` and `rootz-v6`. **That file is a COPY.** Canonical: `rootz-global/corpid` →
+> `docs/AUTHORITY-INTERFACE.md`. If its digest differs from the header, re-copy it; never edit the copy.
+> It follows the same adopt-and-declare pattern this repo established with `IAddressNaming`
+> (`docs/IdentityNaming.md`).
+>
+> **⚠️ "Delegation" means two different things across these repos, and this is the collision most likely to
+> break the build.** Epistery's `Delegation Token` (`docs/DELEGATION.md`) is a short-lived **bearer session
+> credential** — issuer/subject/audience/expires, in a cookie. CorpID's **Authorization** is a durable
+> corporate grant of a **title** to a subject Identity, revocable, and verifiable *as of a past instant*.
+> A Delegation Token MAY reference an Authorization; it MUST NOT substitute for one. Conflating them lets
+> "the user was logged in" masquerade as "the corporation authorized this act."
+>
+> **What the contract asks of Epistery (§4)** — none of it built yet:
+>
+> | | Capability | Note |
+> |---|---|---|
+> | **E1** | `PUBLISH_AUTHORIZATION` against the **corporation's own root**, publicly readable without Rootz | |
+> | **E2** | `PUBLISH_REVOCATION` — forward-only; the prior grant stays readable | |
+> | **E3** | **`READ_AUTHORITY_AS_OF(root, subject, instant)`** | **the single most important item** — current-state-only reads are the obvious thing to build and are silently insufficient; the product question is *"was this subject authorized **when they signed**?"* |
+> | **E4** | `RESOLVE_ROOT(corporation)` → the on-chain root to read from | today's profile pointer points *at* CorpID, which inverts sovereignty |
+>
+> Epistery owns the contract shape, storage layout, chain and gas model entirely. The contract states only
+> what must be *readable*, and by whom: **validation is built by the chain, not by an app** — any RPC client
+> or third-party verifier must be able to answer, with no Rootz service in the path.
+
 **Epistery is the identity foundation for web applications.** It gives a host one
 thing it can trust on every request — a cryptographically proven address — and
 binds that address to an on-chain IdentityContract when the user wants a durable
