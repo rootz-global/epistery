@@ -35,6 +35,21 @@ import {
   issueOriginCertificate,
   verifyOriginCertificate,
 } from "./client/origin-certificate.mjs";
+import {
+  DOMAIN_ATTACHMENT_TAG,
+  DOMAIN_ATTACHMENT_VERSION,
+  domainAttachmentMessage,
+  issueDomainAttachment,
+  verifyDomainAttachment,
+} from "./client/domain-attachment.mjs";
+import {
+  MANIFEST_TAG,
+  MANIFEST_VERSION,
+  SIGNATURE_METHOD,
+  contentHash,
+  manifestMessage,
+  verifyManifest,
+} from "./client/domain-manifest.mjs";
 // The canonical `Bot` auth message — the same module the CLI signs with. Same
 // reason as storage-message.mjs: one definition, imported by both sides, never
 // re-inlined. See client/bot-auth-message.mjs for the wire shape.
@@ -583,4 +598,28 @@ export {
   originCertificateMessage,
   issueOriginCertificate,
   verifyOriginCertificate,
+};
+// The domain's signature on an IDENTITY — what turns a `domain` attribute on a
+// contract from an assertion into a proof. Exported for the verifiers that are
+// not this package: the relay, and scan, which reads a contract and has to decide
+// whether its claimed domain holds. See client/domain-attachment.mjs.
+export {
+  DOMAIN_ATTACHMENT_TAG,
+  DOMAIN_ATTACHMENT_VERSION,
+  domainAttachmentMessage,
+  issueDomainAttachment,
+  verifyDomainAttachment,
+};
+
+// The domain manifest's signed bytes and their verifier. A publisher builds its
+// own document; the construction it signs over, and the check anyone runs against
+// it, belong here — scan verifies manifests from domains it has never met, and a
+// second copy of this could disagree with the first.
+export {
+  MANIFEST_TAG,
+  MANIFEST_VERSION,
+  SIGNATURE_METHOD,
+  contentHash,
+  manifestMessage,
+  verifyManifest,
 };

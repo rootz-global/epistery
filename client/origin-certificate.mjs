@@ -112,9 +112,19 @@ export async function issueOriginCertificate({ rivet, domain, ts = Date.now() },
  *
  * @returns {{ok:boolean, reason?:string, signer?:string}}
  */
+// The estate runs two majors of ethers: v5 keeps `verifyMessage` on `ethers.utils`,
+// v6 moved it to the top level. A verifier is handed whichever one its host has, so
+// the shape is resolved here rather than by every caller — and a missing function is
+// reported as "no ethers to verify with" instead of throwing deep inside a check.
+function recoverWith(ethers) {
+  const fn = ethers?.utils?.verifyMessage ?? ethers?.verifyMessage;
+  return typeof fn === 'function' ? fn : null;
+}
+
 export function verifyOriginCertificate(cert, { domain, rivet, expectDomainWallet, now = Date.now(), maxAgeMs = ORIGIN_CERT_MAX_AGE_MS } = {}, ethers) {
   if (!cert) return { ok: false, reason: 'absent' };
-  if (!ethers?.utils?.verifyMessage) return { ok: false, reason: 'no ethers provided to verify with' };
+  const recover = recoverWith(ethers);
+  if (!recover) return { ok: false, reason: 'no ethers provided to verify with' };
   if (cert.v !== ORIGIN_CERT_VERSION) return { ok: false, reason: `unsupported certificate version "${cert.v}"` };
   if (!expectDomainWallet) return { ok: false, reason: 'no published domain wallet to check against' };
 
@@ -140,7 +150,7 @@ export function verifyOriginCertificate(cert, { domain, rivet, expectDomainWalle
 
   let signer;
   try {
-    signer = ethers.utils.verifyMessage(message, cert.signature);
+    signer = recover(message, cert.signature);
   } catch (e) {
     return { ok: false, reason: `signature does not recover: ${e.message}` };
   }
