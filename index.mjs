@@ -451,9 +451,11 @@ class EpisteryAttach {
    * host mounted, regardless of when attach() ran or which Express major the
    * host is on (v4 keeps app._router, v5 uses app.router — see _routerStack).
    * For a bot request it invokes json/urlencoded parsers (content-type gated,
-   * a no-op on a non-matching type) carrying captureRawBody; a host parser
-   * mounted anyway then no-ops (body-parser skips once req._body is set), so a
-   * bot JSON body is parsed exactly once. Because only bot requests reach these
+   * a no-op on a non-matching type) carrying captureRawBody, and then marks the
+   * request `_body` so a host parser mounted anyway no-ops (body-parser 1.x
+   * skips once req._body is set) and a bot JSON body is parsed exactly once.
+   * The mark is set only when a parser actually read the stream, so a bot body
+   * this package left alone still reaches the host's own reader. Because only bot requests reach these
    * parsers, `limit` (default 100mb, generous on purpose) governs bot bodies
    * only — it never overrides the host's limit for ordinary traffic.
    *
@@ -472,7 +474,27 @@ class EpisteryAttach {
       if (!auth || !auth.startsWith("Bot ")) return next();
       // Bot request → capture raw bytes via the matching parser (each self-skips
       // if the content-type does not match, leaving e.g. a multipart body alone).
-      jsonParser(req, res, (err) => (err ? next(err) : urlParser(req, res, next)));
+      jsonParser(req, res, (err) => {
+        if (err) return next(err);
+        urlParser(req, res, (err2) => {
+          if (err2) return next(err2);
+          // Leave the marker body-parser 1.x uses to know a body is already
+          // parsed. 2.x — which this package parses with — neither sets nor
+          // reads it, so without this a 1.x host (Express 4: console, scan)
+          // sees an unparsed request, re-reads a drained stream, and every
+          // bodied bot request dies as "stream is not readable" from raw-body.
+          //
+          // ONLY when the stream was actually consumed. The parsers above
+          // self-skip on a non-matching content-type, and a skipped parser
+          // leaves the stream unread (readableEnded false). Setting the marker
+          // then would make a host's own express.raw() skip too, and a bot
+          // octet-stream body would never be read by anyone — the exact
+          // behaviour #34 proved intact. `readableEnded` asks whether the body
+          // was read rather than re-deriving which content-types matched.
+          if (req.readableEnded) req._body = true;
+          next();
+        });
+      });
     };
 
     app.use(guard);
