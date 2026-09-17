@@ -49,9 +49,14 @@ export function chainFor(config: ChainConfig): Chain {
   const Ctor = REGISTRY.get(Number(config.chainId)) || Chain;
   // Subclass defaults fill in anything the caller didn't specify.
   const merged: ChainConfig = { ...(Ctor.defaults as ChainConfig), ...config };
-  // If caller provided only `rpc` but chain has a default public RPC,
-  // preserve the public one for UI display.
-  if (!config.publicRpc && Ctor.defaults.rpc) {
+  // If neither the caller NOR the chain class specified a public RPC, fall back to
+  // the chain's default rpc so there is still something safe to show in a UI.
+  //
+  // This tests `merged`, not `config`, deliberately: `merged` already has the
+  // subclass defaults folded in. Testing `config` here meant a subclass that set
+  // `publicRpc` in its own `defaults` had that value silently discarded and replaced
+  // by `Ctor.defaults.rpc`, because the caller had not passed `publicRpc` explicitly.
+  if (!merged.publicRpc && Ctor.defaults.rpc) {
     merged.publicRpc = Ctor.defaults.rpc;
   }
   return new Ctor(merged);
