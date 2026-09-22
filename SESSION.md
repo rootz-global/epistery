@@ -5,7 +5,7 @@
 Building epistery CLI for authenticated requests to wiki.rootz.global. Hours of work building authentication system. Machine has crashed multiple times, losing session context.
 
 ### Current State
-- **CLI Location**: `./cli/epistery.mjs`
+- **CLI Location**: moved to its own package, `@epistery/cli` (github.com/epistery/cli)
 - **Identity**: localhost wallet at `~/.epistery/localhost/config.ini`
 - **Address**: `0x8df97495e72461786E263CaECcAf21315E98e9aF`
 - **Default Domain**: Set to `localhost`

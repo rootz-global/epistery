@@ -4,11 +4,12 @@ import { fileURLToPath } from "url";
 import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
-import { chainFor, registerChain, configuredChains, defaultChainId, Chain } from "./dist/chains/index.js";
+import { CliWallet } from "./dist/utils/CliWallet.js";
+import { chainFor, registerChain, configuredChains, defaultChainId, defaultChain, findChain, setDefaultChain, providerConfigFor, Chain } from "./dist/chains/index.js";
 import * as sessionJar from "./session-jar.mjs";
 // Permission floor for ~/.epistery (wallet keys are cleartext there): hosts can
 // audit/repair the tree at startup the same way `epistery permissions` does.
-import { auditTree, secureTree } from "./dist/utils/Permissions.js";
+import { auditTree, secureTree, formatMode } from "./dist/utils/Permissions.js";
 import createRoutes from "./routes/index.mjs";
 // The canonical storage-write message builder (shared by every signer and the
 // relay verifier). Lives in client/ as pure ESM so browsers can import the same
@@ -595,7 +596,10 @@ class EpisteryAttach {
 }
 
 export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configuredChains, defaultChainId, Chain };
-export { auditTree, secureTree };
+// The CLI (@epistery/cli) is a separate package; this is the surface it uses —
+// the domain wallet as a member (CliWallet), chain selection, key-file modes.
+export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor };
+export { auditTree, secureTree, formatMode };
 export { storageWriteMessage };
 export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };
 export {

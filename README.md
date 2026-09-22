@@ -59,7 +59,7 @@ downstream service **never** trusts a client-supplied identity header and
   …) and contract artifacts at `/artifacts/*` for consumers.
 - **Persists FIDO blobs** (`/fido/blob`) — encrypted, PRF-wrapped rivet keys for
   WebAuthn-backed identities.
-- **Exposes a CLI** for stateless bot-authenticated requests (`curl`), the
+- **Backs a CLI** ([`@epistery/cli`](https://github.com/epistery/cli)) for stateless bot-authenticated requests (`curl`), the
   Streamable-HTTP MCP bridge (`mcp`), domain initialization, and basic info.
 
 ## What Epistery does NOT do
@@ -358,22 +358,19 @@ deciding "who am I right now":
 
 ## CLI
 
-Stateless bot authentication (each request independently signed):
+The `epistery` command is its own package, [`@epistery/cli`](https://github.com/epistery/cli):
 
 ```bash
-epistery chains                         # list supported chains
+npm install -g @epistery/cli
 epistery initialize -c polygon localhost
-epistery set-default localhost
-epistery info localhost
 epistery curl https://api.example.com/data
-epistery curl -X PUT -d '{"title":"Test"}' https://api.example.com/wiki/Test
-epistery curl -X PUT -d @page.json https://api.example.com/wiki/Test      # body from a file (read & signed intact)
-epistery curl -b -w production.example.com https://api.example.com/data   # -b bot, -w wallet, -v verbose
-epistery mcp https://api.example.com    # stdio MCP bridge with bot-auth
+epistery mcp https://epistery.com/p/wiki/<owner>/<session>   # a session, as its own member
 ```
 
-Commands: `initialize`, `set-default`, `chains`, `set-default-chain`,
-`set-chain`, `permissions`, `info`, `curl`, `mcp`, `help`. See [CLI.md](CLI.md).
+It uses this package's public surface (`CliWallet`, `Config`, chain selection, key-file
+modes), and it serves a console session's tools on the device through
+`@epistery/plugins` — which is why it is not part of this package, which servers attach
+as middleware and keeps to identity.
 
 ---
 
@@ -479,4 +476,4 @@ MIT — see [LICENSE](LICENSE).
 ## Links
 
 - Repository: https://github.com/rootz-global/epistery
-- See [CLI.md](CLI.md), [Architecture.md](Architecture.md), [SESSION.md](SESSION.md)
+- See [@epistery/cli](https://github.com/epistery/cli), [Architecture.md](Architecture.md), [SESSION.md](SESSION.md)
