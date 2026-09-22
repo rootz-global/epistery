@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import { Config } from './Config';
 import { DomainConfig } from './types';
 import { chainFor } from '../chains';
+import { withPeerCapability } from './PeerCapability';
 
 export class Utils {
   private static config: Config;
@@ -77,7 +78,8 @@ export class Utils {
 
       if (domainConfig.wallet) {
         const chain = chainFor(domainConfig.provider || { chainId: 137, name: 'Polygon Mainnet', rpc: 'https://polygon-rpc.com' });
-        this.serverWallet = ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(chain.provider);
+        this.serverWallet = withPeerCapability(
+          ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(chain.provider));
         this.walletCache.set(domain, this.serverWallet);
 
         console.log(`Server wallet initialized for domain: ${domain}`);

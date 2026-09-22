@@ -225,6 +225,26 @@ export class CliWallet {
     return await this.wallet.signMessage(message);
   }
 
+  // ── member capability surface (PeerCapable) ─────────────────────────────
+  // What a session member needs from its rivet, and all it gets: sign, and the
+  // raw ECDH shared secret for the TreeKEM leaf-decap seam. The key itself never
+  // leaves this object, which is the seam where a hardware-held key replaces the
+  // plaintext one in config.ini behind the same members.
+
+  readonly canPeerEncrypt = true;
+
+  /** ethers-Signer-shaped alias of sign(), for member code (storage, inbox,
+   *  group commits) that takes a wallet. */
+  async signMessage(message: string): Promise<string> {
+    return this.sign(message);
+  }
+
+  /** Raw ECDH shared secret (32-byte X) with a peer's uncompressed secp256k1
+   *  public key — the value the TreeKEM key schedule consumes. */
+  async computeSharedSecret(peerPublicKey: string, _ethers?: unknown): Promise<Uint8Array> {
+    return ethers.utils.arrayify(this.wallet._signingKey().computeSharedSecret(peerPublicKey));
+  }
+
   /**
    * Perform key exchange with an Epistery server
    * Automatically saves session cookie to domain config
