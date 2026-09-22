@@ -42,7 +42,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Load .env file from project root
-dotenv.config({ path: join(__dirname, "../.env") });
+// quiet: dotenv 17 prints a banner to STDOUT, which corrupts `epistery mcp`'s
+// JSON-RPC stream (stdout is the protocol channel there).
+dotenv.config({ path: join(__dirname, "../.env"), quiet: true });
 
 /**
  * Extract global options from args (like -p/--port)
@@ -205,7 +207,7 @@ function showHelp() {
   console.log("  -d, --data <data>        Request body; use @path to read the body from a file");
   console.log("  -H, --header <header>    Additional headers");
   console.log(
-    "  -b, --bot                Use bot auth header (default: session cookie)",
+    "  -b, --bot                Use bot auth header (the default)",
   );
   console.log("  -v, --verbose            Show detailed output");
   console.log("");
@@ -222,6 +224,8 @@ function showHelp() {
   console.log("");
   console.log("  # MCP bridge (use with Claude Code or any MCP client)");
   console.log("  claude mcp add --transport stdio geist-social -- epistery mcp https://geist.social");
+  console.log("  # a console session: served locally, as this rivet (a member, own key)");
+  console.log("  claude mcp add --transport stdio my-wiki -- epistery mcp https://epistery.com/p/wiki/<owner>/<session>");
   console.log("");
   console.log("  # Make authenticated requests");
   console.log("  epistery curl https://example.com/api/data");
@@ -816,6 +820,26 @@ async function performMcp(args) {
     : url.replace(/\/+$/, '') + '/mcp';
 
   const wallet = await CliWallet.load(domain);
+
+  // A console SESSION (<origin>/p/<kind>/<owner>/<id>) is not proxied: its /mcp
+  // takes access keys, and this rivet is a member in its own right. Its tools
+  // are served here, as this rivet, by @epistery/plugins/local-mcp — which
+  // derives the session key from the rivet's own leaf and seals and signs
+  // locally, so the server sees only ciphertext and signatures.
+  if (new URL(mcpUrl).pathname.startsWith('/p/')) {
+    let local;
+    try {
+      local = await import('@epistery/plugins/local-mcp');
+    } catch (e) {
+      if (e.code !== 'ERR_MODULE_NOT_FOUND') throw e;
+      console.error('Serving a session as its own member needs @epistery/plugins:');
+      console.error('  npm install -g github:epistery/plugins');
+      process.exit(1);
+    }
+    await local.serve({ url: mcpUrl, wallet });
+    return;
+  }
+
   const fetch = (await import('node-fetch')).default;
 
   // All log output to stderr so stdout stays clean for MCP JSON-RPC
