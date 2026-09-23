@@ -44,11 +44,12 @@ describe('BoostVerifier', function () {
     [owner, device, carrier, stranger] = await ethers.getSigners();
     chainId = (await ethers.provider.getNetwork()).chainId;
 
-    // owner is the first rivet; device comes in as the host, which the
-    // constructor also adds as a rivet — so it is a legitimate recipient.
+    // owner is the first rivet; device is added as a second one — a backup is a
+    // signer the owner adds — so it is a legitimate recipient.
     const Identity = await ethers.getContractFactory('IdentityContract');
-    identity = await Identity.deploy(owner.address, device.address, 'first', '', 'boosttest');
+    identity = await Identity.deploy(owner.address, 'first', '', ethers.constants.AddressZero, '');
     await identity.deployed();
+    await identity.connect(owner).addRivet(device.address, 'device');
 
     const Verifier = await ethers.getContractFactory('BoostVerifier');
     verifier = await Verifier.deploy();

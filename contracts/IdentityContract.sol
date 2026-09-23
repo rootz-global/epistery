@@ -4,27 +4,41 @@ pragma solidity ^0.8.19;
 import "./EpisteryAccess.sol";
 
 /**
- * @title IdentityContract — a collection of devices that IS an identity
+ * @title IdentityContract — the root contract of a legal entity
+ *
+ * A legal entity is a uniqueness that can hold value and other traits. Both kinds
+ * of entity are this contract: an individual, and a corporation — a domain, which
+ * extends it as {DomainContract}. What they share is here; what is unique to a
+ * domain (its DNS binding, the names it issues, the prices it charges) is there.
  *
  * A multisig smart wallet whose signers (rivets) are interchangeable owners: any
- * active rivet can act, add/remove rivets, sign as the identity (ERC-1271), and
- * manage the identity's sections. Add a device, lose a device and remove it with
- * another — no seed phrase, no single owner.
+ * active rivet can act, add/remove rivets, sign as the entity (ERC-1271), and
+ * manage its sections. Add a device, lose a device and remove it with another —
+ * no seed phrase, no single owner. A signer may itself be an entity contract, in
+ * which case that entity's rivets sign here too.
  *
- * Access + data for everything the identity owns (sessions, plugin data) uses the
+ * Access + data for everything the entity owns (sessions, plugin data) uses the
  * common {EpisteryAccess} section mechanism: a session is a section; collaborators
  * are ACL entries on it; a plugin's config/keys are the section's attributes. The
  * rivets are the stewards — implicit role 4 on every section.
  *
- * The **host** is one signer flagged as the default backup/recovery key (e.g.
- * epistery-host). It is a rivet like any other, with no special power, and is fully
- * revocable: `removeRivet(host)` makes the identity 100% self-sovereign. It exists
- * only so a user who still controls a device can be helped to recover — never so a
- * server can broker access.
+ * Backup is a signer the owner adds. There is no recovery slot and no server
+ * signer: a party everyone must go through is the thing being replaced.
+ *
+ * **The name.** An entity may bind a name in a domain's registrar, claimed in this
+ * constructor so an entity exists only with a name that is unique in that domain.
+ * It is written once and never changed: a different name is a different entity.
+ * The binding is two-way — the registrar records the holder, this contract records
+ * `registrar` and `entityName` — and it is worth nothing until both agree.
  *
  * If every server we run vanished, any one rivet + this contract + Storj is enough
- * to read and write all of the identity's data and its collaborators' shared data.
+ * to read and write all of the entity's data and its collaborators' shared data.
  */
+/** The claim side of a domain's registrar — see {DomainContract}. */
+interface IDomainRegistrar {
+    function claim(string calldata name) external;
+}
+
 interface IERC1271 {
     function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4 magicValue);
 }
@@ -40,9 +54,12 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     bytes4 constant internal EIP1271_MAGIC_VALUE = 0x1626ba7e;
     bytes4 constant internal EIP1271_INVALID = 0xffffffff;
 
-    // ── identity (interchangeable owners = rivets) ─────────────────────────
-    address public immutable creator;          // first rivet, for provenance only
-    address public host;                        // default recovery signer (a rivet), revocable
+    // ── the entity (interchangeable owners = rivets) ───────────────────────
+    //
+    // The first rivet is not recorded as anything: it is one rivet among
+    // interchangeable ones, and is as likely to be the technician who ran the
+    // deploy as the person it is for. Its address is in the creation event, which
+    // is the log, and nothing reads it as an authority.
     address[] private authorizedRivets;
     mapping(address => bool) public isAuthorized;
     mapping(address => bool) public rivetActive;
@@ -54,17 +71,20 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     uint256 public removeRivetThreshold = 1;    // N-of-M to remove a rivet (governance knob)
     uint256 public messageCount;
 
-    // Reserved section holding the identity's own world-readable profile. The
-    // display name lives here as a public attribute ("name") — the on-chain home
-    // that replaces the old chat.name KeyVault entry. Anyone can read it; only a
-    // steward (rivet) can change it, via setPublic.
+    // ── the name, in a domain's registrar (both written once, at construction) ──
+    address public immutable registrar;         // the DomainContract that issued the name
+    string public entityName;                   // the name it issued, lowercase
+
+    // Reserved section for the entity's own world-readable profile — whatever it
+    // chooses to publish about itself. The NAME is not here: it is `entityName`,
+    // written once and confirmed by its registrar, because a second copy of it
+    // would be a copy that can disagree.
     string public constant PROFILE_SECTION = "_profile";
 
     // ── events ─────────────────────────────────────────────────────────────
-    event IdentityCreated(address indexed creator, address indexed host, uint256 timestamp);
+    event IdentityCreated(address indexed firstRivet, address indexed registrar, string name, uint256 timestamp);
     event RivetAdded(address indexed rivet, address indexed addedBy, string name, uint256 timestamp);
     event RivetRemoved(address indexed rivet, address indexed removedBy, uint256 timestamp);
-    event HostChanged(address indexed previousHost, address indexed newHost, address indexed by);
     event PublicKeyRegistered(address indexed rivet, string publicKey, uint256 timestamp);
     event TransactionExecuted(address indexed target, uint256 value, address indexed sender, uint256 timestamp);
     event ETHSent(address indexed recipient, uint256 amount, address indexed sender);
@@ -73,41 +93,45 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     event MessageReceived(address indexed from, bytes data, uint256 value, uint256 indexed messageIndex, uint256 timestamp);
 
     /**
-     * @param firstRivet the identity's first device (the owner). Not msg.sender, so a
+     * @param firstRivet the entity's first device (the owner). Not msg.sender, so a
      *        deployer can create it on the user's behalf.
-     * @param host_ optional default recovery signer (e.g. epistery-host); pass address(0) for none.
      * @param firstRivetName human name for the first device.
      * @param firstRivetPubKey the device's communications public key (empty for none) —
      *        stored in rivetPublicKeys[firstRivet] so peers can encrypt to it immediately.
-     * @param displayName the identity's world-readable display name (empty for none) —
-     *        seeded as the "name" public attribute of PROFILE_SECTION.
+     * @param registrar_ the DomainContract to claim the name from (address(0) for an
+     *        entity that carries no name).
+     * @param name_ the name to claim there. The claim runs in this constructor, so a
+     *        name already held makes the whole mint revert: an entity exists only
+     *        with a name that is unique in its domain, or with none at all.
      *
-     * Folding name + pubkey into the constructor makes a mint a single deploy tx:
-     * no follow-up setPublic/setPublicKey round-trips.
+     * Folding the name + pubkey into the constructor makes a mint a single deploy tx:
+     * no follow-up claim/setPublicKey round-trips.
      */
     constructor(
         address firstRivet,
-        address host_,
         string memory firstRivetName,
         string memory firstRivetPubKey,
-        string memory displayName
+        address registrar_,
+        string memory name_
     ) {
         require(firstRivet != address(0), "first rivet required");
-        creator = firstRivet;
-        _addRivet(firstRivet, bytes(firstRivetName).length > 0 ? firstRivetName : "creator");
+        _addRivet(firstRivet, bytes(firstRivetName).length > 0 ? firstRivetName : "device");
         if (bytes(firstRivetPubKey).length > 0) rivetPublicKeys[firstRivet] = firstRivetPubKey;
 
-        if (host_ != address(0) && host_ != firstRivet) {
-            _addRivet(host_, "host");
-            host = host_;
+        registrar = registrar_;
+        if (registrar_ != address(0) && bytes(name_).length > 0) {
+            entityName = name_;
+            IDomainRegistrar(registrar_).claim(name_);
+        } else {
+            require(registrar_ == address(0) && bytes(name_).length == 0, "name needs a registrar");
         }
-        if (bytes(displayName).length > 0) _setPublic(PROFILE_SECTION, "name", displayName);
-        emit IdentityCreated(firstRivet, host, block.timestamp);
+        emit IdentityCreated(firstRivet, registrar_, name_, block.timestamp);
     }
 
-    /** The identity's world-readable display name (PROFILE_SECTION → "name"). */
+    /** The entity's name — the one this contract claims, and the one a registrar
+     *  confirms. Kept under its old name so existing readers keep working. */
     function profileName() external view returns (string memory) {
-        return _getPublic(PROFILE_SECTION, "name");
+        return entityName;
     }
 
     // ── stewardship: the identity itself, and any active rivet, are owners ──
@@ -146,17 +170,7 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         rivetCount--;
         delete rivetPublicKeys[rivet];
 
-        // Removing the host is exactly "kick out the host" → self-sovereign.
-        if (rivet == host) { emit HostChanged(host, address(0), msg.sender); host = address(0); }
-
         emit RivetRemoved(rivet, msg.sender, block.timestamp);
-    }
-
-    /** Flag an existing rivet as the default recovery host (or clear with address(0)). */
-    function designateHost(address newHost) external onlyRivet {
-        require(newHost == address(0) || _isSteward(newHost), "host must be an active rivet");
-        emit HostChanged(host, newHost, msg.sender);
-        host = newHost;
     }
 
     function setRemoveRivetThreshold(uint256 newThreshold) external onlyRivet {
