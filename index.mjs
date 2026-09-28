@@ -5,7 +5,7 @@ import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
 import { CliWallet } from "./dist/utils/CliWallet.js";
-import { chainFor, registerChain, configuredChains, defaultChainId, defaultChain, findChain, setDefaultChain, providerConfigFor, Chain } from "./dist/chains/index.js";
+import { chainFor, registerChain, configuredChains, attestationConfig, defaultChainId, defaultChain, findChain, setDefaultChain, providerConfigFor, Chain } from "./dist/chains/index.js";
 import * as sessionJar from "./session-jar.mjs";
 // Permission floor for ~/.epistery (wallet keys are cleartext there): hosts can
 // audit/repair the tree at startup the same way `epistery permissions` does.
@@ -599,6 +599,11 @@ export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configured
 // The CLI (@epistery/cli) is a separate package; this is the surface it uses —
 // the domain wallet as a member (CliWallet), chain selection, key-file modes.
 export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor };
+// How a caller reaches the chain for an attestation read (EpisteryChainReads): the
+// owned endpoints from config, the reader over them, and the one classifier of a
+// failed read versus the chain's answer.
+export { attestationConfig };
+export { chainReader, isChainReadFailure } from './client/chain-read.mjs';
 export { auditTree, secureTree, formatMode };
 export { storageWriteMessage };
 export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };

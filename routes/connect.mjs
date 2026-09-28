@@ -3,6 +3,7 @@ import { createRequire } from "module";
 import { Epistery } from "../dist/epistery.js";
 import * as jar from "../session-jar.mjs";
 import { issueOriginCertificate } from "../client/origin-certificate.mjs";
+import { isChainReadFailure } from "../client/chain-read.mjs";
 
 const require = createRequire(import.meta.url);
 const ethers = require("ethers");
@@ -13,40 +14,8 @@ const IDENTITY_AUTHORIZED_ABI = [
   "function isAuthorized(address) view returns (bool)",
 ];
 
-// Distinguish a CHAIN-READ FAILURE (we could not get an answer from the chain —
-// RPC transport error, HTTP 4xx/5xx, rate-limit, timeout, provider down) from a
-// definitive on-chain answer. The two mean OPPOSITE things to the caller: a read
-// failure is "ask again in a moment", a false/revert is "this signer is not a
-// member". Conflating them is what let a provider outage read as a rejection.
-//
-// ethers v5 pitfall (the exact failure this hardening is for): when the RPC
-// endpoint returns a non-result — e.g. Infura HTTP 403 "rejected due to project
-// ID settings", or a rate-limit — ethers does NOT surface it as a plain transport
-// error. For an eth_call it fabricates a CALL_EXCEPTION with data="0x" ("missing
-// revert data; reverted without a reason string"), indistinguishable at a glance
-// from a real revert. So a dead/limited provider looks exactly like "the contract
-// rejected you". We detect that shape (no revert bytes, and/or a transport error
-// nested in e.error) and treat it as a read failure, not an authorization denial.
-function isChainReadFailure(e) {
-  if (!e) return false;
-  // Direct transport / connectivity failures.
-  if (e.code === "SERVER_ERROR" || e.code === "TIMEOUT" || e.code === "NETWORK_ERROR") {
-    return true;
-  }
-  // Fabricated CALL_EXCEPTION over a provider that returned no execution result.
-  // A GENUINE revert carries revert bytes in e.data (something other than "0x").
-  if (e.code === "CALL_EXCEPTION") {
-    const noRevertData = e.data == null || e.data === "0x";
-    const inner = e.error || {};
-    const transportUnderneath =
-      inner.code === "SERVER_ERROR" ||
-      inner.code === "TIMEOUT" ||
-      inner.code === "NETWORK_ERROR" ||
-      typeof inner.status === "number"; // HTTP status carried on the JSON-RPC error
-    if (noRevertData || transportUnderneath) return true;
-  }
-  return false;
-}
+// isChainReadFailure: a failed read (ask again) vs the chain's answer (no) — the
+// one copy lives with the chain reader (client/chain-read.mjs, EpisteryChainReads).
 
 /**
  * Connect routes - key exchange and wallet creation

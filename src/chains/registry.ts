@@ -96,6 +96,44 @@ export async function configuredChains(): Promise<ChainConfig[]> {
 }
 
 /**
+ * How a chain's ATTESTATION reads are answered — the owned nodes, and how many of
+ * them must assert an answer (EpisteryChainReads, Proposal A). Root config (the
+ * Authority's, where the process has one):
+ *
+ *   [chains.polygon]
+ *   attest[] = https://node1.example/
+ *   attest[] = https://node2.example/
+ *   attest[] = https://node3.example/
+ *   quorum   = 2        ; k of n, like a multisig — unset: a majority of the nodes
+ *
+ * The section is named by any selector findChain accepts (alias, name, chainId).
+ * Each host sets its own strictness. No node configured is a misconfiguration: it
+ * throws — an attestation read never falls through to a public or foreign endpoint.
+ */
+export async function attestationConfig(chainId: number | string): Promise<{ rpcs: string[]; quorum: number | null }> {
+  const rootData = await new Config().read('/');
+  const sections = rootData?.chains || {};
+  const rpcs: string[] = [];
+  let quorum: number | null = null;
+  for (const [slug, section] of Object.entries<any>(sections)) {
+    const chain = await findChain(slug).catch(() => null);
+    if (!chain || Number(chain.chainId) !== Number(chainId)) continue;
+    const listed = section?.attest;
+    for (const url of (Array.isArray(listed) ? listed : listed ? [listed] : [])) {
+      if (url && !rpcs.includes(url)) rpcs.push(String(url));
+    }
+    if (section?.quorum != null && section.quorum !== '') quorum = Number(section.quorum);
+  }
+  if (!rpcs.length) {
+    throw new Error(`No attestation node for chain ${chainId}: set [chains.<name>] attest[] = <owned node> in config — an attestation read is answered by owned nodes or not at all`);
+  }
+  if (quorum != null && (!Number.isInteger(quorum) || quorum < 1 || quorum > rpcs.length)) {
+    throw new Error(`[chains.<name>] quorum = ${quorum} for chain ${chainId} is not between 1 and the ${rpcs.length} attest node(s)`);
+  }
+  return { rpcs, quorum };
+}
+
+/**
  * Return the configured default chainId from root config.
  *
  * Checks `[default] defaultChainId`, then `[default.provider] chainId`,
