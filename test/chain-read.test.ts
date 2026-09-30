@@ -15,12 +15,18 @@ const CONTRACT = ethers.Wallet.createRandom().address;
 const SESSION = 'recipes';
 const RIVET = ethers.Wallet.createRandom().address;
 const WRITER = ethers.Wallet.createRandom().address;
+const ADMIN = ethers.Wallet.createRandom().address;
 const STRANGER = ethers.Wallet.createRandom().address;
+// A second contract that admits STRANGER as its rivet, so a request signed by
+// STRANGER claiming IDENTITY is credited IDENTITY's section role (the two-hop).
+const IDENTITY = ethers.Wallet.createRandom().address;
 const iface = new ethers.utils.Interface([
   'function isAuthorized(address) view returns (bool)',
   'function getRivets() view returns (address[])',
   'function roleOf(string section, address account) view returns (uint8)',
+  'function getSectionNames() view returns (string[])',
 ]);
+let sectionNames = ['recipes', '_profile'];
 
 // mode: 'ok' answers; 'lie' says everyone is a rivet; 'hang' never answers; 'down' HTTP 503; 'forbidden' HTTP 403 (the Infura settings shape)
 function fakeNode(mode: () => string) {
@@ -34,13 +40,22 @@ function fakeNode(mode: () => string) {
       const rq = JSON.parse(body);
       const reply = (result: any) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: rq.id, result })); };
       if (rq.method === 'eth_chainId') return reply('0x89');
+      const a = (x: string) => x.toLowerCase();
+      if (rq.method === 'eth_getCode') return reply([a(CONTRACT), a(IDENTITY)].includes(a(rq.params[0])) ? '0x6001' : '0x');
       const { to, data } = rq.params[0];
+      if (a(to) === a(IDENTITY)) {
+        const tx = iface.parseTransaction({ data });
+        if (tx.name === 'isAuthorized') return reply(iface.encodeFunctionResult('isAuthorized', [a(tx.args[0]) === a(STRANGER)]));
+        return reply('0x');
+      }
       if (to.toLowerCase() !== CONTRACT.toLowerCase()) return reply('0x');   // an EOA: no code, no data
       const tx = iface.parseTransaction({ data });
-      const a = (x: string) => x.toLowerCase();
       if (tx.name === 'isAuthorized') return reply(iface.encodeFunctionResult('isAuthorized', [m === 'lie' || a(tx.args[0]) === a(RIVET)]));
       if (tx.name === 'getRivets') return reply(iface.encodeFunctionResult('getRivets', [[RIVET]]));
-      return reply(iface.encodeFunctionResult('roleOf', [tx.args[0] === SESSION && a(tx.args[1]) === a(WRITER) ? 2 : 0]));
+      if (tx.name === 'getSectionNames') return reply(iface.encodeFunctionResult('getSectionNames', [sectionNames]));
+      const who = a(tx.args[1]);
+      const role = tx.args[0] !== SESSION ? 0 : who === a(WRITER) ? 2 : who === a(ADMIN) ? 3 : who === a(IDENTITY) ? 3 : 0;
+      return reply(iface.encodeFunctionResult('roleOf', [role]));
     });
   });
   return server;
@@ -125,6 +140,56 @@ describe('chainReader — k-of-n, like a multisig', () => {
     expect(() => chainReader({ rpcs: [], chainId: 137, ethers })).toThrow(/owned node/);
     expect(() => chainReader({ rpcs: urls, quorum: 4, chainId: 137, ethers })).toThrow(/quorum/);
     expect(() => chainReader({ rpcs: urls, quorum: 0, chainId: 137, ethers })).toThrow(/quorum/);
+  });
+});
+
+describe('chainReader — the verbs the relay and the member share', () => {
+  it('hasCode: a contract holds code, an EOA does not — a read, not an inferred revert', async () => {
+    set('ok');
+    expect(await reader(1).hasCode(CONTRACT)).toBe(true);
+    expect(await reader(1).hasCode(STRANGER)).toBe(false);
+  });
+
+  it('hasCode with no node answering is CHAIN_UNREACHABLE, never "no code"', async () => {
+    set('down');
+    await expect(reader(1, null, 300).hasCode(CONTRACT)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
+  });
+
+  it('view: any named function, decoded; null where the chain answers nothing', async () => {
+    set('ok');
+    const r = reader(1);
+    expect(await r.view(CONTRACT, 'function getSectionNames() view returns (string[])', 'getSectionNames')).toEqual(['recipes', '_profile']);
+    expect(await r.view(STRANGER, ['function getSectionNames() view returns (string[])'], 'getSectionNames')).toBe(null);
+    expect(Number(await r.view(CONTRACT, 'function roleOf(string,address) view returns (uint8)', 'roleOf', [SESSION, ADMIN]))).toBe(3);
+  });
+
+  it('sectionRole: the signer as principal, and the identity that vouches for it — the larger role', async () => {
+    set('ok');
+    const r = reader(1);
+    expect(await r.sectionRole(CONTRACT, SESSION, WRITER)).toBe(2);
+    expect(await r.sectionRole(CONTRACT, SESSION, STRANGER)).toBe(0);
+    expect(await r.sectionRole(CONTRACT, SESSION, STRANGER, IDENTITY)).toBe(3);   // IDENTITY vouches for STRANGER and holds admin
+    expect(await r.sectionRole(CONTRACT, SESSION, RIVET, IDENTITY)).toBe(0);      // IDENTITY does not vouch for RIVET: no credit
+  });
+
+  it('mayRotate: an owner rivet or a section admin, never a writer', async () => {
+    set('ok');
+    const r = reader(1);
+    expect(await r.mayRotate(CONTRACT, SESSION, RIVET)).toBe(true);
+    expect(await r.mayRotate(CONTRACT, SESSION, ADMIN)).toBe(true);
+    expect(await r.mayRotate(CONTRACT, SESSION, WRITER)).toBe(false);
+    expect(await r.mayCommit(CONTRACT, SESSION, WRITER)).toBe(true);
+    expect(await r.mayRotate(CONTRACT, SESSION, STRANGER, IDENTITY)).toBe(true);   // through the vouching identity's admin
+  });
+
+  it('fresh: a caller that just acted reads past the cache', async () => {
+    set('ok');
+    const r = chainReader({ rpcs: urls.slice(0, 1), chainId: 137, ethers, ttlMs: 60_000, timeoutMs: 3000 });
+    expect(await r.view(CONTRACT, 'function getSectionNames() view returns (string[])', 'getSectionNames')).toEqual(['recipes', '_profile']);
+    sectionNames = ['recipes', '_profile', 'new'];
+    expect(await r.view(CONTRACT, 'function getSectionNames() view returns (string[])', 'getSectionNames')).toEqual(['recipes', '_profile']);          // cached
+    expect(await r.view(CONTRACT, 'function getSectionNames() view returns (string[])', 'getSectionNames', [], { fresh: true })).toEqual(['recipes', '_profile', 'new']);
+    sectionNames = ['recipes', '_profile'];
   });
 });
 

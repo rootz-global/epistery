@@ -10,7 +10,8 @@
 //     now imports it from here).
 //
 //   chainReader({ rpcs, quorum, chainId }) — ATTESTATION reads: facts a caller acts
-//     on as verified (who may seat a device in a group). `rpcs` are the chain's
+//     on as verified (who may seat a device in a group, who may write, whether an
+//     address holds code, any view a caller names). `rpcs` are the chain's
 //     attestation endpoints — OWNED nodes only (attestationConfig() in the chain
 //     registry, which also supplies `quorum`). An answer is asserted k-of-n, like a
 //     multisig: it stands when `quorum` nodes give it (default a majority — 1 of 1,
@@ -79,19 +80,22 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   const network = chainId ? Number(chainId) : undefined;
   const providers = endpoints.map((url) => ({ url, provider: new ethers.providers.StaticJsonRpcProvider(url, network) }));
   const iface = new ethers.utils.Interface(ABI);
+  const ifaces = new Map();   // abi text → Interface, for view()
   const cache = new Map();
 
-  // One eth_call, asserted k-of-n like a multisig: every node is asked at once, and
-  // an answer stands when `quorum` nodes give it. The read settles the moment the
+  // One read, asserted k-of-n like a multisig: every node is asked at once, and an
+  // answer stands when `quorum` nodes give it. The read settles the moment the
   // outcome is decided, so a jammed node — one that hangs, errors, or lies — cannot
   // hold it hostage while enough others agree. Refused, never guessed:
   //   CHAIN_DISAGREES   two different answers both reached the quorum (only possible
   //                     with a quorum at or below half), or too many answers differ
   //                     for any to reach it
   //   CHAIN_UNREACHABLE too few nodes answered at all
-  // An answer is the result hex, or null when the chain answered "nothing" (a revert
-  // with its reason, or no contract at the address).
-  function call(to, data) {
+  // `ask(provider)` performs the read on one node and resolves to its answer: a
+  // string, or null when the chain answered "nothing" (a revert with its reason, no
+  // contract at the address, no code). A failed read (isChainReadFailure) is a
+  // non-answer, never a "no".
+  function agree(ask) {
     return new Promise((resolve, reject) => {
       const votes = new Map();   // answer → count
       const failures = [];
@@ -114,8 +118,8 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
       };
       const timer = setTimeout(() => { if (!done) { pending = 0; failures.push(`no answer within ${timeoutMs}ms`); decide(); } }, timeoutMs);
       for (const { url, provider } of providers) {
-        provider.call({ to, data }).then(
-          (out) => ({ answer: out === "0x" ? null : out }),
+        Promise.resolve().then(() => ask(provider)).then(
+          (out) => ({ answer: out == null || out === "0x" ? null : String(out) }),
           (e) => (isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` } : { answer: null }),   // a revert is an answer: no
         ).then((o) => {
           if (done) return;
@@ -127,20 +131,47 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
       }
     });
   }
+  const call = (to, data) => agree((p) => p.call({ to, data }));
   async function read(to, fn, args) {
     const out = await call(to, iface.encodeFunctionData(fn, args));
-    if (out == null || out === "0x") return null;
+    if (out == null) return null;
     return iface.decodeFunctionResult(fn, out)[0];
   }
-  const cached = async (key, compute) => {
-    const hit = cache.get(key);
+  // `fresh` skips the cache for one read — what a caller that just acted passes so
+  // it does not wait out the TTL to see its own grant.
+  const cached = async (key, compute, fresh = false) => {
+    const hit = fresh ? null : cache.get(key);
     if (hit && Date.now() - hit.at < ttlMs) return hit.value;
     const value = await compute();
     cache.set(key, { at: Date.now(), value });
     return value;
   };
 
-  async function isRivet(contract, addr) {
+  // Any view a caller names, by its ABI fragment(s): the k-of-n read for facts the
+  // fixed verbs below do not cover (section names, an ACL, a public attribute).
+  // null when the chain answers nothing — no contract there, no such function, a
+  // revert. One output is returned bare; several as the decoded result.
+  async function view(to, abi, fn, args = [], { fresh = false } = {}) {
+    const text = Array.isArray(abi) ? abi.join("\n") : String(abi);
+    let vi = ifaces.get(text);
+    if (!vi) { vi = new ethers.utils.Interface(Array.isArray(abi) ? abi : [abi]); ifaces.set(text, vi); }
+    return cached(`view|${lc(to)}|${fn}|${JSON.stringify(args)}`, async () => {
+      const out = await call(to, vi.encodeFunctionData(fn, args));
+      if (out == null) return null;
+      const res = vi.decodeFunctionResult(fn, out);
+      return res.length === 1 ? res[0] : res;
+    }, fresh);
+  }
+
+  // Does an address hold code? The probe that precedes "is this an IdentityContract"
+  // (decision 1): with the one classifier a bare CALL_EXCEPTION is a failed read, so
+  // "not a contract" has to be established by this read, never inferred from a call
+  // that did not answer.
+  async function hasCode(to, { fresh = false } = {}) {
+    return cached(`code|${lc(to)}`, async () => (await agree((p) => p.getCode(to))) != null, fresh);
+  }
+
+  async function isRivet(contract, addr, { fresh = false } = {}) {
     return cached(`rivet|${lc(contract)}|${lc(addr)}`, async () => {
       if (await read(contract, "isAuthorized", [addr])) return true;
       for (const entry of (await read(contract, "getRivets", [])) || []) {
@@ -148,23 +179,40 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
         if (await read(entry, "isAuthorized", [addr])) return true;
       }
       return false;
-    });
+    }, fresh);
   }
 
-  async function roleOf(contract, section, addr) {
-    return cached(`role|${lc(contract)}|${section}|${lc(addr)}`, async () => Number((await read(contract, "roleOf", [section, addr])) || 0));
+  async function roleOf(contract, section, addr, { fresh = false } = {}) {
+    return cached(`role|${lc(contract)}|${section}|${lc(addr)}`, async () => Number((await read(contract, "roleOf", [section, addr])) || 0), fresh);
+  }
+
+  // The section role of a request signed by `signer` claiming `identity` — the
+  // multisig two-hop, the one definition. r1 = roleOf(section, signer), the signer
+  // as a principal, never dropped; r2 = roleOf(section, identity) only when the
+  // identity vouches for the signer on chain (isAuthorized); the role is the larger.
+  async function sectionRole(contract, section, signer, identity = null, { fresh = false } = {}) {
+    let role = await roleOf(contract, section, signer, { fresh });
+    if (identity && lc(identity) !== lc(signer)) {
+      const vouches = await cached(`vouch|${lc(identity)}|${lc(signer)}`, async () => !!(await read(identity, "isAuthorized", [signer])), fresh);
+      if (vouches) role = Math.max(role, await roleOf(contract, section, identity, { fresh }));
+    }
+    return role;
   }
 
   // May `signer` commit to this session's group? What the relay requires of a
-  // commit, read by the caller itself.
-  async function mayCommit(contract, section, signer, identity = null) {
-    if (await isRivet(contract, signer)) return true;
-    if ((await roleOf(contract, section, signer)) >= ROLE.WRITE) return true;
-    if (identity && lc(identity) !== lc(signer) && (await read(identity, "isAuthorized", [signer]))) {
-      return (await roleOf(contract, section, identity)) >= ROLE.WRITE;
-    }
-    return false;
+  // commit, read by the caller itself: an owner rivet, or write on the section.
+  async function mayCommit(contract, section, signer, identity = null, opts = {}) {
+    if (await isRivet(contract, signer, opts)) return true;
+    return (await sectionRole(contract, section, signer, identity, opts)) >= ROLE.WRITE;
   }
 
-  return { isRivet, roleOf, mayCommit, endpoints, quorum };
+  // May `signer` ROTATE this session's key — remove, update, restore, or an add
+  // that grows the tree? An owner device, or a section admin (Epoch: commit
+  // authority). The same rule the relay's DS gate applies, read by the member.
+  async function mayRotate(contract, section, signer, identity = null, opts = {}) {
+    if (await isRivet(contract, signer, opts)) return true;
+    return (await sectionRole(contract, section, signer, identity, opts)) >= ROLE.ADMIN;
+  }
+
+  return { isRivet, roleOf, sectionRole, mayCommit, mayRotate, view, hasCode, endpoints, quorum };
 }

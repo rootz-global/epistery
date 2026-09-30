@@ -292,9 +292,12 @@ by every signer and verifier; none re-inlines it. Each is a pure ES module under
   `storageAuthorization`, `signStorageWrite` (build + sign with any `sign(message)`),
   `sha256hex` (the one body hash, WebCrypto), `ADDRESS_RE` / `isAddress`.
 - `client/chain-read.mjs` — `chainReader` (k-of-n attestation reads over owned
-  nodes), `isChainReadFailure` (the one classifier: a failed read is not a "no"),
-  and `ROLE` / `ROLE_NAME` / `roleName`, the EpisteryAccess role table as the
-  contract stores it (a test reads it out of the Solidity source).
+  nodes: `isRivet`, `roleOf`, `sectionRole` (the two-hop through a vouching
+  identity), `mayCommit`, `mayRotate`, `hasCode`, and `view` for any named
+  function; every verb takes `{ fresh }` to read past the cache), `isChainReadFailure`
+  (the one classifier: a failed read is not a "no"), and `ROLE` / `ROLE_NAME` /
+  `roleName`, the EpisteryAccess role table as the contract stores it (a test
+  reads it out of the Solidity source).
 - `client/key-exchange-message.mjs` — `keyExchangeMessage`, the string a device
   signs for `/connect` and for the config authority.
 - `client/bot-auth-message.mjs`, `client/boost-message.mjs`,
