@@ -1,25 +1,26 @@
-// How a caller reaches the chain for a read — the ONE copy (EpisteryChainReads,
-// Proposal A). Browser-servable and Node-importable, like storage-message.mjs: it
-// takes ethers v5 from the caller or from globalThis.
+// Chain reads a caller makes itself (EpisteryChainReads, Proposal A).
+// Browser-servable and Node-importable, like storage-message.mjs: it takes ethers
+// v5 from the caller or from globalThis.
 //
 // Two things live here:
 //
 //   isChainReadFailure(e) — did the read FAIL, or did the chain ANSWER? A failed
 //     read means "ask again"; a false or a revert means "no". Conflating them is
-//     what let a provider outage read as a rejection (connect.mjs, PR #37).
+//     what let a provider outage read as a rejection (connect.mjs, PR #37, which
+//     now imports it from here).
 //
-//   chainReader({ rpcs, chainId }) — ATTESTATION reads: facts a caller acts on
-//     as verified (who may seat a device in a group). `rpcs` are the chain's
-//     attestation endpoints — OWNED nodes only (attestationRpcs() in the chain
-//     registry). An answer is asserted k-of-n, like a multisig: it stands when
-//     `quorum` nodes give it (default a majority — 1 of 1, 2 of 3), so one jammed
-//     node neither blocks the read nor decides it. Otherwise the read is refused —
-//     CHAIN_DISAGREES or CHAIN_UNREACHABLE — never guessed, and never answered by a
-//     foreign gateway. Today the operator runs the only node; each independent node
-//     added is one more that a lie must get past.
+//   chainReader({ rpcs, quorum, chainId }) — ATTESTATION reads: facts a caller acts
+//     on as verified (who may seat a device in a group). `rpcs` are the chain's
+//     attestation endpoints — OWNED nodes only (attestationConfig() in the chain
+//     registry, which also supplies `quorum`). An answer is asserted k-of-n, like a
+//     multisig: it stands when `quorum` nodes give it (default a majority — 1 of 1,
+//     2 of 3), so one jammed node neither blocks the read nor decides it. Otherwise
+//     the read is refused — CHAIN_DISAGREES or CHAIN_UNREACHABLE — never guessed,
+//     and never answered by a foreign gateway. Today the operator runs the only
+//     node; each independent node added is one more that a lie must get past.
 //
-// The rules mirror the relay's storage-auth, so a member and the relay reach the
-// same verdict from the same chain:
+// The rules are the relay's storage-auth rules (the relay still implements them
+// separately), so a member and the relay reach the same verdict from the same chain:
 //   rivet : isAuthorized(addr) on the contract, or — an identity admitted as a
 //           signer vouching for its own rivet — any contract in getRivets() whose
 //           isAuthorized(addr) is true

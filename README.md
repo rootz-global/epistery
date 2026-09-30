@@ -250,10 +250,6 @@ Mounted under `rootPath` (default `/.well-known/epistery`, RFC 8615):
 | `/lib/:module` | GET | Client libraries (`witness.js`, `wallet.js`, `client.js`, `ethers.js`, …) |
 | `/artifacts/:file` | GET | Contract ABIs/artifacts |
 | `/connect` | GET / POST | Session check / key-exchange handshake (sets `_epistery`; on-chain `isAuthorized` verify for contract claims) |
-| `/create` | GET | Wallet creation helper |
-| `/auth/account/claim`, `/auth/dns/claim`, `/auth/account/check-admin` | GET/POST | Domain claiming & admin checks |
-| `/identity/prepare-add-rivet` | POST | Unsigned tx for adding a rivet to an existing IdentityContract (client signs, then `/data/submit-signed`-style broadcast) |
-| `/domain/initialize` | POST | Initialize a domain wallet |
 | `/fido/blob`, `/fido/blob/:credentialId` | POST/GET | PRF-wrapped rivet key blob storage |
 
 ---
@@ -283,9 +279,9 @@ upgrades), `buildStatus`, `routes`.
 Also exported: `auditTree`, `secureTree`, `Config`, `chainFor`, `registerChain`, `configuredChains`,
 `defaultChainId`, `Chain`.
 
-The core `Epistery` static API (`src/epistery.ts`): `initialize`, `createWallet`,
+The core `Epistery` static API (`src/epistery.ts`): `initialize`,
 `getStatus`, `handleKeyExchange` (consumed by `/connect`),
-`prepareAddRivetToContract` (unsigned tx builder), `submitSignedTransaction`
+`submitSignedTransaction`
 (generic broadcaster for client-signed transactions — this is the
 "server-requests-signature, interactive wallet (FIDO/MetaMask) signs, then submit"
 path).

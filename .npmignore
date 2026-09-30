@@ -41,3 +41,6 @@ package-lock.json
 # Data files
 data.json
 scratch.html
+
+# Local test environment (wallet material)
+.test.env

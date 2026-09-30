@@ -6,9 +6,6 @@ import {
   WalletConfig,
   KeyExchangeRequest,
   KeyExchangeResponse,
-  UnsignedTransaction,
-  PrepareTransactionRequest,
-  PrepareTransactionResponse,
   SubmitSignedTransactionRequest,
   SubmitSignedTransactionResponse
 } from './utils/index.js';
@@ -29,18 +26,6 @@ export class Epistery {
       return;
 
     Epistery.isInitialized = true;
-  }
-
-  public static createWallet(): ClientWalletInfo {
-    const wallet = ethers.Wallet.createRandom();
-    const clientWalletInfo: ClientWalletInfo = {
-      address: wallet.address,
-      mnemonic: wallet.mnemonic?.phrase || '',
-      publicKey: wallet.publicKey,
-      privateKey: wallet.privateKey,
-    };
-
-    return clientWalletInfo;
   }
 
   public static async getStatus(client: ClientWalletInfo, server: DomainConfig): Promise<EpisteryStatus> {
@@ -134,161 +119,6 @@ export class Epistery {
       console.error('Key exchange error:', error);
       return null;
     }
-  }
-
-  /**
-   * Prepares an unsigned "add rivet to IdentityContract" transaction
-   *
-   * @param signerAddress - Address of the rivet calling addRivet (must be authorized)
-   * @param contractAddress - Address of the IdentityContract
-   * @param rivetAddressToAdd - Address of the rivet to add
-   * @param rivetName - Name for the new rivet
-   * @param domain - Domain context
-   * @returns Unsigned transaction ready for client to sign
-   */
-  public static async prepareAddRivetToContract(
-    signerAddress: string,
-    contractAddress: string,
-    rivetAddressToAdd: string,
-    rivetName: string,
-    domain: string
-  ): Promise<any> {
-    // RPC comes from ~/.epistery via Config (GetDomainInfo falls back to root
-    // [provider]); never process.env — env is for deployment vars only.
-    const domainInfo = await Utils.GetDomainInfo(domain);
-    const rpcUrl = domainInfo?.provider?.rpc;
-    if (!rpcUrl) {
-      throw new Error(`No provider RPC configured in ~/.epistery for domain "${domain}"`);
-    }
-    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-
-    // Get server wallet for funding
-    const serverWalletConfig = domainInfo?.wallet;
-    if (!serverWalletConfig) {
-      throw new Error('Server wallet not configured');
-    }
-    const serverWallet = ethers.Wallet.fromMnemonic(serverWalletConfig.mnemonic).connect(provider);
-
-    // Load IdentityContract artifact - try multiple paths
-    const fs = await import('fs/promises');
-    const path = await import('path');
-
-    // Try epistery package path first (when running from epistery-host)
-    let artifactPath = path.join(__dirname, '..', 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-
-    let artifactData: string;
-    try {
-      artifactData = await fs.readFile(artifactPath, 'utf-8');
-    } catch (e) {
-      // Fallback to process.cwd() for development
-      artifactPath = path.join(process.cwd(), 'artifacts', 'contracts', 'IdentityContract.sol', 'IdentityContract.json');
-      artifactData = await fs.readFile(artifactPath, 'utf-8');
-    }
-
-    const artifact = JSON.parse(artifactData);
-
-    // Create contract interface to encode function call
-    const contractInterface = new ethers.utils.Interface(artifact.abi);
-    const txData = contractInterface.encodeFunctionData('addRivet', [rivetAddressToAdd, rivetName]);
-
-    // Estimate gas for the addRivet transaction
-    let estimatedGas: ethers.BigNumber;
-    try {
-      estimatedGas = await provider.estimateGas({
-        from: signerAddress,
-        to: contractAddress,
-        data: txData
-      });
-    } catch (error) {
-      console.warn('Gas estimation failed for addRivet, using fallback');
-      estimatedGas = ethers.BigNumber.from(100000);
-    }
-
-    const gasLimit = estimatedGas.mul(130).div(100);
-
-    // Build Transaction
-    const network = await provider.getNetwork();
-    const nonce = await provider.getTransactionCount(signerAddress, 'pending');
-    const feeData = await provider.getFeeData();
-
-    const unsignedTx: any = {
-      to: contractAddress,
-      data: txData,
-      value: '0x00',
-      nonce: nonce,
-      chainId: network.chainId,
-      gasLimit: '0x' + gasLimit.toHexString().slice(2)
-    };
-
-    // Add gas pricing
-    let totalTxCost: ethers.BigNumber;
-    if (feeData.maxFeePerGas && feeData.maxPriorityFeePerGas) {
-      let maxFee = feeData.maxFeePerGas.mul(120).div(100);
-      let priorityFee = feeData.maxPriorityFeePerGas.mul(120).div(100);
-
-      const isPolygon = network.chainId === 137 || network.chainId === 80002;
-      if (isPolygon) {
-        const minPriorityFee = ethers.utils.parseUnits('30', 'gwei');
-        if (priorityFee.lt(minPriorityFee)) {
-          priorityFee = minPriorityFee;
-        }
-        if (maxFee.lt(priorityFee)) {
-          maxFee = priorityFee.mul(2);
-        }
-      }
-
-      unsignedTx.maxFeePerGas = '0x' + maxFee.toHexString().slice(2);
-      unsignedTx.maxPriorityFeePerGas = '0x' + priorityFee.toHexString().slice(2);
-      unsignedTx.type = 2;
-
-      totalTxCost = gasLimit.mul(maxFee);
-    } else {
-      const gasPrice = feeData.gasPrice!.mul(120).div(100);
-      unsignedTx.gasPrice = '0x' + gasPrice.toHexString().slice(2);
-
-      totalTxCost = gasLimit.mul(gasPrice);
-    }
-
-    // Fund Signer Wallet
-    const signerBalance = await provider.getBalance(signerAddress);
-    const neededWithBuffer = totalTxCost.mul(150).div(100);
-
-    if (signerBalance.lt(neededWithBuffer)) {
-      const amountToFund = neededWithBuffer.sub(signerBalance);
-
-      const fundTxParams: any = {
-        to: signerAddress,
-        value: amountToFund,
-        gasLimit: ethers.BigNumber.from(21000).mul(130).div(100)
-      };
-
-      if (unsignedTx.type === 2) {
-        const isPolygon = network.chainId === 137 || network.chainId === 80002;
-        const minPriorityFee = isPolygon ? ethers.utils.parseUnits('30', 'gwei') : ethers.BigNumber.from(unsignedTx.maxPriorityFeePerGas);
-        fundTxParams.maxFeePerGas = unsignedTx.maxFeePerGas;
-        fundTxParams.maxPriorityFeePerGas = minPriorityFee;
-        fundTxParams.type = 2;
-      } else {
-        fundTxParams.gasPrice = unsignedTx.gasPrice;
-      }
-
-      const fundTx = await serverWallet.sendTransaction(fundTxParams);
-      await fundTx.wait();
-    }
-
-    console.log(`Prepared addRivet transaction for ${signerAddress} to add ${rivetAddressToAdd}`);
-
-    return {
-      unsignedTransaction: unsignedTx,
-      metadata: {
-        operation: 'addRivetToContract',
-        estimatedCost: ethers.utils.formatEther(gasLimit.mul(feeData.gasPrice || feeData.maxFeePerGas!)),
-        signer: signerAddress,
-        contractAddress: contractAddress,
-        rivetToAdd: rivetAddressToAdd,
-        rivetName: rivetName
-      }
-    };
   }
 
   /**

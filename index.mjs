@@ -577,13 +577,9 @@ class EpisteryAttach {
    *   /lib/:module          - Client library files
    *   /artifacts/:file      - Contract artifacts
    *   /connect              - Key exchange
-   *   /create               - Create wallet
-   *   /auth/*               - Authentication & domain claiming
-   *   /data/*               - Data read/write/ownership
+       *   /data/*               - Data read/write/ownership
    *   /approval/*           - Approval system
-   *   /identity/*           - Identity contract management
-   *   /domain/*             - Domain initialization
-   *   /lists                - Get all lists
+     *   /lists                - Get all lists
    *   /list                 - Get specific list
    *   /list/check/:address  - Check list membership
    *   /contract/*           - Contract version info

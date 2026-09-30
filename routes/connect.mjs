@@ -242,10 +242,5 @@ export default function connectRoutes(epistery) {
     }
   });
 
-  router.get("/create", (req, res) => {
-    const wallet = Epistery.createWallet();
-    res.json({ wallet });
-  });
-
   return router;
 }
