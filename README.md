@@ -279,6 +279,31 @@ upgrades), `buildStatus`, `routes`.
 Also exported: `auditTree`, `secureTree`, `Config`, `chainFor`, `registerChain`, `configuredChains`,
 `defaultChainId`, `Chain`.
 
+### The wire (core owns it)
+
+Every shared definition of what goes over the wire lives in core and is imported
+by every signer and verifier; none re-inlines it. Each is a pure ES module under
+`client/`, importable in Node and servable to a browser (`/lib/<name>`):
+
+- `client/storage-message.mjs` — the `/storage` signed write: `storageWriteMessage`
+  and `parseStorageWriteMessage` (the six-line message), `encodeStorageCredential`
+  / `decodeStorageCredential` (the `Bot <base64url {address, signature, message[,
+  identity]}>` envelope, byte-identical to what is stored and verified today),
+  `storageAuthorization`, `signStorageWrite` (build + sign with any `sign(message)`),
+  `sha256hex` (the one body hash, WebCrypto), `ADDRESS_RE` / `isAddress`.
+- `client/chain-read.mjs` — `chainReader` (k-of-n attestation reads over owned
+  nodes), `isChainReadFailure` (the one classifier: a failed read is not a "no"),
+  and `ROLE` / `ROLE_NAME` / `roleName`, the EpisteryAccess role table as the
+  contract stores it (a test reads it out of the Solidity source).
+- `client/key-exchange-message.mjs` — `keyExchangeMessage`, the string a device
+  signs for `/connect` and for the config authority.
+- `client/bot-auth-message.mjs`, `client/boost-message.mjs`,
+  `client/origin-certificate.mjs` — as before.
+
+`Config` reads distinguish absent from failed: a missing config is `{}`; a config
+that cannot be read (filesystem error, authority error other than 404) throws.
+The chain registry reads root config through one shared `Config`.
+
 The core `Epistery` static API (`src/epistery.ts`): `initialize`,
 `getStatus`, `handleKeyExchange` (consumed by `/connect`),
 `submitSignedTransaction`

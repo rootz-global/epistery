@@ -31,6 +31,11 @@ export default function statusRoutes(epistery) {
     "export.js": path.resolve(rootDir, "client/export.js"),
     "ethers.js": path.resolve(rootDir, "client/ethers.js"),
     "ethers.min.js": path.resolve(rootDir, "client/ethers.min.js"),
+    // The wire, browser-importable (pure ESM): witness.js imports the
+    // key-exchange message; hosts import the rest by these names.
+    "key-exchange-message.mjs": path.resolve(rootDir, "client/key-exchange-message.mjs"),
+    "storage-message.mjs": path.resolve(rootDir, "client/storage-message.mjs"),
+    "chain-read.mjs": path.resolve(rootDir, "client/chain-read.mjs"),
   };
 
   // Serve client library files

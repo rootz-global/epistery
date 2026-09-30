@@ -599,9 +599,17 @@ export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor 
 // owned endpoints from config, the reader over them, and the one classifier of a
 // failed read versus the chain's answer.
 export { attestationConfig };
-export { chainReader, isChainReadFailure } from './client/chain-read.mjs';
+export { chainReader, isChainReadFailure, ROLE, ROLE_NAME, roleName } from './client/chain-read.mjs';
 export { auditTree, secureTree, formatMode };
 export { storageWriteMessage };
+// The rest of the storage-write wire and the key-exchange message — one home each
+// (EpisteryRefactor3Q26Review C2, C7): the credential envelope encode/parse, the
+// message parser, the body hash, the address shape.
+export {
+  STORAGE_WRITE_TAG, parseStorageWriteMessage, encodeStorageCredential, decodeStorageCredential,
+  storageAuthorization, signStorageWrite, sha256hex, ADDRESS_RE, isAddress, base64urlEncode, base64urlDecode,
+} from './client/storage-message.mjs';
+export { keyExchangeMessage } from './client/key-exchange-message.mjs';
 export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };
 export {
   ORIGIN_CERT_TAG,

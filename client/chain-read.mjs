@@ -55,7 +55,12 @@ const ABI = [
   "function getRivets() view returns (address[])",
   "function roleOf(string section, address account) view returns (uint8)",
 ];
-const ROLE_WRITE = 2;
+// The EpisteryAccess role table — the values the contract stores (contracts/
+// EpisteryAccess.sol: ROLE_NONE..ROLE_OWNER). The one declaration; every
+// verifier, client and UI that names a role imports it from here.
+export const ROLE = Object.freeze({ NONE: 0, READ: 1, WRITE: 2, ADMIN: 3, OWNER: 4 });
+export const ROLE_NAME = Object.freeze({ 0: 'none', 1: 'read', 2: 'write', 3: 'admin', 4: 'owner' });
+export function roleName(role) { return ROLE_NAME[Number(role)] ?? null; }
 const lc = (a) => String(a || "").toLowerCase();
 const host = (url) => { try { return new URL(url).host; } catch { return String(url); } };
 
@@ -154,9 +159,9 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   // commit, read by the caller itself.
   async function mayCommit(contract, section, signer, identity = null) {
     if (await isRivet(contract, signer)) return true;
-    if ((await roleOf(contract, section, signer)) >= ROLE_WRITE) return true;
+    if ((await roleOf(contract, section, signer)) >= ROLE.WRITE) return true;
     if (identity && lc(identity) !== lc(signer) && (await read(identity, "isAuthorized", [signer]))) {
-      return (await roleOf(contract, section, identity)) >= ROLE_WRITE;
+      return (await roleOf(contract, section, identity)) >= ROLE.WRITE;
     }
     return false;
   }

@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { keyExchangeMessage } from '../client/key-exchange-message.mjs';
 import { createHash, randomBytes } from 'crypto';
 import express, { Express } from 'express';
 import cookieParser from 'cookie-parser';
@@ -129,7 +130,7 @@ export async function createKeyExchangePayload(wallet: ethers.Wallet): Promise<{
   walletSource: string;
 }> {
   const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-  const message = `Epistery Key Exchange - ${wallet.address} - ${challenge}`;
+  const message = keyExchangeMessage({ address: wallet.address, challenge });
   const signature = await wallet.signMessage(message);
 
   return {

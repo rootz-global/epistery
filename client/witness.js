@@ -19,6 +19,7 @@ import {
   unpinWallet,
   installTabHeader,
 } from "./tab.js?v=1";
+import { keyExchangeMessage } from "./key-exchange-message.mjs";
 
 // Every same-origin request from this tab names this tab, from module load —
 // before any code below runs a fetch. Inert until the tab is armed by its first
@@ -556,7 +557,7 @@ export default class Witness {
 
       // Sign over signerAddress — what the server's recovery proves.
       const challenge = this.generateChallenge();
-      const message = `Epistery Key Exchange - ${signerAddress} - ${challenge}`;
+      const message = keyExchangeMessage({ address: signerAddress, challenge });
       const signature = await this.wallet.sign(message, ethers);
 
       const keyExchangeData = {

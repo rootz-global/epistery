@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ethers } from 'ethers';
+import { keyExchangeMessage } from '../../client/key-exchange-message.mjs';
 import {
   createTestApp,
   TestApp,
@@ -62,7 +63,7 @@ describe('Connect Routes', () => {
 
     it('should return 401 for invalid signature', async () => {
       const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-      const message = `Epistery Key Exchange - ${client1Wallet.address} - ${challenge}`;
+      const message = keyExchangeMessage({ address: client1Wallet.address, challenge });
       const invalidSignature = '0x' + '00'.repeat(65); // Invalid signature
 
       const payload = {
@@ -85,7 +86,7 @@ describe('Connect Routes', () => {
       // Sign with client1 but claim to be a different address
       const fakeAddress = '0x0000000000000000000000000000000000000001';
       const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-      const message = `Epistery Key Exchange - ${fakeAddress} - ${challenge}`;
+      const message = keyExchangeMessage({ address: fakeAddress, challenge });
       const signature = await client1Wallet.signMessage(message);
 
       const payload = {

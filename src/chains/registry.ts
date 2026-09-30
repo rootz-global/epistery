@@ -21,6 +21,17 @@ type ChainCtor = (new (config: ChainConfig) => Chain) & { defaults: Partial<Chai
 const REGISTRY = new Map<number, ChainCtor>();
 
 /**
+ * The registry's ONE Config, root path only. Every read here is of '/', so one
+ * instance serves them all; a fresh `new Config()` per call re-authenticated to
+ * the authority on every call in remote mode.
+ */
+let ROOT_CONFIG: Config | null = null;
+function rootConfig(): Config {
+  if (!ROOT_CONFIG) ROOT_CONFIG = new Config();
+  return ROOT_CONFIG;
+}
+
+/**
  * Register a Chain subclass for a given chainId. Overwrites any existing
  * entry — last write wins, so a downstream app can override a built-in if it
  * wants different fee policy.
@@ -83,8 +94,7 @@ export function registeredChains(): ChainConfig[] {
  * Chains without a config override are returned unchanged.
  */
 export async function configuredChains(): Promise<ChainConfig[]> {
-  const config = new Config();
-  const rootData = await config.read('/');
+  const rootData = await rootConfig().read('/');
   return registeredChains().map(chain => {
     const id = String(chain.chainId);
     const privateRpc = rootData?.default?.rpc?.[id]?.privateRpc
@@ -111,7 +121,7 @@ export async function configuredChains(): Promise<ChainConfig[]> {
  * throws — an attestation read never falls through to a public or foreign endpoint.
  */
 export async function attestationConfig(chainId: number | string): Promise<{ rpcs: string[]; quorum: number | null }> {
-  const rootData = await new Config().read('/');
+  const rootData = await rootConfig().read('/');
   const sections = rootData?.chains || {};
   const rpcs: string[] = [];
   let quorum: number | null = null;
@@ -140,8 +150,7 @@ export async function attestationConfig(chainId: number | string): Promise<{ rpc
  * falling back to Polygon mainnet (137).
  */
 export async function defaultChainId(): Promise<string> {
-  const config = new Config();
-  const rootData = await config.read('/');
+  const rootData = await rootConfig().read('/');
   return String(
     rootData?.default?.defaultChainId
     || rootData?.default?.provider?.chainId
@@ -211,7 +220,7 @@ export async function defaultChain(): Promise<ChainConfig> {
   const found = await findChain(id);
   if (found) return found;
 
-  const rootData = await new Config().read('/');
+  const rootData = await rootConfig().read('/');
   const provider = rootData?.default?.provider;
   if (provider?.chainId) return { ...provider, chainId: Number(provider.chainId) };
 
@@ -227,7 +236,7 @@ export async function setDefaultChain(selector: string | number): Promise<ChainC
   const chain = await findChain(selector);
   if (!chain) throw new Error(`Unknown chain: ${selector}`);
 
-  const config = new Config();
+  const config = rootConfig();
   await config.setPath('/');
   if (!config.data.default) config.data.default = {};
   config.data.default.defaultChainId = String(chain.chainId);

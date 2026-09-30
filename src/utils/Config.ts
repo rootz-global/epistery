@@ -12,6 +12,7 @@ import {
   secureToSync,
   warnIfTooOpen,
 } from './Permissions';
+import { loadClientModule } from './clientModule';
 
 /**
  * Epistery Config — async path-based configuration store.
@@ -128,13 +129,7 @@ export class LocalConfig implements ConfigStore {
   }
 
   public async load(): Promise<void> {
-    try {
-      const fileData = await fsp.readFile(this.currentFile, 'utf8');
-      this.data = ini.decode(fileData);
-      if (holdsSecrets(this.data)) warnIfTooOpen(this.currentFile);
-    } catch {
-      this.data = {};
-    }
+    this.data = await LocalConfig.readIni(this.currentFile);
   }
 
   public async read(path: string): Promise<any> {
@@ -142,14 +137,26 @@ export class LocalConfig implements ConfigStore {
     const configFile = path === '/'
       ? join(this.configDir, 'config.ini')
       : join(this.configDir, path.slice(1), 'config.ini');
+    return LocalConfig.readIni(configFile);
+  }
+
+  /**
+   * A config that is ABSENT is empty ({}); a config that cannot be READ throws.
+   * The two used to collapse into {} — and the next step after "no wallet in
+   * this config" mints one and saves it, so one failed read at boot could
+   * replace a domain's wallet (PredictableFailure: read-failed is not absent).
+   */
+  private static async readIni(file: string): Promise<any> {
+    let text: string;
     try {
-      const fileData = await fsp.readFile(configFile, 'utf8');
-      const data = ini.decode(fileData);
-      if (holdsSecrets(data)) warnIfTooOpen(configFile);
-      return data;
-    } catch {
-      return {};
+      text = await fsp.readFile(file, 'utf8');
+    } catch (e: any) {
+      if (e?.code === 'ENOENT') return {};
+      throw new Error(`config read failed: ${file}: ${e?.message || e}`);
     }
+    const data = ini.decode(text);
+    if (holdsSecrets(data)) warnIfTooOpen(file);
+    return data;
   }
 
   public async save(): Promise<void> {
@@ -245,7 +252,8 @@ export class RemoteConfig implements ConfigStore {
     if (!cRes.ok) throw new Error(`authority challenge failed: ${cRes.status}`);
     const { challenge } = await cRes.json();
 
-    const message = `Epistery Key Exchange - ${this.machineAddress} - ${challenge}`;
+    const { keyExchangeMessage } = await loadClientModule('key-exchange-message.mjs');
+    const message = keyExchangeMessage({ address: this.machineAddress, challenge });
     const signature = await this.signChallenge(message);
 
     const vRes = await fetch(`${this.baseUrl}/auth/verify`, {
@@ -282,7 +290,10 @@ export class RemoteConfig implements ConfigStore {
   public async read(path: string): Promise<any> {
     const p = this.prefixed(path);
     const res = await this.authedFetch(`/config${p === '/' ? '/' : p}`);
-    if (!res.ok) return {};
+    // Absent on the authority is empty; anything else that is not a success is a
+    // failed read and throws — never an empty config that the caller then fills.
+    if (res.status === 404) return {};
+    if (!res.ok) throw new Error(`authority read failed: ${res.status} for ${p}`);
     return (await res.json()).data || {};
   }
 

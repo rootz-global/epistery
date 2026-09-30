@@ -10,6 +10,7 @@ import {
   SubmitSignedTransactionResponse
 } from './utils/index.js';
 import { ethers } from 'ethers';
+import { loadClientModule } from './utils/clientModule';
 
 export class Epistery {
   private static ipfsApiUrl: string | undefined;
@@ -70,7 +71,8 @@ export class Epistery {
       // address from `signature` must equal it. Contract claims (if any) are
       // verified separately by the caller via on-chain isAuthorized — not
       // here.
-      const expectedMessage = `Epistery Key Exchange - ${request.signerAddress} - ${request.challenge}`;
+      const { keyExchangeMessage } = await loadClientModule('key-exchange-message.mjs');
+      const expectedMessage = keyExchangeMessage({ address: request.signerAddress, challenge: request.challenge });
 
       if (request.message !== expectedMessage) {
         console.error('Key exchange message mismatch');

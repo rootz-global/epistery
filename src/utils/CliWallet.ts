@@ -5,6 +5,7 @@ import { defaultChain, providerConfigFor } from '../chains';
 import fs from 'fs';
 import { join } from 'path';
 import { createHash, randomBytes } from 'crypto';
+import { loadClientModule } from './clientModule';
 
 /**
  * The request a bot signature authorises. Either `url`, or both `uri` and
@@ -256,7 +257,8 @@ export class CliWallet {
 
     // Generate challenge for key exchange
     const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-    const message = `Epistery Key Exchange - ${this.address} - ${challenge}`;
+    const { keyExchangeMessage } = await loadClientModule('key-exchange-message.mjs');
+    const message = keyExchangeMessage({ address: this.address, challenge });
 
     // Sign the message
     const signature = await this.sign(message);
@@ -392,9 +394,7 @@ export class CliWallet {
    * @param req.body    request body as sent — string, Buffer or undefined
    */
   async createBotAuthHeader(req: BotAuthRequest = {}): Promise<string> {
-    const { botAuthMessage, audienceFor, EMPTY_BODY_SHA256 } = await import(
-      '../../client/bot-auth-message.mjs' as string
-    );
+    const { botAuthMessage, audienceFor, EMPTY_BODY_SHA256 } = await loadClientModule('bot-auth-message.mjs');
 
     let uri = req.uri;
     let aud = req.aud;
