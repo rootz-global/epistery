@@ -152,9 +152,12 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   // null when the chain answers nothing — no contract there, no such function, a
   // revert. One output is returned bare; several as the decoded result.
   async function view(to, abi, fn, args = [], { fresh = false } = {}) {
-    const text = Array.isArray(abi) ? abi.join("\n") : String(abi);
+    // Fragments may be human-readable strings or JSON ABI objects; the key must
+    // tell two JSON ABIs apart, which String() would not.
+    const fragments = Array.isArray(abi) ? abi : [abi];
+    const text = fragments.map((f) => (typeof f === "string" ? f : JSON.stringify(f))).join("\n");
     let vi = ifaces.get(text);
-    if (!vi) { vi = new ethers.utils.Interface(Array.isArray(abi) ? abi : [abi]); ifaces.set(text, vi); }
+    if (!vi) { vi = new ethers.utils.Interface(fragments); ifaces.set(text, vi); }
     return cached(`view|${lc(to)}|${fn}|${JSON.stringify(args)}`, async () => {
       const out = await call(to, vi.encodeFunctionData(fn, args));
       if (out == null) return null;

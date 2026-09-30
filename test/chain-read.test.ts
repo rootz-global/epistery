@@ -161,6 +161,11 @@ describe('chainReader — the verbs the relay and the member share', () => {
     expect(await r.view(CONTRACT, 'function getSectionNames() view returns (string[])', 'getSectionNames')).toEqual(['recipes', '_profile']);
     expect(await r.view(STRANGER, ['function getSectionNames() view returns (string[])'], 'getSectionNames')).toBe(null);
     expect(Number(await r.view(CONTRACT, 'function roleOf(string,address) view returns (uint8)', 'roleOf', [SESSION, ADMIN]))).toBe(3);
+    // JSON ABI fragments work too, and two different ones do not share an Interface
+    const jsonAbi = [{ type: 'function', name: 'getSectionNames', stateMutability: 'view', inputs: [], outputs: [{ type: 'string[]' }] }];
+    const jsonAbi2 = [{ type: 'function', name: 'getRivets', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] }];
+    expect(await r.view(CONTRACT, jsonAbi, 'getSectionNames')).toEqual(['recipes', '_profile']);
+    expect((await r.view(CONTRACT, jsonAbi2, 'getRivets')).map((a: string) => a.toLowerCase())).toEqual([RIVET.toLowerCase()]);
   });
 
   it('sectionRole: the signer as principal, and the identity that vouches for it — the larger role', async () => {
