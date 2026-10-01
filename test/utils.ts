@@ -34,6 +34,7 @@ export interface TestApp {
 export async function createTestApp(options?: {
   authentication?: (clientInfo: any) => Promise<any>;
   domain?: string;
+  rootPath?: string;
 }): Promise<TestApp> {
   // Set up environment before importing Epistery
   const testConfigPath = path.resolve(__dirname, 'config');
@@ -59,7 +60,7 @@ export async function createTestApp(options?: {
   });
 
   await epistery.setDomain(options?.domain || 'localhost');
-  await epistery.attach(app);
+  await epistery.attach(app, options?.rootPath);
 
   return {
     app,

@@ -229,9 +229,11 @@ export class CliWallet {
    * Automatically saves session cookie to domain config
    */
   async performKeyExchange(serverUrl: string): Promise<KeyExchangeResponse> {
-    // Ensure server URL is properly formatted
+    // Where the host mounted epistery is the host's to say: its well-known
+    // location (RFC 8615) answers wherever the routes live and names the
+    // handshake. A host that answers nothing there is not an epistery host.
     const baseUrl = serverUrl.replace(/\/$/, '');
-    const connectUrl = `${baseUrl}/.well-known/epistery/connect`;
+    const connectUrl = await CliWallet.discoverConnect(baseUrl);
 
     // Generate challenge for key exchange
     const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
@@ -296,6 +298,22 @@ export class CliWallet {
     }
 
     return serverResponse;
+  }
+
+  /** The host's handshake URL, from its well-known discovery answer. */
+  static async discoverConnect(baseUrl: string): Promise<string> {
+    const wellKnown = `${baseUrl}/.well-known/epistery`;
+    let answer: any;
+    try {
+      const r = await fetch(wellKnown, { headers: { Accept: 'application/json' } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      answer = await r.json();
+    } catch (e: any) {
+      throw new Error(`${baseUrl} does not answer at ${wellKnown} (${e.message}) — not an epistery host, or not reachable`);
+    }
+    if (typeof answer?.epistery?.connect === 'string') return `${baseUrl}${answer.epistery.connect}`;
+    // A host from before discovery mounted at the well-known path itself.
+    return `${wellKnown}/connect`;
   }
 
   /**

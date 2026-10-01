@@ -93,4 +93,23 @@ describe('Status Routes', () => {
         .expect(404);
     });
   });
+
+  // A host that mounts epistery at its root (the console) is still discovered at
+  // the well-known location, and the answer names the root and the handshake.
+  describe('discovery when mounted at the root', () => {
+    it('answers at /.well-known/epistery and says where the routes are', async () => {
+      const rooted = await createTestApp({ rootPath: '/' } as any);
+      const wk = await rooted.supertest.get('/.well-known/epistery').set('Accept', 'application/json').expect(200);
+      expect(wk.body.epistery.rootPath).toBe('/');
+      expect(wk.body.epistery.connect).toBe('/connect');
+      expect(wk.body.server.walletAddress).toBeDefined();
+      const root = await rooted.supertest.get('/').set('Accept', 'application/json').expect(200);
+      expect(root.body.epistery.connect).toBe('/connect');
+      await rooted.supertest.get('/connect').expect(200);
+    });
+    it('says the default root when mounted there', async () => {
+      const r = await testApp.supertest.get('/.well-known/epistery').set('Accept', 'application/json').expect(200);
+      expect(r.body.epistery.connect).toBe('/.well-known/epistery/connect');
+    });
+  });
 });

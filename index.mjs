@@ -328,6 +328,9 @@ async function getDomainConfig(domain) {
   return await Utils.GetDomainInfo(domain);
 }
 
+// Where a host is discovered (RFC 8615), and the default mount of its routes.
+export const WELL_KNOWN_PATH = "/.well-known/epistery";
+
 class EpisteryAttach {
   constructor(options = {}) {
     this.options = options;
@@ -385,7 +388,7 @@ class EpisteryAttach {
   }
 
   async attach(app, rootPath, options = {}) {
-    this.rootPath = rootPath || "/.well-known/epistery";
+    this.rootPath = rootPath || WELL_KNOWN_PATH;
     app.locals.epistery = this;
 
     // Capture the raw bytes a bot signature commits to — but ONLY for requests
@@ -437,6 +440,14 @@ class EpisteryAttach {
 
     // Mount routes - RFC 8615 compliant well-known URI
     app.use(this.rootPath, this.routes());
+
+    // RFC 8615: the well-known location is where a stranger discovers this host
+    // regardless of where the host chose to mount the routes. A host mounted at
+    // its root (the console) still answers here, and the answer says the root,
+    // so a client (the CLI's key exchange) asks for it rather than assuming it.
+    if (this.rootPath !== WELL_KNOWN_PATH) {
+      app.get([WELL_KNOWN_PATH, `${WELL_KNOWN_PATH}/`], (req, res) => res.json(this.buildStatus()));
+    }
   }
 
   /**
@@ -558,6 +569,9 @@ class EpisteryAttach {
       }
       : null;
     return {
+      // Where this host mounted epistery: a client builds the handshake URL from
+      // this, never from an assumed path.
+      epistery: { rootPath: this.rootPath || WELL_KNOWN_PATH, connect: `${(this.rootPath || WELL_KNOWN_PATH).replace(/\/$/, "")}/connect` },
       server: {
         walletAddress: d?.wallet?.address || null,
         publicKey: d?.wallet?.publicKey || null,
