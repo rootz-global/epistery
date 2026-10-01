@@ -146,6 +146,27 @@ describe('Bot authentication — the signature covers the request', () => {
     expect(res.body.authType).toBeNull();
   });
 
+  it('does not judge the relay storage-write credential — the other `Bot` wire', async () => {
+    // The relay's storage credential shares the scheme name: `Bot <base64 JSON>`
+    // with a signed `message` and no envelope version. It is the relay's to
+    // verify, not a malformed bot-auth envelope: no identity here, no warning.
+    const message = `epistery-storage-write\nmethod: PUT\ncontract: 0x0\n`;
+    const signature = await wallet.signMessage(message);
+    const credential =
+      'Bot ' +
+      Buffer.from(JSON.stringify({ address: wallet.address, signature, message, identity: wallet.address })).toString('base64');
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...a: any[]) => { warnings.push(a.join(' ')); };
+    try {
+      const res = await post('/probe').set('Authorization', credential).expect(200);
+      expect(res.body.authType).toBeNull();
+    } finally {
+      console.warn = warn;
+    }
+    expect(warnings.filter((w) => /Bot auth rejected/.test(w))).toEqual([]);
+  });
+
   it('rejects the legacy unbound header format', async () => {
     // The pre-binding wire: a banner string, signed, with no request context.
     const message = `Rhonda Bot Authentication - ${new Date().toISOString()}`;

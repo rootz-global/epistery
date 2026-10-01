@@ -3,8 +3,6 @@ import { Config } from './Config';
 import { DomainConfig, ProviderConfig, KeyExchangeRequest, KeyExchangeResponse } from './types';
 import { sharedSecretOf } from './PeerCapability';
 import { defaultChain, providerConfigFor } from '../chains';
-import fs from 'fs';
-import { join } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { loadClientModule } from './clientModule';
 
@@ -288,7 +286,7 @@ export class CliWallet {
         const sessionToken = sessionMatch[1];
 
         // Save session to domain config
-        this.saveSession({
+        await this.saveSession({
           domain: serverUrl,
           cookie: sessionToken,
           authenticated: serverResponse.authenticated || false,
@@ -317,56 +315,27 @@ export class CliWallet {
   }
 
   /**
-   * Get saved session for a specific server URL
+   * The saved session for a server URL, or null when there is none (or the
+   * file is not a session). Sessions are files of the wallet's domain config —
+   * read through Config, wherever that config lives.
    */
-  getSession(serverUrl: string): SessionInfo | null {
-    const sessionFile = this.getSessionFilePath(serverUrl);
-    if (!fs.existsSync(sessionFile)) {
-      return null;
-    }
-
+  async getSession(serverUrl: string): Promise<SessionInfo | null> {
     try {
-      const data = fs.readFileSync(sessionFile, 'utf8');
-      return JSON.parse(data) as SessionInfo;
-    } catch (error) {
+      const data = await this.config.readFile(CliWallet.sessionFileName(serverUrl));
+      return JSON.parse(data.toString('utf8')) as SessionInfo;
+    } catch {
       return null;
     }
   }
 
-  /**
-   * Save session info to domain directory, keyed by server URL
-   */
-  private saveSession(session: SessionInfo): void {
-    const sessionFile = this.getSessionFilePath(session.domain);
-    fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2), { mode: 0o600 });
+  /** Save a session as a file of the domain config, keyed by server URL. */
+  private async saveSession(session: SessionInfo): Promise<void> {
+    await this.config.writeFile(CliWallet.sessionFileName(session.domain), JSON.stringify(session, null, 2));
   }
 
-  /**
-   * Clear saved session for a server URL
-   */
-  clearSession(serverUrl: string): void {
-    const sessionFile = this.getSessionFilePath(serverUrl);
-    if (fs.existsSync(sessionFile)) {
-      fs.unlinkSync(sessionFile);
-    }
-  }
-
-  /**
-   * Get session file path for a server URL
-   * Hashes the server URL to create a safe filename
-   */
-  private getSessionFilePath(serverUrl: string): string {
-    // Create a safe filename from the server URL
-    const crypto = require('crypto');
-    const hash = crypto.createHash('md5').update(serverUrl).digest('hex');
-    const sessionsDir = join(this.config.configDir, this.domainName, 'sessions');
-
-    // Ensure sessions directory exists
-    if (!fs.existsSync(sessionsDir)) {
-      fs.mkdirSync(sessionsDir, { mode: 0o700, recursive: true });
-    }
-
-    return join(sessionsDir, `${hash}.json`);
+  /** One file per server, named by a digest of its URL: `session-<md5>.json`. */
+  private static sessionFileName(serverUrl: string): string {
+    return `session-${createHash('md5').update(serverUrl).digest('hex')}.json`;
   }
 
   /**

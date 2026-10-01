@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import { Config } from './Config';
 import { DomainConfig } from './types';
-import { chainFor } from '../chains';
+import { chainFor, rootProvider } from '../chains';
 import { withPeerCapability } from './PeerCapability';
 
 export class Utils {
@@ -30,22 +30,11 @@ export class Utils {
 
       const domainConfig = this.config.data.domain ? this.config.data : {domain: domain};
 
-      // Get default provider if not set.
-      //
-      // epistery-host (multi-domain) keeps the shared default at
-      // root [default.provider]; hosted domains may override it.
-      // Single-domain consumers (epistery/app, /chat, /scan) put their
-      // provider at the root [provider] section — there is no
-      // "default" because there's only one domain. Fall back through
-      // both so we never leave domainConfig.provider as a JS undefined
-      // (which Config.save would persist as the literal text
-      // "provider=undefined", and which on reload becomes a truthy
-      // string that bypasses the `||` fallback below at chainFor).
+      // A domain that names no provider uses the root's (rootProvider — the
+      // one rule for where that block lives). Read, not switched to: the
+      // config stays on the domain path.
       if (!domainConfig.provider) {
-        await this.config.setPath('/');
-        domainConfig.provider =
-          this.config.data.default?.provider ?? this.config.data.provider;
-        await this.config.setPath(domain); // Switch back to domain
+        domainConfig.provider = rootProvider(await this.config.read('/'));
       }
 
       if (!domainConfig.wallet) {

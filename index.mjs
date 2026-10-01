@@ -5,7 +5,7 @@ import { Epistery } from "./dist/epistery.js";
 import { Utils } from "./dist/utils/Utils.js";
 import { Config } from "./dist/utils/Config.js";
 import { CliWallet } from "./dist/utils/CliWallet.js";
-import { chainFor, registerChain, configuredChains, attestationConfig, defaultChainId, defaultChain, findChain, setDefaultChain, providerConfigFor, Chain } from "./dist/chains/index.js";
+import { chainFor, registerChain, configuredChains, attestationConfig, defaultChainId, defaultChain, findChain, setDefaultChain, providerConfigFor, rootProvider, serverRpcOf, publicRpcOf, Chain } from "./dist/chains/index.js";
 import * as sessionJar from "./session-jar.mjs";
 // Permission floor for ~/.epistery (wallet keys are cleartext there): hosts can
 // audit/repair the tree at startup the same way `epistery permissions` does.
@@ -214,7 +214,13 @@ export async function verifyBotAuth(req, nowMs) {
   const now = nowMs ?? Date.now();
   try {
     const decoded = Buffer.from(header.substring(4), "base64").toString("utf8");
-    const env = parseBotEnvelope(JSON.parse(decoded));
+    const parsed = JSON.parse(decoded);
+    // Two wires share the scheme name: the relay's storage-write credential is
+    // also `Bot <base64 JSON>`, with a signed `message` and no version. That is
+    // not ours to judge (the relay verifies it); it is simply not a bot-auth
+    // envelope, and says nothing about who the caller is here.
+    if (parsed && typeof parsed === "object" && parsed.v === undefined && typeof parsed.message === "string") return null;
+    const env = parseBotEnvelope(parsed);
     if (!env) {
       console.warn("[epistery] Bot auth rejected: malformed or unsupported envelope version");
       return null;
@@ -399,14 +405,26 @@ class EpisteryAttach {
     // as before. See _installBotBodyCapture.
     this._installBotBodyCapture(app, options.bodyLimit || "100mb");
 
-    // Domain middleware - set domain from hostname
+    // The domain. A host is ONE identity: the domain it pinned with setDomain
+    // is the domain of every request — the shared state (wallet, config,
+    // certificate) is not switched per request, where two concurrent requests
+    // for different names once left them out of step with each other. A host
+    // that pinned no domain is misconfigured and says so; it does not take the
+    // first Host header it sees as its identity. A multi-domain host serving
+    // many identities from one process asks for the per-request switch
+    // explicitly: attach(app, root, { domains: 'request' }).
+    const perRequest = options.domains === "request";
     app.use(async (req, res, next) => {
-      // req.hostname respects Express trust-proxy and X-Forwarded-Host,
-      // which is required for internal proxies (MCP loopback fetch).
-      // Falls back to raw Host header for non-proxied requests.
-      const hostname = req.hostname || req.headers.host?.split(":")[0] || "localhost";
-      if (req.app.locals.epistery.domainName !== hostname) {
-        await req.app.locals.epistery.setDomain(hostname);
+      const ep = req.app.locals.epistery;
+      if (perRequest) {
+        // req.hostname respects Express trust-proxy and X-Forwarded-Host,
+        // which is required for internal proxies (MCP loopback fetch).
+        // Falls back to raw Host header for non-proxied requests.
+        const hostname = req.hostname || req.headers.host?.split(":")[0] || "localhost";
+        if (ep.domainName !== hostname) await ep.setDomain(hostname);
+      } else if (!ep.domainName) {
+        res.status(503).json({ error: "epistery: this host has pinned no domain — the server calls epistery.setDomain(<its hostname>) after attach(), or attaches with { domains: 'request' } to serve one identity per hostname" });
+        return;
       }
       next();
     });
@@ -606,7 +624,7 @@ class EpisteryAttach {
 export { EpisteryAttach as Epistery, Config, chainFor, registerChain, configuredChains, defaultChainId, Chain };
 // The CLI (@epistery/cli) is a separate package; this is the surface it uses —
 // the domain wallet as a member (CliWallet), chain selection, key-file modes.
-export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor };
+export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor, rootProvider, serverRpcOf, publicRpcOf };
 // How a caller reaches the chain for an attestation read (EpisteryChainReads): the
 // owned endpoints from config, the reader over them, and the one classifier of a
 // failed read versus the chain's answer.

@@ -267,6 +267,12 @@ await epistery.setDomain('mydomain.com');
 await epistery.attach(app);              // mounts middleware + routes under rootPath
 ```
 
+A host is one identity: the domain pinned with `setDomain` is the domain of
+every request, and a host that pinned none answers 503 rather than taking its
+identity from the first Host header. A multi-domain host that serves one
+identity per hostname from a single process asks for that explicitly:
+`attach(app, rootPath, { domains: 'request' })`.
+
 The `clientInfo` passed to both hooks has the same shape as
 `req.episteryClient`: `{ signerAddress, contractAddress, identityAddress,
 publicKey }` (plus `authenticated` and `profile` after `authentication`

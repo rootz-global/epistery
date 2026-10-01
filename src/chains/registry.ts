@@ -1,4 +1,4 @@
-import { Chain, ChainConfig } from './Chain';
+import { Chain, ChainConfig, serverRpcOf } from './Chain';
 import { Config } from '../utils/Config';
 
 type ChainCtor = (new (config: ChainConfig) => Chain) & { defaults: Partial<ChainConfig> };
@@ -29,6 +29,16 @@ let ROOT_CONFIG: Config | null = null;
 function rootConfig(): Config {
   if (!ROOT_CONFIG) ROOT_CONFIG = new Config();
   return ROOT_CONFIG;
+}
+
+/**
+ * The ONE place the root config's provider block is read. A multi-domain root
+ * keeps it at `[default.provider]` (epistery-host); a single-domain root at
+ * `[provider]` — the same thing, the provider a domain uses when its own
+ * config names none. Undefined when the root names neither.
+ */
+export function rootProvider(rootData: any): ChainConfig | undefined {
+  return rootData?.default?.provider ?? rootData?.provider;
 }
 
 /**
@@ -89,18 +99,17 @@ export function registeredChains(): ChainConfig[] {
  *
  * Looks in `~/.epistery/config.ini` for:
  *   - `[default.rpc.<chainId>] privateRpc = ...`  (per-chain override)
- *   - `[default.provider] privateRpc / rpc`        (legacy single-chain fallback)
+ *   - the root provider block (`rootProvider`), for its own chain
  *
  * Chains without a config override are returned unchanged.
  */
 export async function configuredChains(): Promise<ChainConfig[]> {
   const rootData = await rootConfig().read('/');
+  const root = rootProvider(rootData);
   return registeredChains().map(chain => {
     const id = String(chain.chainId);
     const privateRpc = rootData?.default?.rpc?.[id]?.privateRpc
-      || (rootData?.default?.provider && String(rootData.default.provider.chainId) === id
-          ? (rootData.default.provider.privateRpc || rootData.default.provider.rpc)
-          : null);
+      || (root && String(root.chainId) === id ? serverRpcOf(root) : null);
     return privateRpc ? { ...chain, privateRpc } : chain;
   });
 }
@@ -146,14 +155,14 @@ export async function attestationConfig(chainId: number | string): Promise<{ rpc
 /**
  * Return the configured default chainId from root config.
  *
- * Checks `[default] defaultChainId`, then `[default.provider] chainId`,
+ * Checks `[default] defaultChainId`, then the root provider block's chainId,
  * falling back to Polygon mainnet (137).
  */
 export async function defaultChainId(): Promise<string> {
   const rootData = await rootConfig().read('/');
   return String(
     rootData?.default?.defaultChainId
-    || rootData?.default?.provider?.chainId
+    || rootProvider(rootData)?.chainId
     || '137'
   );
 }
@@ -210,9 +219,9 @@ export async function findChain(selector: string | number): Promise<ChainConfig 
 
 /**
  * Resolve the chain a new wallet should use when the caller didn't name one:
- * root config's `[default] defaultChainId` / `[default.provider] chainId`,
- * else Polygon mainnet. Falls back to the raw `[default.provider]` block when
- * that chainId has no registered subclass, so a hand-configured chain keeps
+ * root config's `[default] defaultChainId` / the root provider's chainId,
+ * else Polygon mainnet. Falls back to the raw root provider block when that
+ * chainId has no registered subclass, so a hand-configured chain keeps
  * working.
  */
 export async function defaultChain(): Promise<ChainConfig> {
@@ -220,11 +229,10 @@ export async function defaultChain(): Promise<ChainConfig> {
   const found = await findChain(id);
   if (found) return found;
 
-  const rootData = await rootConfig().read('/');
-  const provider = rootData?.default?.provider;
+  const provider = rootProvider(await rootConfig().read('/'));
   if (provider?.chainId) return { ...provider, chainId: Number(provider.chainId) };
 
-  throw new Error(`No chain registered for chainId ${id} and no [default.provider] in ~/.epistery/config.ini`);
+  throw new Error(`No chain registered for chainId ${id} and no [default.provider] or [provider] in ~/.epistery/config.ini`);
 }
 
 /**
@@ -247,14 +255,14 @@ export async function setDefaultChain(selector: string | number): Promise<ChainC
 
 /**
  * Flatten a chain into the `provider` block shape stored in config.ini
- * (domain configs and root `[default.provider]`). Prefers a configured
- * privateRpc over the chain's public RPC.
+ * (domain configs and root `[default.provider]`). The stored `rpc` is the
+ * one the server sends through (serverRpcOf).
  */
 export function providerConfigFor(chain: ChainConfig): ChainConfig {
   return {
     chainId: Number(chain.chainId),
     name: chain.name,
-    rpc: chain.privateRpc || chain.rpc,
+    rpc: serverRpcOf(chain),
     nativeCurrencyName: chain.nativeCurrencyName,
     nativeCurrencySymbol: chain.nativeCurrencySymbol,
     nativeCurrencyDecimals: chain.nativeCurrencyDecimals,

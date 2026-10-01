@@ -63,6 +63,20 @@ export interface ChainConfig extends ProviderConfig {
  *   - contract ABIs
  *   - domain config storage
  */
+/**
+ * The ONE rule for which endpoint a server sends through: the credentialed
+ * `privateRpc` when one is configured, else `rpc`. `publicRpcOf` is the one
+ * safe to hand to a browser or print on a status page: `publicRpc`, else
+ * `rpc`. Every reader of a provider block (the Chain itself, the config
+ * flattener, the relay) applies these; none restates them.
+ */
+export function serverRpcOf(config: ChainConfig): string {
+  return config.privateRpc || config.rpc;
+}
+export function publicRpcOf(config: ChainConfig): string | undefined {
+  return config.publicRpc || config.rpc;
+}
+
 export class Chain {
   /**
    * Subclasses override `defaults` to carry the canonical network details.
@@ -87,8 +101,8 @@ export class Chain {
     }
     this.chainId = Number(config.chainId);
     this.name = config.name || '';
-    this.rpc = config.privateRpc || config.rpc;
-    this.publicRpc = config.publicRpc || config.rpc;
+    this.rpc = serverRpcOf(config);
+    this.publicRpc = publicRpcOf(config);
     this.currency = {
       name: config.nativeCurrencyName || '',
       symbol: config.nativeCurrencySymbol || '',

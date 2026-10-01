@@ -36,6 +36,8 @@ export default function statusRoutes(epistery) {
     "peer-cipher.mjs": path.resolve(rootDir, "client/peer-cipher.mjs"),
     "bot-auth-message.mjs": path.resolve(rootDir, "client/bot-auth-message.mjs"),
     "storage-message.mjs": path.resolve(rootDir, "client/storage-message.mjs"),
+    "boost-message.mjs": path.resolve(rootDir, "client/boost-message.mjs"),
+    "origin-certificate.mjs": path.resolve(rootDir, "client/origin-certificate.mjs"),
     "chain-read.mjs": path.resolve(rootDir, "client/chain-read.mjs"),
   };
 

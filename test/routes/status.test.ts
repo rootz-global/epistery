@@ -28,6 +28,16 @@ describe('Status Routes', () => {
   });
 
   describe('GET /lib/:module', () => {
+    it('serves the wire modules a host page imports — one copy, core\'s', async () => {
+      for (const m of ['storage-message.mjs', 'boost-message.mjs', 'chain-read.mjs', 'peer-cipher.mjs', 'bot-auth-message.mjs', 'key-exchange-message.mjs', 'origin-certificate.mjs']) {
+        const response = await testApp.supertest
+          .get(`/.well-known/epistery/lib/${m}`)
+          .expect(200)
+          .expect('Content-Type', /javascript/);
+        expect(response.text.length).toBeGreaterThan(0);
+      }
+    });
+
     it('should serve witness.js library', async () => {
       const response = await testApp.supertest
         .get('/.well-known/epistery/lib/witness.js')
