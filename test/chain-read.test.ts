@@ -28,7 +28,8 @@ const iface = new ethers.utils.Interface([
 ]);
 let sectionNames = ['recipes', '_profile'];
 
-// mode: 'ok' answers; 'lie' says everyone is a rivet; 'hang' never answers; 'down' HTTP 503; 'forbidden' HTTP 403 (the Infura settings shape)
+// mode: 'ok' answers; 'lie' says everyone is a rivet; 'hang' never answers; 'down' HTTP 503; 'forbidden' HTTP 403 (the Infura settings shape);
+// 'stale' answers everything correctly from a head sealed hours ago (a node whose chain has stopped)
 function fakeNode(mode: () => string) {
   const server = http.createServer((req, res) => {
     let body = '';
@@ -36,10 +37,14 @@ function fakeNode(mode: () => string) {
     req.on('end', () => {
       const m = mode();
       if (m === 'hang') return;   // a jammed node: takes the request, never answers
-      if (m !== 'ok' && m !== 'lie') { res.writeHead(m === 'down' ? 503 : 403); return res.end('{"error":"no"}'); }
+      if (m !== 'ok' && m !== 'lie' && m !== 'stale') { res.writeHead(m === 'down' ? 503 : 403); return res.end('{"error":"no"}'); }
       const rq = JSON.parse(body);
       const reply = (result: any) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: rq.id, result })); };
       if (rq.method === 'eth_chainId') return reply('0x89');
+      if (rq.method === 'eth_getBlockByNumber') {
+        const ts = Math.floor(Date.now() / 1000) - (m === 'stale' ? 3 * 3600 : 1);
+        return reply({ number: '0x5a63500', hash: '0x' + 'ab'.repeat(32), timestamp: '0x' + ts.toString(16) });
+      }
       const a = (x: string) => x.toLowerCase();
       if (rq.method === 'eth_getCode') return reply([a(CONTRACT), a(IDENTITY)].includes(a(rq.params[0])) ? '0x6001' : '0x');
       const { to, data } = rq.params[0];
@@ -127,6 +132,30 @@ describe('chainReader — k-of-n, like a multisig', () => {
   it('a loose host (1 of 2): two answers both reaching the quorum is a refusal, not a choice', async () => {
     set('lie', 'ok');
     await expect(reader(2, 1).mayCommit(CONTRACT, SESSION, STRANGER)).rejects.toMatchObject({ code: 'CHAIN_DISAGREES' });
+  });
+
+  it('a node whose head is stale is not an answer: at 1 of 1 the read is refused and says so', async () => {
+    set('stale');
+    await expect(reader(1).isRivet(CONTRACT, RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE', message: expect.stringMatching(/is stale: head #\d+ is \d+s old, 120s allowed/) });
+  });
+
+  it('2 of 3: one stale node costs nothing — the two fresh ones answer', async () => {
+    set('stale', 'ok', 'ok');
+    expect(await reader(3).isRivet(CONTRACT, RIVET)).toBe(true);
+    set('ok', 'stale', 'stale');
+    await expect(reader(3).isRivet(CONTRACT, RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
+  });
+
+  it('a node that catches up answers again, once its head verdict is re-asked', async () => {
+    set('stale');
+    const r = chainReader({ rpcs: urls.slice(0, 1), chainId: 137, ethers, ttlMs: 0, timeoutMs: 3000, headTtlMs: 0 });
+    await expect(r.isRivet(CONTRACT, RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
+    set('ok');
+    expect(await r.isRivet(CONTRACT, RIVET)).toBe(true);
+  });
+
+  it('refuses to exist with a non-positive head age', () => {
+    expect(() => chainReader({ rpcs: urls.slice(0, 1), chainId: 137, ethers, maxHeadAgeMs: 0 })).toThrow(/maxHeadAgeMs/);
   });
 
   it('no node answering in time is CHAIN_UNREACHABLE — never a "no", never a guess', async () => {

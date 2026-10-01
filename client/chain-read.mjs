@@ -19,6 +19,14 @@
 //     the read is refused — CHAIN_DISAGREES or CHAIN_UNREACHABLE — never guessed,
 //     and never answered by a foreign gateway. Today the operator runs the only
 //     node; each independent node added is one more that a lie must get past.
+//     A node answers only while its head is FRESH: before its answer counts, its
+//     latest block must be younger than `maxHeadAgeMs` (2 minutes; Polygon seals a
+//     block every 2 seconds). A node whose chain has stopped answers every read
+//     confidently from an old world — balances, roles, seats, all hours out of
+//     date and all "correct" by its own book — and at quorum 1 that is the whole
+//     answer. Stale is a non-answer, like down: the read is refused, never served
+//     from the past. (2026-10-01: an owned node sat 3.5 hours behind a hardfork
+//     while every console balance read it as current.)
 //
 // The rules are the relay's storage-auth rules (the relay still implements them
 // separately), so a member and the relay reach the same verdict from the same chain:
@@ -65,7 +73,7 @@ export function roleName(role) { return ROLE_NAME[Number(role)] ?? null; }
 const lc = (a) => String(a || "").toLowerCase();
 const host = (url) => { try { return new URL(url).host; } catch { return String(url); } };
 
-export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.ethers, ttlMs = 10 * 60 * 1000, timeoutMs = 15000 } = {}) {
+export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.ethers, ttlMs = 10 * 60 * 1000, timeoutMs = 15000, maxHeadAgeMs = 2 * 60 * 1000, headTtlMs = 15000 } = {}) {
   const endpoints = [...new Set((rpcs || []).filter(Boolean))];
   if (!endpoints.length) {
     throw new Error("chainReader: no attestation endpoint — an attestation read is answered by an owned node or not at all");
@@ -77,8 +85,28 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   if (!Number.isInteger(quorum) || quorum < 1 || quorum > endpoints.length) {
     throw new Error(`chainReader: quorum ${quorum} is not between 1 and the ${endpoints.length} configured node(s)`);
   }
+  if (!(Number(maxHeadAgeMs) > 0)) throw new Error("chainReader: maxHeadAgeMs must be a positive number of milliseconds — a node's head is fresh or the node is not an answer");
   const network = chainId ? Number(chainId) : undefined;
-  const providers = endpoints.map((url) => ({ url, provider: new ethers.providers.StaticJsonRpcProvider(url, network) }));
+  const providers = endpoints.map((url) => ({ url, provider: new ethers.providers.StaticJsonRpcProvider(url, network), head: null }));
+
+  // Is this node's head fresh? Its latest block's timestamp against the clock,
+  // asked at most once per `headTtlMs` so a burst of reads costs one block fetch.
+  // A head older than `maxHeadAgeMs`, or no head at all, makes the node a
+  // non-answer for every read until it catches up — tagged CHAIN_STALE so the
+  // refusal says which node and how far behind.
+  function assertFresh(node) {
+    const now = Date.now();
+    if (node.head && now - node.head.at < headTtlMs) return node.head.verdict;
+    const verdict = node.provider.send("eth_getBlockByNumber", ["latest", false]).then((b) => {
+      const ts = b && b.timestamp != null ? Number(b.timestamp) * 1000 : NaN;
+      if (!Number.isFinite(ts)) throw stale(node, "reports no head block");
+      const ageMs = Date.now() - ts;
+      if (ageMs > maxHeadAgeMs) throw stale(node, `is stale: head #${Number(b.number)} is ${Math.round(ageMs / 1000)}s old, ${Math.round(maxHeadAgeMs / 1000)}s allowed`);
+    });
+    node.head = { at: now, verdict };
+    return verdict;
+  }
+  const stale = (node, why) => { const e = new Error(`${host(node.url)} ${why}`); e.code = "CHAIN_STALE"; return e; };
   const iface = new ethers.utils.Interface(ABI);
   const ifaces = new Map();   // abi text → Interface, for view()
   const cache = new Map();
@@ -117,10 +145,12 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
         return refuse("CHAIN_DISAGREES", `chain nodes disagree — no answer reached ${quorum} of ${providers.length}`);
       };
       const timer = setTimeout(() => { if (!done) { pending = 0; failures.push(`no answer within ${timeoutMs}ms`); decide(); } }, timeoutMs);
-      for (const { url, provider } of providers) {
-        Promise.resolve().then(() => ask(provider)).then(
+      for (const node of providers) {
+        const { url, provider } = node;
+        Promise.resolve().then(() => assertFresh(node)).then(() => ask(provider)).then(
           (out) => ({ answer: out == null || out === "0x" ? null : String(out) }),
-          (e) => (isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` } : { answer: null }),   // a revert is an answer: no
+          (e) => (e?.code === "CHAIN_STALE" ? { failure: e.message }
+            : isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` } : { answer: null }),   // a revert is an answer: no
         ).then((o) => {
           if (done) return;
           pending -= 1;
@@ -217,5 +247,5 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
     return (await sectionRole(contract, section, signer, identity, opts)) >= ROLE.ADMIN;
   }
 
-  return { isRivet, roleOf, sectionRole, mayCommit, mayRotate, view, hasCode, endpoints, quorum };
+  return { isRivet, roleOf, sectionRole, mayCommit, mayRotate, view, hasCode, endpoints, quorum, maxHeadAgeMs };
 }
