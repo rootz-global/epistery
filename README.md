@@ -274,10 +274,18 @@ resolves). Authorize against `identityAddress`.
 
 `Epistery` (exported as `EpisteryAttach`): `connect`, `setDomain`, `attach`,
 `resolveClient(req)` (auth resolution for non-middleware contexts, e.g. WebSocket
-upgrades), `buildStatus`, `routes`.
+upgrades), `signer` (the domain's connected wallet — what every host-side
+signature uses; nothing rebuilds a key from the mnemonic), `buildStatus`, `routes`.
 
-Also exported: `auditTree`, `secureTree`, `Config`, `chainFor`, `registerChain`, `configuredChains`,
-`defaultChainId`, `Chain`.
+Also exported: `verifyBotAuth`, `captureRawBody`, `sessionFromJar`, the nonce
+stores (`setBotNonceStore`, `createInProcessNonceStore`, `createMongoNonceStore`);
+`Config`, `auditTree`, `secureTree`; `CliWallet`; the chains (`chainFor`,
+`registerChain`, `configuredChains`, `defaultChainId`, `defaultChain`, `findChain`,
+`setDefaultChain`, `providerConfigFor`, `Chain`) and `attestationConfig`; the
+reader (`chainReader`, `isChainReadFailure`, `ROLE`, `ROLE_NAME`, `roleName`);
+and the wire (`storageWriteMessage` and the storage-message surface, `botAuthorization`,
+`botAuthMessage`, `keyExchangeMessage`, the boost digest and `issueBoost`, the
+origin certificate).
 
 ### The wire (core owns it)
 
@@ -299,7 +307,8 @@ by every signer and verifier; none re-inlines it. Each is a pure ES module under
   `roleName`, the EpisteryAccess role table as the contract stores it (a test
   reads it out of the Solidity source).
 - `client/key-exchange-message.mjs` — `keyExchangeMessage`, the string a device
-  signs for `/connect` and for the config authority.
+  signs for `/connect` and for the config authority, and `serverResponseMessage`,
+  the string the host signs back.
 - `client/peer-cipher.mjs` — the one peer-encryption and content construction:
   a wrap is ECDH → SHA-256 → AES-256-GCM as `{ciphertext, iv, tag}` (tag split
   off); sealed content is AES-256-GCM under K as `{iv, ciphertext}` (tag
@@ -514,4 +523,4 @@ MIT — see [LICENSE](LICENSE).
 ## Links
 
 - Repository: https://github.com/rootz-global/epistery
-- See [@epistery/cli](https://github.com/epistery/cli), [Architecture.md](Architecture.md), [SESSION.md](SESSION.md)
+- See [@epistery/cli](https://github.com/epistery/cli) and the Rootz library (EpisteryCore, EpisteryChainReads)

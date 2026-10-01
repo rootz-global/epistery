@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=10";
+} from "./wallet.js?v=11";
 import {
   tabId,
   armTab,
@@ -19,7 +19,7 @@ import {
   unpinWallet,
   installTabHeader,
 } from "./tab.js?v=1";
-import { keyExchangeMessage } from "./key-exchange-message.mjs";
+import { keyExchangeMessage, serverResponseMessage } from "./key-exchange-message.mjs";
 
 // Every same-origin request from this tab names this tab, from module load —
 // before any code below runs a fetch. Inert until the tab is armed by its first
@@ -625,15 +625,10 @@ export default class Witness {
 
   verifyServerIdentity(serverResponse) {
     try {
-      // Reconstruct the message the server should have signed
-      const expectedMessage = `Epistery Server Response - ${serverResponse.serverAddress} - ${serverResponse.challenge}`;
-
-      // Verify the signature matches the server's public key
-      const recoveredAddress = ethers.utils.verifyMessage(
-        expectedMessage,
-        serverResponse.signature,
-      );
-      return recoveredAddress === serverResponse.serverAddress;
+      // The message the host signed — the wire's one definition.
+      const expectedMessage = serverResponseMessage({ address: serverResponse.serverAddress, challenge: serverResponse.challenge });
+      const recoveredAddress = ethers.utils.verifyMessage(expectedMessage, serverResponse.signature);
+      return recoveredAddress.toLowerCase() === String(serverResponse.serverAddress).toLowerCase();
     } catch (e) {
       console.error("Server identity verification error:", e);
       return false;
@@ -861,172 +856,6 @@ export default class Witness {
       source: this.wallet.source,
       label: this.wallet.label,
     };
-  }
-
-  // Bind this origin's local rivet to an existing IdentityContract owned by
-  // the user at another epistery host (defaults to epistery.io). This is the
-  // cross-host counterpart of the in-browser `acceptJoinToken` flow — the
-  // ferry that lets a user pick an authorized rivet on epistery.io to sign a
-  // join token for a fresh rivet on `acme-host.example`.
-  //
-  // Flow:
-  //   1. Ensure we have a local RivetWallet to register as the new rivet.
-  //      If the current default isn't a Browser-type rivet, mint a fresh one.
-  //   2. Open <issuerUrl>/auth in a popup, passing audience + nonce + the
-  //      local rivet address as `targetRivetAddress`. The issuer's auth page
-  //      drives `prepareAddRivetToContract` + `addRivet` on chain AND has
-  //      the user's authorized rivet sign a join token bound to this rivet.
-  //   3. Receive the base64 join token via postMessage. Call
-  //      `localRivet.acceptJoinToken(joinToken)` — that verifies the
-  //      signature, calls `upgradeToContract(contractAddress)`, and now the
-  //      local rivet presents the contract address as its identity.
-  //   4. Re-run key exchange so the host's server sees the new identity.
-  async bindToEpisteryIdentity({
-    issuerUrl = "https://epistery.io",
-  } = {}) {
-    await ensureEthers();
-
-    // Step 1: ensure a local rivet that isn't already bound to a contract.
-    let localRivet = this.wallet;
-    const haveUsableRivet =
-      localRivet &&
-      localRivet.source === "rivet" &&
-      !localRivet.contractAddress;
-    if (!haveUsableRivet) {
-      localRivet = await RivetWallet.create(ethers);
-      localRivet.label = "Browser Wallet";
-      this.wallet = localRivet;
-      this.save();
-      // save() only claims defaultWalletId when the origin had none, so state
-      // the tab's choice explicitly — otherwise this tab is signing as a rivet
-      // that neither the tab nor the device names.
-      pinWallet(localRivet.id);
-    }
-
-    // Step 2: open the issuer's auth popup and await the join token.
-    const nonce = ethers.utils.hexlify(ethers.utils.randomBytes(16));
-    const audience = location.host;
-    const { joinToken, identityName, identityDomain, contractAddress, chainId } =
-      await this._runEpisteryAuth(issuerUrl, {
-        audience,
-        nonce,
-        target_rivet: localRivet.address,
-      });
-
-    if (!joinToken) {
-      throw new Error("Issuer did not return a join token");
-    }
-
-    // Step 3: accept the token. acceptJoinToken verifies the signature
-    // against the inviter's claim, then upgrades this rivet to present the
-    // contract address (see RivetWallet.acceptJoinToken + upgradeToContract).
-    await localRivet.acceptJoinToken(joinToken, ethers);
-
-    // Best-effort metadata from the issuer — handy for the UI but the
-    // authoritative identity is the contract on-chain.
-    if (identityName) localRivet.label = identityDomain
-      ? `${identityName}@${identityDomain}`
-      : identityName;
-    this.save();
-
-    // Step 4: re-run key exchange so the host learns the new identity.
-    // After upgradeToContract, wallet.identityAddress flips from the rivet
-    // to the contract; performKeyExchange compares the cookie's
-    // identityAddress against ours and re-handshakes whenever they differ.
-    // The POST carries { signerAddress, contractAddress } as discrete facts;
-    // the host verifies the contract claim on-chain and reissues the cookie.
-    //
-    // The issuer's addRivet tx may still be confirming when we land here —
-    // the host's /connect verifies on-chain isAuthorized, which won't pass
-    // until the tx mines (~30s on Polygon). Retry with backoff so the
-    // binding is robust without forcing the issuer to block on confirmation.
-    let lastErr = null;
-    const delays = [0, 5000, 10000, 15000, 20000, 30000]; // ~80s total
-    for (const delay of delays) {
-      if (delay) await new Promise((r) => setTimeout(r, delay));
-      try {
-        await this.performKeyExchange();
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        // Only retry on 401-ish (server rejected the contract claim).
-        // Other errors (network, etc.) also retry — cheap and bounded.
-      }
-    }
-    if (lastErr) throw lastErr;
-
-    return {
-      id: localRivet.id,
-      // `address` no longer flips to the contract on upgrade; expose the
-      // canonical identity explicitly so callers that want the contract keep
-      // getting it, and the rivet stays available separately.
-      address: localRivet.identityAddress,   // = contract once joined
-      rivetAddress: localRivet.signerAddress,
-      source: localRivet.source,
-      label: localRivet.label,
-      identityName: identityName || null,
-      identityDomain: identityDomain || null,
-      contractAddress: contractAddress || localRivet.contractAddress,
-      chainId: chainId || null,
-    };
-  }
-
-  // Open <issuerUrl>/auth in a popup and await a postMessage result.
-  // The issuer's auth page posts `{type:"epistery-auth", joinToken, ...}`
-  // back to this window when the user has approved and the inviter rivet
-  // has signed a join token. Rejects on issuer error or popup close.
-  async _runEpisteryAuth(issuerUrl, params) {
-    const url = new URL("/auth", issuerUrl);
-    for (const [k, v] of Object.entries(params)) {
-      url.searchParams.set(k, v);
-    }
-    const expectedOrigin = new URL(issuerUrl).origin;
-    const popup = window.open(
-      url.toString(),
-      "epistery-auth",
-      "width=480,height=720,resizable=yes,scrollbars=yes",
-    );
-    if (!popup) {
-      throw new Error(
-        `Popup blocked. Allow popups for ${location.host} to add an Epistery Identity.`,
-      );
-    }
-
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const cleanup = () => {
-        settled = true;
-        window.removeEventListener("message", onMessage);
-        clearInterval(closeWatcher);
-      };
-      const onMessage = (event) => {
-        if (event.origin !== expectedOrigin) return;
-        const msg = event.data;
-        if (!msg || msg.type !== "epistery-auth") return;
-        if (msg.error) {
-          cleanup();
-          try { popup.close(); } catch (e) {}
-          reject(new Error(msg.error));
-          return;
-        }
-        // The issuer posts whatever fields it has; callers care about
-        // joinToken at minimum. Pass the whole payload through.
-        cleanup();
-        try { popup.close(); } catch (e) {}
-        resolve(msg);
-      };
-      window.addEventListener("message", onMessage);
-
-      // If the user closes the window before completing, surface that.
-      const closeWatcher = setInterval(() => {
-        if (settled) return;
-        if (popup.closed) {
-          cleanup();
-          reject(new Error("Epistery auth window closed before completing"));
-        }
-      }, 500);
-    });
   }
 
   // Become this rivet: in THIS TAB now, and as the device default for tabs

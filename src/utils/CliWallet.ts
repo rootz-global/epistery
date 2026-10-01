@@ -1,6 +1,7 @@
 import { ethers, Wallet } from 'ethers';
 import { Config } from './Config';
-import { DomainConfig, ProviderConfig } from './types';
+import { DomainConfig, ProviderConfig, KeyExchangeRequest, KeyExchangeResponse } from './types';
+import { sharedSecretOf } from './PeerCapability';
 import { defaultChain, providerConfigFor } from '../chains';
 import fs from 'fs';
 import { join } from 'path';
@@ -32,29 +33,6 @@ export interface BotAuthRequest {
  * This matches the server-side model where each domain has a wallet,
  * making CLI usage consistent with server architecture.
  */
-
-// Duplicates types.ts::KeyExchangeRequest — kept here so the CLI module
-// doesn't have to reach across the package. Must stay in lockstep.
-export interface KeyExchangeRequest {
-  signerAddress: string;
-  signerPublicKey: string;
-  contractAddress?: string | null;
-  challenge: string;
-  message: string;
-  signature: string;
-  walletSource: string;
-}
-
-export interface KeyExchangeResponse {
-  serverAddress: string;
-  serverPublicKey: string;
-  services: string[];
-  challenge: string;
-  signature: string;
-  identified: boolean;
-  authenticated?: boolean;
-  profile?: any;
-}
 
 export interface SessionInfo {
   domain: string;
@@ -243,7 +221,7 @@ export class CliWallet {
   /** Raw ECDH shared secret (32-byte X) with a peer's uncompressed secp256k1
    *  public key — the value the TreeKEM key schedule consumes. */
   async computeSharedSecret(peerPublicKey: string, _ethers?: unknown): Promise<Uint8Array> {
-    return ethers.utils.arrayify(this.wallet._signingKey().computeSharedSecret(peerPublicKey));
+    return sharedSecretOf(this.wallet, peerPublicKey);
   }
 
   /**
@@ -257,7 +235,7 @@ export class CliWallet {
 
     // Generate challenge for key exchange
     const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-    const { keyExchangeMessage } = await loadClientModule('key-exchange-message.mjs');
+    const { keyExchangeMessage, serverResponseMessage } = await loadClientModule('key-exchange-message.mjs');
     const message = keyExchangeMessage({ address: this.address, challenge });
 
     // Sign the message
@@ -293,7 +271,7 @@ export class CliWallet {
     const serverResponse = await response.json() as KeyExchangeResponse;
 
     // Verify server's identity
-    const expectedMessage = `Epistery Server Response - ${serverResponse.serverAddress} - ${serverResponse.challenge}`;
+    const expectedMessage = serverResponseMessage({ address: serverResponse.serverAddress, challenge: serverResponse.challenge });
     const recoveredAddress = ethers.utils.verifyMessage(expectedMessage, serverResponse.signature);
 
     if (recoveredAddress.toLowerCase() !== serverResponse.serverAddress.toLowerCase()) {

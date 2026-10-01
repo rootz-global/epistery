@@ -17,11 +17,15 @@ export interface PeerCapable {
   computeSharedSecret(peerPublicKey: string, ethers?: unknown): Promise<Uint8Array>;
 }
 
+/** The raw ECDH shared secret of an ethers Wallet with a peer's public key — the one body. */
+export function sharedSecretOf(wallet: ethers.Wallet, peerPublicKey: string): Uint8Array {
+  return ethers.utils.arrayify(wallet._signingKey().computeSharedSecret(peerPublicKey));
+}
+
 export function withPeerCapability<T extends ethers.Wallet>(wallet: T): T & PeerCapable {
   Object.defineProperty(wallet, 'canPeerEncrypt', { value: true, enumerable: true });
   Object.defineProperty(wallet, 'computeSharedSecret', {
-    value: async (peerPublicKey: string) =>
-      ethers.utils.arrayify(wallet._signingKey().computeSharedSecret(peerPublicKey)),
+    value: async (peerPublicKey: string) => sharedSecretOf(wallet, peerPublicKey),
   });
   return wallet as T & PeerCapable;
 }

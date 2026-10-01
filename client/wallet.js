@@ -603,165 +603,58 @@ export class RivetWallet extends Wallet {
       .replace(/\s+/g, " ");
   }
 
-  /**
-   * Signs a message only (client-side)
-   *
-   * @param {object} message - blob of data to sign
-   * @param {ethers} ethers - ethers.js instance
-   * @returns {Promise<string>} Signed message as hex string
-   */
-  async sign(message, ethers) {
-    try {
-      // Retrieve master key from IndexedDB
-      const masterKey = await RivetWallet.getMasterKey(this.keyId);
-      if (!masterKey) {
-        throw new Error(
-          "Master key not found - rivet may have been created in a different browser context",
-        );
-      }
-
-      // Decrypt the private key
-      const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-      const encryptedBytes = ethers.utils.arrayify(encrypted);
-      const ivBytes = ethers.utils.arrayify(iv);
-
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: ivBytes,
-        },
-        masterKey,
-        encryptedBytes,
+  // The ONE place the rivet's private key is unlocked. The master key is a
+  // non-extractable WebCrypto key in IndexedDB; the private key is decrypted
+  // under it into this closure, handed to `use`, and goes out of scope when
+  // `use` returns. Every signing and peer-crypto method runs through here.
+  async _withPrivateKey(ethers, use) {
+    const masterKey = await RivetWallet.getMasterKey(this.keyId);
+    if (!masterKey) {
+      throw new Error(
+        "Master key not found - rivet may have been created in a different browser context",
       );
-
-      const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-
-      // Create temporary signer and sign
-      const signer = new ethers.Wallet(privateKey);
-      const signature = await signer.signMessage(message);
-
-      return signature;
-    } catch (error) {
-      console.error("Failed to sign message with rivet:", error);
-      throw error;
     }
+    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
+      masterKey,
+      ethers.utils.arrayify(encrypted),
+    );
+    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
+    return use(privateKey);
   }
 
-  /**
-   * Signs a complete transaction
-   *
-   * This is the core of client-side signing for RivetWallet.
-   * The private key is temporarily decrypted, used to sign, then discarded.
-   *
-   * @param {object} unsignedTx - Unsigned transaction object from server
-   * @param {ethers} ethers - ethers.js instance
-   * @returns {Promise<string>} Signed transaction as hex string
-   */
+  /** Sign a message with the rivet. */
+  async sign(message, ethers) {
+    return this._withPrivateKey(ethers, async (privateKey) => new ethers.Wallet(privateKey).signMessage(message));
+  }
+
+  /** Sign a complete transaction with the rivet; the key must match the rivet's address. */
   async signTransaction(unsignedTx, ethers) {
-    try {
-      console.log("RivetWallet: Signing transaction");
-
-      const masterKey = await RivetWallet.getMasterKey(this.keyId);
-      if (!masterKey) {
-        throw new Error(
-          "Master key not found - rivet may have been created in a different browser context",
-        );
-      }
-
-      const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-      const encryptedBytes = ethers.utils.arrayify(encrypted);
-      const ivBytes = ethers.utils.arrayify(iv);
-
-      const decryptedBuffer = await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: ivBytes,
-        },
-        masterKey,
-        encryptedBytes,
-      );
-
-      const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-
-      // NOTE: This wallet object exists only in this function scope.
-      // When the function returns, the wallet and privateKey are garbage collected.
+    return this._withPrivateKey(ethers, async (privateKey) => {
       const signer = new ethers.Wallet(privateKey);
-
-      // Validate that our address matches
       const addressToValidate = this.rivetAddress || this.address;
       if (signer.address.toLowerCase() !== addressToValidate.toLowerCase()) {
         throw new Error("Decrypted key does not match rivet address");
       }
-
-      const signedTx = await signer.signTransaction(unsignedTx);
-
-      console.log("RivetWallet: Transaction signed successfully");
-      return signedTx;
-    } catch (error) {
-      console.error("Failed to sign transaction with rivet:", error);
-      throw error;
-    }
+      return signer.signTransaction(unsignedTx);
+    });
   }
 
-  // ECDH + AES-GCM encrypt for peer. Private key briefly decrypted in this
-  // closure, used to derive the shared AES key, then goes out of scope.
-  // Mirrors signTransaction's lifecycle exactly.
+  // Peer encryption and the TreeKEM leaf-decap seam, each one unlock.
   async encryptForPeer(peerPublicKey, plaintextBytes, ethers) {
-    const masterKey = await RivetWallet.getMasterKey(this.keyId);
-    if (!masterKey) {
-      throw new Error(
-        "Master key not found - rivet may have been created in a different browser context",
-      );
-    }
-    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
-      masterKey,
-      ethers.utils.arrayify(encrypted),
-    );
-    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
-    // privateKey goes out of scope at function return; nothing keeps a ref.
-    return await _aesGcmEncrypt(aesKey, plaintextBytes);
+    return this._withPrivateKey(ethers, async (privateKey) =>
+      _aesGcmEncrypt(await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers), plaintextBytes));
   }
 
   async decryptFromPeer(peerPublicKey, ciphertextBytes, ivBytes, tagBytes, ethers) {
-    const masterKey = await RivetWallet.getMasterKey(this.keyId);
-    if (!masterKey) {
-      throw new Error(
-        "Master key not found - rivet may have been created in a different browser context",
-      );
-    }
-    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
-      masterKey,
-      ethers.utils.arrayify(encrypted),
-    );
-    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-    const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
-    return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
+    return this._withPrivateKey(ethers, async (privateKey) =>
+      _aesGcmDecrypt(await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers), ciphertextBytes, ivBytes, tagBytes));
   }
 
-  // Raw ECDH shared secret for the TreeKEM leaf-decap seam (EpisteryDataFrontier).
-  // Same key lifecycle as encryptForPeer/decryptFromPeer: the private key is
-  // briefly decrypted in this closure, used, and goes out of scope at return.
-  // Returns the shared BEFORE any KDF so the ratchet tree runs its own schedule.
+  // Raw ECDH shared secret, BEFORE any KDF, so the ratchet tree runs its own schedule.
   async computeSharedSecret(peerPublicKey, ethers) {
-    const masterKey = await RivetWallet.getMasterKey(this.keyId);
-    if (!masterKey) {
-      throw new Error(
-        "Master key not found - rivet may have been created in a different browser context",
-      );
-    }
-    const { encrypted, iv } = JSON.parse(this.encryptedPrivateKey);
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: ethers.utils.arrayify(iv) },
-      masterKey,
-      ethers.utils.arrayify(encrypted),
-    );
-    const privateKey = ethers.utils.hexlify(new Uint8Array(decryptedBuffer));
-    return _sharedFromPriv(privateKey, peerPublicKey, ethers); // privateKey GC'd at return
+    return this._withPrivateKey(ethers, async (privateKey) => _sharedFromPriv(privateKey, peerPublicKey, ethers));
   }
 
   // IndexedDB operations for storing non-extractable CryptoKey
@@ -840,324 +733,6 @@ export class RivetWallet extends Wallet {
   }
 
   // Identity Contract methods (opt-in, not automatic)
-
-  /**
-   * Deploys a new IdentityContract with this rivet as the first authorized signer
-   * Uses the prepare → sign → submit architecture (server handles funding)
-   * @param {ethers} ethers - ethers.js instance
-   * @param {object} providerConfig - Provider configuration with rpc and chainId
-   * @param {string} domain - Domain context for the deployment
-   * @returns {Promise<string>} Contract address
-   */
-  async deployIdentityContract(ethers, providerConfig, domain = "localhost") {
-    try {
-      // Get rootPath from Witness singleton
-      const rootPath =
-        (typeof Witness !== "undefined" && Witness.instance?.rootPath) || "..";
-
-      // Step 1: Prepare unsigned deployment transaction (server funds the wallet)
-      const prepareResponse = await fetch(
-        `${rootPath}/epistery/identity/prepare-deploy`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientAddress: this.address,
-            domain: domain,
-          }),
-        },
-      );
-
-      if (!prepareResponse.ok) {
-        const error = await prepareResponse.json();
-        throw new Error(
-          `Failed to prepare deployment: ${error.error || prepareResponse.statusText}`,
-        );
-      }
-
-      const { unsignedTransaction, metadata } = await prepareResponse.json();
-
-      // Step 2: Sign the transaction client-side
-      const signedTx = await this.signTransaction(unsignedTransaction, ethers);
-
-      // Step 3: Submit signed transaction to blockchain
-      const submitResponse = await fetch(
-        `${rootPath}/epistery/data/submit-signed`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            signedTransaction: signedTx,
-            operation: "deployIdentityContract",
-            metadata: metadata,
-          }),
-        },
-      );
-
-      if (!submitResponse.ok) {
-        const error = await submitResponse.json();
-        throw new Error(
-          `Failed to submit deployment: ${error.error || submitResponse.statusText}`,
-        );
-      }
-
-      const receipt = await submitResponse.json();
-
-      if (!receipt.contractAddress) {
-        throw new Error(
-          "Contract deployment succeeded but no contract address in receipt",
-        );
-      }
-
-      // Upgrade this rivet to use the contract
-      this.upgradeToContract(receipt.contractAddress);
-
-      return receipt.contractAddress;
-    } catch (error) {
-      console.error("Failed to deploy IdentityContract:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Generates a join token bound to a specific target rivet address
-   * This creates a secure invitation that can only be used by the specified rivet
-   * @param {string} targetRivetAddress - The rivet address that will use this token
-   * @param {string} contractAddress - The identity contract address
-   * @param {ethers} ethers - ethers.js instance
-   * @returns {Promise<string>} Join token (base64-encoded JSON)
-   */
-  async generateJoinToken(targetRivetAddress, contractAddress, ethers) {
-    const payload = {
-      contractAddress,
-      targetRivetAddress, // Token is bound to this specific address
-      inviterRivetAddress: this.rivetAddress || this.address,
-      timestamp: Date.now(),
-      expiresAt: Date.now() + 3600000, // 1 hour
-    };
-
-    // Sign the payload to prove this is a legitimate invitation
-    const message = JSON.stringify(payload);
-    const signature = await this.sign(message, ethers);
-
-    const token = {
-      payload,
-      signature,
-    };
-
-    // Return base64-encoded token
-    return btoa(JSON.stringify(token));
-  }
-
-  /**
-   * Accepts a join token - verifies the invitation and upgrades this rivet to use that contract
-   * Verifies that the token was generated specifically for this rivet's address
-   * @param {string} joinToken - The join token from another rivet (base64-encoded)
-   * @param {ethers} ethers - ethers.js instance
-   * @returns {Promise<{contractAddress: string, myRivetAddress: string}>}
-   */
-  async acceptJoinToken(joinToken, ethers) {
-    try {
-      // Decode token
-      const tokenData = JSON.parse(atob(joinToken));
-      const { payload, signature } = tokenData;
-
-      // Verify token hasn't expired
-      if (Date.now() > payload.expiresAt) {
-        throw new Error("Join token has expired");
-      }
-
-      // Get current rivet address
-      const myRivetAddress = this.rivetAddress || this.address;
-
-      // SECURITY: Verify this token was generated for THIS rivet's address
-      if (
-        payload.targetRivetAddress.toLowerCase() !==
-        myRivetAddress.toLowerCase()
-      ) {
-        throw new Error(
-          "This join token was not generated for your rivet address. Token is bound to: " +
-            payload.targetRivetAddress,
-        );
-      }
-
-      // The contract we're joining (from the token)
-      const targetContract = payload.contractAddress;
-
-      // Verify the signature from the inviter
-      const message = JSON.stringify(payload);
-      const recoveredAddress = ethers.utils.verifyMessage(message, signature);
-      if (
-        recoveredAddress.toLowerCase() !==
-        payload.inviterRivetAddress.toLowerCase()
-      ) {
-        throw new Error("Invalid join token signature");
-      }
-
-      // Upgrade this rivet to use the contract as its identity
-      this.upgradeToContract(targetContract);
-
-      console.log("Rivet ready to join identity contract:", myRivetAddress);
-
-      return {
-        contractAddress: targetContract,
-        myRivetAddress: myRivetAddress,
-      };
-    } catch (error) {
-      console.error("Failed to accept join token:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Static helper: Generates a rivet name based on browser, OS, and hostname
-   * Format: "browser-os on hostname" (e.g., "chrome-ubuntu on rhonda.help")
-   * @returns {string} Generated rivet name
-   */
-  static generateRivetName() {
-    // Detect browser
-    const userAgent = navigator.userAgent.toLowerCase();
-    let browser = "unknown";
-
-    if (userAgent.includes("chrome") && !userAgent.includes("edg")) {
-      browser = "chrome";
-    } else if (userAgent.includes("firefox")) {
-      browser = "firefox";
-    } else if (userAgent.includes("safari") && !userAgent.includes("chrome")) {
-      browser = "safari";
-    } else if (userAgent.includes("edg")) {
-      browser = "edge";
-    } else if (userAgent.includes("opr") || userAgent.includes("opera")) {
-      browser = "opera";
-    }
-
-    // Detect OS
-    let os = "unknown";
-    if (userAgent.includes("win")) {
-      os = "windows";
-    } else if (userAgent.includes("mac")) {
-      os = "macos";
-    } else if (userAgent.includes("linux")) {
-      os = "linux";
-    } else if (userAgent.includes("android")) {
-      os = "android";
-    } else if (userAgent.includes("iphone") || userAgent.includes("ipad")) {
-      os = "ios";
-    }
-
-    // Get hostname
-    const hostname = window.location.hostname;
-
-    return `${browser}-${os} on ${hostname}`;
-  }
-
-  /**
-   * Static helper: Fetches a rivet address from a website URL
-   * Queries the site's /.well-known/epistery endpoint to get the rivet address
-   * @param {string} url - The website URL (can be with or without https://)
-   * @returns {Promise<string>} The rivet address for that website
-   */
-  static async getRivetAddressFromURL(url) {
-    try {
-      // Normalize URL - ensure it has a protocol
-      let normalizedURL = url.trim();
-      if (
-        !normalizedURL.startsWith("http://") &&
-        !normalizedURL.startsWith("https://")
-      ) {
-        normalizedURL = `https://${normalizedURL}`;
-      }
-
-      // Remove trailing slash if present
-      normalizedURL = normalizedURL.replace(/\/$/, "");
-
-      // Fetch epistery status from the site
-      const response = await fetch(`${normalizedURL}/.well-known/epistery`);
-
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch epistery info from ${normalizedURL}. Status: ${response.status}`,
-        );
-      }
-
-      const data = await response.json();
-
-      // The rivet address should be in client.walletAddress
-      const rivetAddress = data.client?.walletAddress;
-
-      if (!rivetAddress) {
-        throw new Error(
-          `No rivet address found at ${normalizedURL}. The site may not have Epistery enabled or no rivet is connected.`,
-        );
-      }
-
-      return rivetAddress;
-    } catch (error) {
-      console.error("Failed to get rivet address from URL:", error);
-      throw new Error(
-        `Unable to get rivet address from "${url}": ${error.message}`,
-      );
-    }
-  }
-
-  /**
-   * Gets all authorized rivets from the identity contract with their names
-   * @param {ethers} ethers - ethers.js instance
-   * @param {object} providerConfig - Provider configuration with rpc
-   * @returns {Promise<Array<{address: string, name: string}>>} Array of rivets with addresses and names
-   */
-  async getRivetsInContract(ethers, providerConfig) {
-    try {
-      if (!this.contractAddress) {
-        throw new Error("This rivet is not part of an identity contract");
-      }
-
-      // Get rootPath from Witness singleton
-      const rootPath =
-        (typeof Witness !== "undefined" && Witness.instance?.rootPath) || "..";
-
-      const provider = new ethers.providers.JsonRpcProvider(providerConfig.rpc);
-
-      // Load contract artifact
-      const response = await fetch(
-        `${rootPath}/epistery/artifacts/IdentityContract.json`,
-      );
-      const artifact = await response.json();
-
-      // Connect to the identity contract (read-only, no signer needed)
-      const contract = new ethers.Contract(
-        this.contractAddress,
-        artifact.abi,
-        provider,
-      );
-
-      try {
-        // Try to call getRivetsWithNames() (new contract version)
-        const [addresses, names] = await contract.getRivetsWithNames();
-
-        // Combine addresses and names into objects
-        return addresses.map((address, index) => ({
-          address: address,
-          name: names[index] || "Unnamed Rivet",
-        }));
-      } catch (error) {
-        // Fallback to getRivets() for old contracts that don't have names
-        console.warn(
-          "Contract does not support getRivetsWithNames(), falling back to getRivets()",
-        );
-        const addresses = await contract.getRivets();
-
-        // Return addresses with default names
-        return addresses.map((address) => ({
-          address: address,
-          name: "Unnamed Rivet (old contract)",
-        }));
-      }
-    } catch (error) {
-      console.error("Failed to get rivets from contract:", error);
-      throw error;
-    }
-  }
 
   /**
    * Upgrades this rivet to use an identity contract

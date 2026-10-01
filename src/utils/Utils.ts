@@ -77,7 +77,10 @@ export class Utils {
       }
 
       if (domainConfig.wallet) {
-        const chain = chainFor(domainConfig.provider || { chainId: 137, name: 'Polygon Mainnet', rpc: 'https://polygon-rpc.com' });
+        // No provider is no chain: a domain is connected on its configured chain
+        // or not at all, never silently on a default mainnet endpoint.
+        if (!domainConfig.provider) throw new Error(`domain "${domain}" names no provider — set [provider] in its config or [default.provider] at the root`);
+        const chain = chainFor(domainConfig.provider);
         this.serverWallet = withPeerCapability(
           ethers.Wallet.fromMnemonic(domainConfig.wallet.mnemonic).connect(chain.provider));
         this.walletCache.set(domain, this.serverWallet);

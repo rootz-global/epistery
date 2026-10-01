@@ -87,19 +87,23 @@ config in epistery's root config file. These are *optional* — defaults are
 in code, so a fresh install Just Works:
 
 ```ini
-[[default.providers]]
+[default.rpc.137]
 name = "Polygon Mainnet"
-chainId = 137
-publicRpc = "https://polygon-rpc.com"
+publicRpc = "https://polygon-bor-rpc.publicnode.com"
 privateRpc = "https://polygon-mainnet.g.alchemy.com/v2/YOUR_KEY"
 nativeCurrencyName = "POL"
 nativeCurrencySymbol = "POL"
 
-# These all live under [[default.providers.policy]] and are optional.
-[default.providers.policy]
-minPriorityFeeGwei = 25     # Polygon's RPC floor
-maxFeeMultiplier = 2        # maxFeePerGas >= 2 * maxPriorityFeePerGas
-gasLimitMultiplier = 1.3    # estimateGas safety margin
+; Policy knobs, all optional (defaults are in code).
+[default.rpc.137.policy]
+minPriorityFeeGwei = 25     ; Polygon's RPC floor
+maxFeeMultiplier = 2        ; maxFeePerGas >= 2 * maxPriorityFeePerGas
+gasLimitMultiplier = 1.3    ; estimateGas safety margin
+
+; Attestation reads (who may seat a device, roles) go to OWNED nodes, k-of-n:
+[chains.polygon]
+attest = ["https://node.rootz.global/"]
+quorum = 1
 ```
 
 If you find yourself adding a new policy field, add it to `ChainPolicy` in

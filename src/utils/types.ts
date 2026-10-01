@@ -1,5 +1,3 @@
-import { AquaTree } from "aqua-js-sdk";
-
 export interface NativeCurrency {
   name: string;
   symbol: string;
@@ -66,24 +64,6 @@ export interface ClientWalletInfo {
   signedTransaction?: string;
 }
 
-export interface EpisteryStatus {
-  server: {
-    walletAddress: string | undefined;
-    publicKey: string | undefined;
-    provider: string | undefined;
-    chainId: number | undefined;
-    rpc: string | undefined;
-    nativeCurrency?: NativeCurrency;
-  };
-  client: {
-    walletAddress: string;
-    publicKey: string;
-  };
-  ipfs?: IPFSConfig;
-  timestamp: string;
-}
-
-
 // The wire shape for POST /connect.
 //
 // Two facts the client can state, one of which carries a proof:
@@ -113,69 +93,7 @@ export interface KeyExchangeResponse {
   signature: string;
   identified: boolean;
   authenticated: boolean;
-  profile: object | undefined;
-}
-
-/**
- * Unsigned transaction prepared by server for client to sign
- * Used in new client-side signing flow
- *
- * Contains ONLY valid Ethereum transaction fields
- */
-export interface UnsignedTransaction {
-  // Transaction fields
-  to: string;
-  data: string;
-  value: string;
-  nonce: number;
-  chainId: number;
-
-  // Gas configuration (EIP-1559 for Polygon, legacy for others)
-  gasLimit: string;
-
-  // Legacy gas (Ethereum mainnet, some L2s)
-  gasPrice?: string;
-
-  // EIP-1559 gas (Polygon, modern chains)
-  maxFeePerGas?: string;
-  maxPriorityFeePerGas?: string;
-}
-
-/**
- * Request to prepare an unsigned transaction
- */
-export interface PrepareTransactionRequest {
-  clientAddress: string;
-  publicKey: string;
-  operation: 'write' | 'transferOwnership' | 'createApproval' | 'handleApproval' | 'sendMessage' | 'createPost';
-  params: any;
-}
-
-/**
- * Response from transaction preparation
- */
-export interface PrepareTransactionResponse {
-  unsignedTransaction: UnsignedTransaction;
-  ipfsHash?: string;
-  metadata?: any;
-}
-
-/**
- * Request to submit a signed transaction
- */
-export interface SubmitSignedTransactionRequest {
-  signedTransaction: string;
-  operation: string;
-  metadata?: any;
-}
-
-/**
- * Response from transaction submission
- */
-export interface SubmitSignedTransactionResponse {
-  transactionHash: string;
-  blockNumber: number;
-  gasUsed: string;
-  status: number;  // 1 = success, 0 = reverted
-  receipt: any;    // Full ethers receipt object
+  profile?: object | null;
+  /** The origin certificate the host issued for this rivet, when it could. */
+  certificate?: object | null;
 }

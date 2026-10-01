@@ -3,19 +3,26 @@ import { createRequire } from "module";
 import { Epistery } from "../dist/epistery.js";
 import * as jar from "../session-jar.mjs";
 import { issueOriginCertificate } from "../client/origin-certificate.mjs";
-import { isChainReadFailure } from "../client/chain-read.mjs";
+import { chainReader, isChainReadFailure } from "../client/chain-read.mjs";
+import { attestationConfig } from "../dist/chains/index.js";
 
 const require = createRequire(import.meta.url);
 const ethers = require("ethers");
 
-// Subset of IdentityContract used to verify a rivet's membership claim.
-// Both V2 and V3 IdentityContract expose isAuthorized(address).
-const IDENTITY_AUTHORIZED_ABI = [
-  "function isAuthorized(address) view returns (bool)",
-];
-
-// isChainReadFailure: a failed read (ask again) vs the chain's answer (no) — the
-// one copy lives with the chain reader (client/chain-read.mjs, EpisteryChainReads).
+// A contract claim is verified on chain through core's own attestation reader —
+// the owned nodes from config, k-of-n at the domain's quorum — never a raw
+// provider or an environment variable. One reader per chain, built on first use.
+const _readers = new Map();
+async function readerFor(chainId) {
+  if (!chainId) throw Object.assign(new Error("no chain configured for this domain"), { code: "CHAIN_UNREACHABLE" });
+  const k = String(chainId);
+  if (!_readers.has(k)) {
+    const { rpcs, quorum } = await attestationConfig(chainId);
+    if (!rpcs?.length) throw Object.assign(new Error(`no attestation endpoints configured for chain ${chainId} ([chains.<name>] attest[])`), { code: "CHAIN_UNREACHABLE" });
+    _readers.set(k, chainReader({ rpcs, quorum, chainId, ethers }));
+  }
+  return _readers.get(k);
+}
 
 /**
  * Connect routes - key exchange and wallet creation
@@ -44,20 +51,16 @@ export default function connectRoutes(epistery) {
   // Key exchange endpoint - handles POST requests for key exchange
   router.post("/connect", async (req, res) => {
     try {
-      const data = req.body;
-      if (!data && Object.keys(data).length <= 0) data = req.body;
+      const data = req.body || {};
 
-      const serverWallet = epistery.domain;
-
-      if (!serverWallet?.wallet) {
+      // The domain's connected signer — the one wallet this host speaks as.
+      const signer = epistery.signer;
+      if (!signer) {
         return res.status(500).json({ error: "Server wallet not found" });
       }
 
       // Handle key exchange request
-      const keyExchangeResponse = await Epistery.handleKeyExchange(
-        data,
-        serverWallet.wallet,
-      );
+      const keyExchangeResponse = await Epistery.handleKeyExchange(data, signer);
 
       if (!keyExchangeResponse) {
         return res.status(401).json({
@@ -70,28 +73,15 @@ export default function connectRoutes(epistery) {
       // a single field, so the verifier never has to guess what the client
       // meant. The chain is truth; we ask it directly.
       //
-      // Provider: the host's domain RPC. v0 assumes the IdentityContract
-      // lives on the same chain as the host. Cross-chain identity is a
-      // future concern.
+      // The IdentityContract is read on the host's chain (the domain's
+      // configured chain), through the attestation reader; `isRivet` is the
+      // one vouching hop — a rivet of the contract, or of an identity the
+      // contract admits as a signer.
       let verifiedContractAddress = null;
       if (data.contractAddress) {
         try {
-          const rpcUrl =
-            serverWallet?.provider?.privateRpc ||
-            serverWallet?.provider?.rpc ||
-            process.env.CHAIN_RPC_URL;
-          if (!rpcUrl) {
-            return res.status(500).json({
-              error: "No chain RPC configured to verify identity contract",
-            });
-          }
-          const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
-          const identity = new ethers.Contract(
-            data.contractAddress,
-            IDENTITY_AUTHORIZED_ABI,
-            provider,
-          );
-          const isAuth = await identity.isAuthorized(data.signerAddress);
+          const reader = await readerFor(epistery.domain?.provider?.chainId);
+          const isAuth = await reader.isRivet(data.contractAddress, data.signerAddress, { fresh: true });
           if (!isAuth) {
             return res.status(401).json({
               error:
@@ -212,13 +202,11 @@ export default function connectRoutes(epistery) {
         console.warn(
           `[connect] domain config is "${epistery.domainName}" but this request is for "${certHost}" — issuing no origin certificate`,
         );
-      } else if (!serverWallet.wallet?.mnemonic) {
-        console.warn(`[connect] no domain wallet for "${certHost}" — issuing no origin certificate`);
       } else {
         try {
           certificate = await issueOriginCertificate(
             { rivet: data.signerAddress, domain: certHost },
-            ethers.Wallet.fromMnemonic(serverWallet.wallet.mnemonic),
+            signer,
           );
         } catch (e) {
           console.warn(

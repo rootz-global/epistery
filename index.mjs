@@ -545,25 +545,28 @@ class EpisteryAttach {
    * @returns {Object} Status object with server, client, and ipfs info
    */
   buildStatus() {
-    const serverWallet = this.domain;
-
+    // What this host says about itself: its wallet and the chain it is
+    // configured on, as configured — null where nothing is configured, never a
+    // default chain or endpoint standing in for one.
+    const d = this.domain;
+    const p = d?.provider || {};
+    const nativeCurrency = p.nativeCurrencySymbol || p.nativeCurrency?.symbol
+      ? {
+        symbol: p.nativeCurrencySymbol || p.nativeCurrency?.symbol,
+        name: p.nativeCurrencyName || p.nativeCurrency?.name || p.nativeCurrencySymbol || p.nativeCurrency?.symbol,
+        decimals: Number(p.nativeCurrencyDecimals ?? p.nativeCurrency?.decimals) || 18,
+      }
+      : null;
     return {
       server: {
-        walletAddress: serverWallet?.wallet?.address || null,
-        publicKey: serverWallet?.wallet?.publicKey || null,
-        provider: serverWallet?.provider?.name || "Polygon Mainnet",
-        chainId: serverWallet?.provider?.chainId?.toString() || "137",
-        rpc: serverWallet?.provider?.rpc || "https://polygon-rpc.com",
-        nativeCurrency: {
-          symbol: serverWallet?.provider?.nativeCurrency?.symbol || "POL",
-          name: serverWallet?.provider?.nativeCurrency?.name || "POL",
-          decimals: serverWallet?.provider?.nativeCurrency?.decimals || 18,
-        },
+        walletAddress: d?.wallet?.address || null,
+        publicKey: d?.wallet?.publicKey || null,
+        provider: p.name || null,
+        chainId: p.chainId != null ? String(p.chainId) : null,
+        rpc: p.publicRpc || p.rpc || null,
+        nativeCurrency,
       },
       client: {},
-      ipfs: {
-        url: process.env.IPFS_URL || "https://rootz.digital/api/v0",
-      },
       timestamp: new Date().toISOString(),
     };
   }
@@ -576,13 +579,8 @@ class EpisteryAttach {
    *   /status               - Status page (HTML)
    *   /lib/:module          - Client library files
    *   /artifacts/:file      - Contract artifacts
-   *   /connect              - Key exchange
-       *   /data/*               - Data read/write/ownership
-   *   /approval/*           - Approval system
-     *   /lists                - Get all lists
-   *   /list                 - Get specific list
-   *   /list/check/:address  - Check list membership
-   *   /contract/*           - Contract version info
+   *   /connect              - Key exchange (GET: the session's facts; POST: the handshake)
+   *   /fido/blob            - PRF-wrapped rivet key blobs
    *
    * @returns {express.Router}
    */

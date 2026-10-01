@@ -28,7 +28,6 @@ export default function statusRoutes(epistery) {
     "witness.js": path.resolve(rootDir, "client/witness.js"),
     "tab.js": path.resolve(rootDir, "client/tab.js"),
     "wallet.js": path.resolve(rootDir, "client/wallet.js"),
-    "export.js": path.resolve(rootDir, "client/export.js"),
     "ethers.js": path.resolve(rootDir, "client/ethers.js"),
     "ethers.min.js": path.resolve(rootDir, "client/ethers.min.js"),
     // The wire, browser-importable (pure ESM): witness.js imports the
