@@ -103,3 +103,52 @@ export function messageForEnvelope(env) {
     nonce: env.nonce,
   });
 }
+
+// ---- building the header --------------------------------------------------------
+
+const utf8 = new TextEncoder();
+async function sha256hexOf(bytes) {
+  const d = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes));
+  let hex = ''; for (const b of d) hex += b.toString(16).padStart(2, '0'); return hex;
+}
+function base64Of(text) {
+  const u = utf8.encode(text); let bin = ''; for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
+  return btoa(bin);
+}
+function nonceHex() {
+  const b = new Uint8Array(16); globalThis.crypto.getRandomValues(b);
+  let hex = ''; for (const x of b) hex += x.toString(16).padStart(2, '0'); return hex;
+}
+
+/**
+ * The `Authorization: Bot …` header for one request, signed by whatever holds
+ * the key — the CLI wallet, a derived bot or agent wallet, a browser rivet.
+ * `sign(message)` returns the signature; `address` is the signer the verifier
+ * recovers. Name the request by `url`, or by `uri` and `aud`; `body` is the
+ * exact bytes (string or Uint8Array) that will be sent, or nothing.
+ *
+ * Returns the full header value. The payload is the versioned envelope
+ * parseBotEnvelope reads: base64 of {v, address, signature, method, uri, aud,
+ * bodyHash, ts, nonce}.
+ */
+export async function botAuthorization({ sign, address, method = 'POST', url, uri, aud, body } = {}) {
+  if (typeof sign !== 'function' || !address) throw new Error('botAuthorization: sign(message) and address are required');
+  if (url) {
+    const u = new URL(url);
+    if (uri === undefined) uri = u.pathname + u.search;
+    if (aud === undefined) aud = u.host;
+  }
+  if (uri === undefined || aud === undefined) {
+    throw new Error('botAuthorization: pass { url } or both { uri, aud } — a bot signature must name the request it authorises');
+  }
+  const bodyBytes = body == null ? null : typeof body === 'string' ? utf8.encode(body) : new Uint8Array(body);
+  const bodyHash = bodyBytes && bodyBytes.length ? await sha256hexOf(bodyBytes) : EMPTY_BODY_SHA256;
+  const ts = Date.now();
+  const nonce = nonceHex();
+  const m = String(method).toUpperCase();
+  const audience = audienceFor(aud);
+  const message = botAuthMessage({ method: m, uri, aud: audience, bodyHashHex: bodyHash, ts, nonce });
+  const signature = await sign(message);
+  const payload = { v: BOT_AUTH_VERSION, address, signature, method: m, uri, aud: audience, bodyHash, ts, nonce };
+  return `Bot ${base64Of(JSON.stringify(payload))}`;
+}

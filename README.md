@@ -300,8 +300,18 @@ by every signer and verifier; none re-inlines it. Each is a pure ES module under
   reads it out of the Solidity source).
 - `client/key-exchange-message.mjs` — `keyExchangeMessage`, the string a device
   signs for `/connect` and for the config authority.
-- `client/bot-auth-message.mjs`, `client/boost-message.mjs`,
-  `client/origin-certificate.mjs` — as before.
+- `client/peer-cipher.mjs` — the one peer-encryption and content construction:
+  a wrap is ECDH → SHA-256 → AES-256-GCM as `{ciphertext, iv, tag}` (tag split
+  off); sealed content is AES-256-GCM under K as `{iv, ciphertext}` (tag
+  appended). `wrapKey` / `unwrapKey` ask the wallet by capability (a rivet's
+  `encryptForPeer`, or a plain wallet's key); `encryptText` / `decryptText`,
+  `encryptBytes` / `decryptBytes`, `randomKey`. The wallet kinds in
+  `client/wallet.js` and every cipher in the estate are built on it; a test
+  freezes vectors from the previous server implementation.
+- `client/bot-auth-message.mjs` — the bot-auth message and `botAuthorization`,
+  which builds the whole `Authorization: Bot …` header for any signer
+  (`sign(message)` + `address`); `CliWallet.createBotAuthHeader` delegates to it.
+- `client/boost-message.mjs`, `client/origin-certificate.mjs` — as before.
 
 `Config` reads distinguish absent from failed: a missing config is `{}`; a config
 that cannot be read (filesystem error, authority error other than 404) throws.

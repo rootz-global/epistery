@@ -34,6 +34,8 @@ export default function statusRoutes(epistery) {
     // The wire, browser-importable (pure ESM): witness.js imports the
     // key-exchange message; hosts import the rest by these names.
     "key-exchange-message.mjs": path.resolve(rootDir, "client/key-exchange-message.mjs"),
+    "peer-cipher.mjs": path.resolve(rootDir, "client/peer-cipher.mjs"),
+    "bot-auth-message.mjs": path.resolve(rootDir, "client/bot-auth-message.mjs"),
     "storage-message.mjs": path.resolve(rootDir, "client/storage-message.mjs"),
     "chain-read.mjs": path.resolve(rootDir, "client/chain-read.mjs"),
   };

@@ -610,6 +610,13 @@ export {
   storageAuthorization, signStorageWrite, sha256hex, ADDRESS_RE, isAddress, base64urlEncode, base64urlDecode,
 } from './client/storage-message.mjs';
 export { keyExchangeMessage } from './client/key-exchange-message.mjs';
+// The one peer-encryption and content construction (wraps and sealed records).
+export {
+  randomKey, ecdhShared, aesKeyFromShared, sealWithKey, openWithKey, sealWithShared, openWithShared,
+  wrapKey, unwrapKey, encryptBytes, decryptBytes, encryptText, decryptText,
+} from './client/peer-cipher.mjs';
+// The bot-auth header, built for any signer.
+export { botAuthorization, botAuthMessage, audienceFor, parseBotEnvelope, EMPTY_BODY_SHA256 } from './client/bot-auth-message.mjs';
 export { BOOST_TYPE_STRING, boostTypehash, boostDigest, issueBoost };
 export {
   ORIGIN_CERT_TAG,

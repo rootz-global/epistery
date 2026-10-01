@@ -4,6 +4,8 @@
  * Handles wallet creation, persistence, and signing for Epistery
  */
 
+import { ecdhShared, aesKeyFromShared, sealWithKey, openWithKey } from "./peer-cipher.mjs";
+
 // Base Wallet class
 //
 // Identity vocabulary (must match epistery's server-side contract):
@@ -123,59 +125,18 @@ export class Wallet {
   }
 }
 
-// The raw ECDH shared secret (32-byte X-coordinate) for a private key and a
-// peer's uncompressed secp256k1 public key. This is the value the AES-key
-// derivation hashes; it is also exactly what the TreeKEM key schedule consumes.
+// The peer-encryption construction is core's one definition (peer-cipher.mjs):
+// ECDH → SHA-256 → AES-256-GCM. These three names are what the wallet kinds
+// below call with a private key that is briefly in scope; the shared secret and
+// the derived key never leave the closure.
 function _sharedFromPriv(privateKeyHex, peerPublicKeyHex, ethers) {
-  const shared = new ethers.utils.SigningKey(privateKeyHex).computeSharedSecret(peerPublicKeyHex);
-  return ethers.utils.arrayify(shared);
+  return ecdhShared(privateKeyHex, peerPublicKeyHex, ethers);
 }
-
-// Shared implementation: given a raw private key (briefly in scope) and a
-// peer's uncompressed secp256k1 public key, perform ECDH and return a 256-bit
-// AES-GCM CryptoKey. The shared secret never leaves this function.
-// Compatible with apps/dashboard-5.0/ecdh-crypto.js: same SHA-256(sharedSecret)
-// derivation, so messages can flow between wallets and external clients.
 async function _deriveAesKeyFromPriv(privateKeyHex, peerPublicKeyHex, ethers) {
-  const secretBytes = _sharedFromPriv(privateKeyHex, peerPublicKeyHex, ethers);
-  const keyMaterial = await crypto.subtle.digest("SHA-256", secretBytes);
-  return await crypto.subtle.importKey(
-    "raw",
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
+  return aesKeyFromShared(_sharedFromPriv(privateKeyHex, peerPublicKeyHex, ethers));
 }
-
-async function _aesGcmEncrypt(aesKey, plaintextBytes) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ctWithTag = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv, tagLength: 128 },
-      aesKey,
-      plaintextBytes,
-    ),
-  );
-  return {
-    ciphertext: ctWithTag.slice(0, -16),
-    iv,
-    tag: ctWithTag.slice(-16),
-  };
-}
-
-async function _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes) {
-  const ctWithTag = new Uint8Array(ciphertextBytes.length + tagBytes.length);
-  ctWithTag.set(ciphertextBytes, 0);
-  ctWithTag.set(tagBytes, ciphertextBytes.length);
-  return new Uint8Array(
-    await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: ivBytes, tagLength: 128 },
-      aesKey,
-      ctWithTag,
-    ),
-  );
-}
+const _aesGcmEncrypt = sealWithKey;
+const _aesGcmDecrypt = openWithKey;
 
 // Web3 Wallet — a RIVET locked by a plugin wallet (MetaMask, etc.).
 //

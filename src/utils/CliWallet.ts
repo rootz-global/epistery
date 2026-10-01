@@ -394,57 +394,14 @@ export class CliWallet {
    * @param req.body    request body as sent — string, Buffer or undefined
    */
   async createBotAuthHeader(req: BotAuthRequest = {}): Promise<string> {
-    const { botAuthMessage, audienceFor, EMPTY_BODY_SHA256 } = await loadClientModule('bot-auth-message.mjs');
-
-    let uri = req.uri;
-    let aud = req.aud;
-    if (req.url) {
-      const u = new URL(req.url);
-      if (uri === undefined) uri = u.pathname + u.search;
-      if (aud === undefined) aud = u.host;
-    }
-    if (uri === undefined || aud === undefined) {
-      throw new Error(
-        'createBotAuthHeader: pass { url } or both { uri, aud } — a bot signature must name the request it authorises'
-      );
-    }
-
-    const body = req.body;
-    const bodyHash =
-      body === undefined || body === null || body.length === 0
-        ? EMPTY_BODY_SHA256
-        : createHash('sha256')
-            .update(Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8'))
-            .digest('hex');
-
-    const ts = Date.now();
-    const nonce = randomBytes(16).toString('hex');
-    const method = (req.method || 'POST').toUpperCase();
-    const audience = audienceFor(aud);
-
-    const message = botAuthMessage({
-      method,
-      uri,
-      aud: audience,
-      bodyHashHex: bodyHash,
-      ts,
-      nonce
-    });
-    const signature = await this.sign(message);
-
-    const payload = {
-      v: '1',
+    const { botAuthorization } = await loadClientModule('bot-auth-message.mjs');
+    return botAuthorization({
+      sign: (m: string) => this.sign(m),
       address: this.address,
-      signature,
-      method,
-      uri,
-      aud: audience,
-      bodyHash,
-      ts,
-      nonce
-    };
-
-    return `Bot ${Buffer.from(JSON.stringify(payload)).toString('base64')}`;
+      method: req.method || 'POST',
+      url: req.url, uri: req.uri, aud: req.aud,
+      body: req.body === undefined || req.body === null ? undefined : req.body,
+    });
   }
 
   /**
