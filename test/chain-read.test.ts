@@ -47,6 +47,7 @@ function fakeNode(mode: () => string) {
         return reply({ number: '0x5a63500', hash: '0x' + 'ab'.repeat(32), timestamp: '0x' + ts.toString(16) });
       }
       const a = (x: string) => x.toLowerCase();
+      if (rq.method === 'eth_getBalance') return reply(a(rq.params[0]) === a(RIVET) ? '0x8ac7230489e80000' : '0x0');   // 10 POL, else nothing
       if (rq.method === 'eth_getCode') return reply([a(CONTRACT), a(IDENTITY)].includes(a(rq.params[0])) ? '0x6001' : '0x');
       const { to, data } = rq.params[0];
       if (a(to) === a(IDENTITY)) {
@@ -161,6 +162,16 @@ describe('chainReader — k-of-n, like a multisig', () => {
     expect(await reader(1).isRivet(CONTRACT, RIVET)).toBe(true);
     expect(await reader(1).isRivet(CONTRACT, STRANGER)).toBe(false);
     expect(await reader(1).view(CONTRACT, 'function getRivets() view returns (address[])', 'getRivets')).toBeNull();
+  });
+
+  it('balanceOf: the attested balance, k-of-n like any other read, refused when the node is stale', async () => {
+    set('ok');
+    expect((await reader(1).balanceOf(RIVET)).toString()).toBe('10000000000000000000');
+    expect((await reader(1).balanceOf(STRANGER)).toString()).toBe('0');
+    set('stale');
+    await expect(reader(1).balanceOf(RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
+    set('ok', 'stale', 'ok');
+    expect((await reader(3).balanceOf(RIVET)).toString()).toBe('10000000000000000000');
   });
 
   it('refuses to exist with a non-positive head age', () => {

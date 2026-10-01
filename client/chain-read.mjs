@@ -213,6 +213,15 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
     return cached(`code|${lc(to)}`, async () => (await agree((p) => p.getCode(to))) != null, fresh);
   }
 
+  // The native balance of an address, as the attested chain holds it. Never
+  // cached: a balance is the one fact a caller reads expecting it to have just
+  // changed (its own transfer landing), so each read goes to the nodes — the
+  // head check (15 s) is the only reuse. Returns an ethers BigNumber.
+  async function balanceOf(addr) {
+    const out = await agree((p) => p.getBalance(addr).then((b) => b.toHexString()));
+    return ethers.BigNumber.from(out == null ? 0 : out);
+  }
+
   async function isRivet(contract, addr, { fresh = false } = {}) {
     return cached(`rivet|${lc(contract)}|${lc(addr)}`, async () => {
       if (await read(contract, "isAuthorized", [addr])) return true;
@@ -256,5 +265,5 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
     return (await sectionRole(contract, section, signer, identity, opts)) >= ROLE.ADMIN;
   }
 
-  return { isRivet, roleOf, sectionRole, mayCommit, mayRotate, view, hasCode, endpoints, quorum, maxHeadAgeMs };
+  return { isRivet, roleOf, sectionRole, mayCommit, mayRotate, view, hasCode, balanceOf, endpoints, quorum, maxHeadAgeMs };
 }
