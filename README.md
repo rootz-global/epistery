@@ -480,16 +480,20 @@ Where the code currently fails the contract above. Dated; remove as fixed.
   single exported `verifyBotAuth()` — the README's rule that no consumer may
   re-derive identity applies to epistery itself first.
 
+**Resolved in 2.4.x (2026-09-30, the 3Q26 refactor)**
+
+- **Downstream identity bypass.** The consumer that asserted contract identity
+  through a spoofable header was `epistery.app`, which is retired; the console
+  reads identity only from `req.episteryClient.identityAddress`, as this
+  document requires. The wire modules under `client/` (section "The wire") are
+  imported by every signer and verifier in the estate and re-inlined nowhere;
+  `Config` reads throw on failure rather than answering `{}`; the server-side
+  funding and claiming routes (`/identity/prepare-add-rivet`, `/create`,
+  `/auth/*`, `/domain/*`) are deleted.
+
 **Outstanding**
 
-1. **Downstream identity bypass (consumer: `epistery.app`).** Consumers have
-   asserted contract identity via a spoofable `x-identity-contract` header +
-   localStorage instead of consuming the verified `_epistery` cookie. Now
-   unblocked by the cutover above: the consumer's adopt path should call
-   `wallet.upgradeToContract(C)` + `Witness.performKeyExchange()` and read
-   identity from `req.episteryClient.identityAddress`.
-
-2. **Wallet-internal `address` field still flips on upgrade.** `RivetWallet.upgradeToContract`
+1. **Wallet-internal `address` field still flips on upgrade.** `RivetWallet.upgradeToContract`
    still overwrites `wallet.address` with the contract address (the original
    rivet survives as `wallet.rivetAddress`). The new `wallet.signerAddress` /
    `wallet.identityAddress` getters cover the boundary, but every internal
@@ -497,7 +501,7 @@ Where the code currently fails the contract above. Dated; remove as fixed.
    persistence shape (with one-time IndexedDB migration so existing user
    wallets keep working) and convert call sites.
 
-3. **`PrepareTransactionRequest`/`Response` types.** Reference removed
+2. **`PrepareTransactionRequest`/`Response` types.** Reference removed
    `agent.sol` operations (`write` / `transferOwnership` / `createApproval`
    / etc.); imported but no longer consumed. Delete in the next dead-code sweep.
 
