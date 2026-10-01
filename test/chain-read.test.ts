@@ -29,7 +29,8 @@ const iface = new ethers.utils.Interface([
 let sectionNames = ['recipes', '_profile'];
 
 // mode: 'ok' answers; 'lie' says everyone is a rivet; 'hang' never answers; 'down' HTTP 503; 'forbidden' HTTP 403 (the Infura settings shape);
-// 'stale' answers everything correctly from a head sealed hours ago (a node whose chain has stopped)
+// 'stale' answers everything correctly from a head sealed hours ago (a node whose chain has stopped);
+// 'revert-as-result' is a node that reports a contract's revert as the call's RESULT bytes (Panic 0x32), not as an error
 function fakeNode(mode: () => string) {
   const server = http.createServer((req, res) => {
     let body = '';
@@ -37,7 +38,7 @@ function fakeNode(mode: () => string) {
     req.on('end', () => {
       const m = mode();
       if (m === 'hang') return;   // a jammed node: takes the request, never answers
-      if (m !== 'ok' && m !== 'lie' && m !== 'stale') { res.writeHead(m === 'down' ? 503 : 403); return res.end('{"error":"no"}'); }
+      if (!['ok', 'lie', 'stale', 'revert-as-result'].includes(m)) { res.writeHead(m === 'down' ? 503 : 403); return res.end('{"error":"no"}'); }
       const rq = JSON.parse(body);
       const reply = (result: any) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: rq.id, result })); };
       if (rq.method === 'eth_chainId') return reply('0x89');
@@ -56,7 +57,7 @@ function fakeNode(mode: () => string) {
       if (to.toLowerCase() !== CONTRACT.toLowerCase()) return reply('0x');   // an EOA: no code, no data
       const tx = iface.parseTransaction({ data });
       if (tx.name === 'isAuthorized') return reply(iface.encodeFunctionResult('isAuthorized', [m === 'lie' || a(tx.args[0]) === a(RIVET)]));
-      if (tx.name === 'getRivets') return reply(iface.encodeFunctionResult('getRivets', [[RIVET]]));
+      if (tx.name === 'getRivets') return reply(m === 'revert-as-result' ? '0x4e487b710000000000000000000000000000000000000000000000000000000000000032' : iface.encodeFunctionResult('getRivets', [[RIVET]]));
       if (tx.name === 'getSectionNames') return reply(iface.encodeFunctionResult('getSectionNames', [sectionNames]));
       const who = a(tx.args[1]);
       const role = tx.args[0] !== SESSION ? 0 : who === a(WRITER) ? 2 : who === a(ADMIN) ? 3 : who === a(IDENTITY) ? 3 : 0;
@@ -152,6 +153,14 @@ describe('chainReader — k-of-n, like a multisig', () => {
     await expect(r.isRivet(CONTRACT, RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
     set('ok');
     expect(await r.isRivet(CONTRACT, RIVET)).toBe(true);
+  });
+
+  it('a revert returned as the call RESULT is an answer of nothing, like a revert returned as an error', async () => {
+    set('revert-as-result');
+    // getRivets panics (array out of bounds) on this contract: isRivet still answers — by isAuthorized — and never throws
+    expect(await reader(1).isRivet(CONTRACT, RIVET)).toBe(true);
+    expect(await reader(1).isRivet(CONTRACT, STRANGER)).toBe(false);
+    expect(await reader(1).view(CONTRACT, 'function getRivets() view returns (address[])', 'getRivets')).toBeNull();
   });
 
   it('refuses to exist with a non-positive head age', () => {

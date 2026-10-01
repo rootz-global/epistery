@@ -36,6 +36,15 @@
 //   role  : roleOf(section, addr); an identity that vouches for addr lends it its
 //           own role (the credential's `identity`)
 
+// A revert is an answer of nothing, however the node reports it. A node that
+// reports a revert as a JSON-RPC error reaches ethers as a CALL_EXCEPTION with
+// its bytes (classified below as an answer, not a failure). A node that returns
+// the same bytes as the call's RESULT reaches us as a string — Error(string) or
+// Panic(uint256) bytes that decodeFunctionResult would then throw on, as if the
+// chain had failed to answer. Both are the one thing: the contract reverted.
+const REVERT_SELECTORS = ["0x08c379a0", "0x4e487b71"];   // Error(string), Panic(uint256)
+const isRevertPayload = (out) => typeof out === "string" && REVERT_SELECTORS.includes(out.slice(0, 10).toLowerCase());
+
 // ethers v5 pitfall: when an endpoint returns a non-result (an HTTP 403, a rate
 // limit) ethers does not surface a transport error for an eth_call — it fabricates
 // a CALL_EXCEPTION with data "0x", indistinguishable at a glance from a revert. That
@@ -148,7 +157,7 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
       for (const node of providers) {
         const { url, provider } = node;
         Promise.resolve().then(() => assertFresh(node)).then(() => ask(provider)).then(
-          (out) => ({ answer: out == null || out === "0x" ? null : String(out) }),
+          (out) => ({ answer: out == null || out === "0x" || isRevertPayload(out) ? null : String(out) }),
           (e) => (e?.code === "CHAIN_STALE" ? { failure: e.message }
             : isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` } : { answer: null }),   // a revert is an answer: no
         ).then((o) => {
