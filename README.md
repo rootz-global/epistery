@@ -308,7 +308,9 @@ by every signer and verifier; none re-inlines it. Each is a pure ES module under
 - `client/chain-read.mjs` — `chainReader` (k-of-n attestation reads over owned
   nodes: `isRivet`, `roleOf`, `sectionRole` (the two-hop through a vouching
   identity), `mayCommit`, `mayRotate`, `hasCode`, and `view` for any named
-  function, `balanceOf` for the native balance, never cached; every other verb
+  function, `balanceOf` for the native balance, never cached; `observe`, when
+  given, hears every read settle — `{ ok }` or `{ ok: false, code, message }`
+  — so a host can make a refusal seen, not only thrown; every other verb
   takes `{ fresh }` to read past the cache; a node answers
   only while its head is fresh — its latest block younger than `maxHeadAgeMs`,
   2 minutes by default — so a node whose chain has stopped is a non-answer, not

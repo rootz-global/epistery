@@ -174,6 +174,18 @@ describe('chainReader — k-of-n, like a multisig', () => {
     expect((await reader(3).balanceOf(RIVET)).toString()).toBe('10000000000000000000');
   });
 
+  it('observe hears every read settle — a refusal with its code, an answer as ok — and cannot break the read', async () => {
+    const seen: any[] = [];
+    const r = chainReader({ rpcs: urls.slice(0, 1), chainId: 137, ethers, ttlMs: 0, timeoutMs: 3000, headTtlMs: 0, observe: (e: any) => { seen.push(e); throw new Error('observer bug'); } });
+    set('stale');
+    await expect(r.isRivet(CONTRACT, RIVET)).rejects.toMatchObject({ code: 'CHAIN_UNREACHABLE' });
+    set('ok');
+    expect(await r.isRivet(CONTRACT, RIVET)).toBe(true);
+    expect(seen[0]).toMatchObject({ ok: false, code: 'CHAIN_UNREACHABLE' });
+    expect(seen[0].message).toMatch(/is stale/);
+    expect(seen.some((e) => e.ok === true)).toBe(true);
+  });
+
   it('refuses to exist with a non-positive head age', () => {
     expect(() => chainReader({ rpcs: urls.slice(0, 1), chainId: 137, ethers, maxHeadAgeMs: 0 })).toThrow(/maxHeadAgeMs/);
   });

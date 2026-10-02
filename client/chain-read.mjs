@@ -82,7 +82,7 @@ export function roleName(role) { return ROLE_NAME[Number(role)] ?? null; }
 const lc = (a) => String(a || "").toLowerCase();
 const host = (url) => { try { return new URL(url).host; } catch { return String(url); } };
 
-export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.ethers, ttlMs = 10 * 60 * 1000, timeoutMs = 15000, maxHeadAgeMs = 2 * 60 * 1000, headTtlMs = 15000 } = {}) {
+export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.ethers, ttlMs = 10 * 60 * 1000, timeoutMs = 15000, maxHeadAgeMs = 2 * 60 * 1000, headTtlMs = 15000, observe = null } = {}) {
   const endpoints = [...new Set((rpcs || []).filter(Boolean))];
   if (!endpoints.length) {
     throw new Error("chainReader: no attestation endpoint — an attestation read is answered by an owned node or not at all");
@@ -119,6 +119,11 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   const iface = new ethers.utils.Interface(ABI);
   const ifaces = new Map();   // abi text → Interface, for view()
   const cache = new Map();
+  // Where a refusal is born is where it is reported: `observe` hears every read
+  // settle — `{ ok: true }` or `{ ok: false, code, message }` — so a host can
+  // make a refusal SEEN (an alarm in its own messaging) rather than only thrown
+  // at whoever asked. It can neither change nor delay the read.
+  const report = (event) => { if (typeof observe === "function") { try { observe(event); } catch { /* an observer's fault is its own */ } } };
 
   // One read, asserted k-of-n like a multisig: every node is asked at once, and an
   // answer stands when `quorum` nodes give it. The read settles the moment the
@@ -137,7 +142,7 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
       const votes = new Map();   // answer → count
       const failures = [];
       let pending = providers.length, done = false;
-      const refuse = (code, msg) => { const e = new Error(msg); e.code = code; done = true; clearTimeout(timer); reject(e); };
+      const refuse = (code, msg) => { const e = new Error(msg); e.code = code; done = true; clearTimeout(timer); report({ ok: false, code, message: msg }); reject(e); };
       const decide = () => {
         if (done) return;
         const reached = [...votes].filter(([, n]) => n >= quorum);
@@ -145,7 +150,7 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
         // Decided once one answer has the quorum and no other answer — one already
         // given, or one from a node not yet heard — can still reach it.
         if (reached.length === 1 && pending < quorum && [...votes].every(([v, n]) => v === reached[0][0] || n + pending < quorum)) {
-          done = true; clearTimeout(timer); return resolve(reached[0][0] === "null" ? null : reached[0][0]);
+          done = true; clearTimeout(timer); report({ ok: true }); return resolve(reached[0][0] === "null" ? null : reached[0][0]);
         }
         const best = Math.max(0, ...votes.values());
         if (best + pending >= quorum) return;   // still possible
