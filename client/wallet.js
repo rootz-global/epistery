@@ -1189,6 +1189,16 @@ export class FidoWallet extends Wallet {
     const aesKey = await _deriveAesKeyFromPriv(privateKey, peerPublicKey, ethers);
     return await _aesGcmDecrypt(aesKey, ciphertextBytes, ivBytes, tagBytes);
   }
+
+  // Raw ECDH shared secret for the TreeKEM leaf-decap seam — the same unlock and
+  // the same in-closure lifecycle as encryptForPeer. Without this a passkey
+  // device said canPeerEncrypt and then, asked for its leaf secret, threw the
+  // base class's "does not support shared-secret derivation": it could sign and
+  // seal to a peer but could never open a session group.
+  async computeSharedSecret(peerPublicKey, ethers) {
+    const privateKey = await this._decryptPrivateKey(ethers);
+    return _sharedFromPriv(privateKey, peerPublicKey, ethers);
+  }
 }
 
 if (typeof window !== "undefined") {

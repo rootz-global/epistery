@@ -10,7 +10,7 @@ import {
   Web3Wallet,
   RivetWallet,
   FidoWallet,
-} from "./wallet.js?v=11";
+} from "./wallet.js?v=12";
 import {
   tabId,
   armTab,
