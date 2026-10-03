@@ -320,7 +320,11 @@ by every signer and verifier; none re-inlines it. Each is a pure ES module under
   reads it out of the Solidity source).
 - `client/key-exchange-message.mjs` — `keyExchangeMessage`, the string a device
   signs for `/connect` and for the config authority, and `serverResponseMessage`,
-  the string the host signs back.
+  the string the host signs back; `connectChallenge` / `parseConnectChallenge`,
+  the `/connect` challenge that names the host it is for, the moment it was made
+  and a nonce, so the host refuses a handshake for another host, a stale one, or
+  one it has honoured (the same freshness window as bot auth, `isFreshTimestamp`).
+  The authority's `/auth/verify` issues its own challenge and is untouched.
 - `client/peer-cipher.mjs` — the one peer-encryption and content construction:
   a wrap is ECDH → SHA-256 → AES-256-GCM as `{ciphertext, iv, tag}` (tag split
   off); sealed content is AES-256-GCM under K as `{iv, ciphertext}` (tag

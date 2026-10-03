@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ethers } from 'ethers';
-import { keyExchangeMessage } from '../../client/key-exchange-message.mjs';
+import { keyExchangeMessage, connectChallenge } from '../../client/key-exchange-message.mjs';
 import {
   createTestApp,
   TestApp,
@@ -59,6 +59,33 @@ describe('Connect Routes', () => {
       const cookies = response.headers['set-cookie'];
       expect(cookies).toBeDefined();
       expect(cookies.some((c: string) => c.startsWith('_epistery='))).toBe(true);
+    });
+
+    // The handshake is held to this host: the device's challenge names the
+    // audience and the moment, and is honoured once. A captured /connect
+    // request used to open a session as that device, on any host, forever.
+    it('refuses the same handshake presented twice', async () => {
+      const payload = await createKeyExchangePayload(client1Wallet);
+      await testApp.supertest.post('/.well-known/epistery/connect').send(payload).expect(200);
+      await testApp.supertest.post('/.well-known/epistery/connect').send(payload).expect(401);
+    });
+
+    it('refuses a challenge minted for another host', async () => {
+      const challenge = connectChallenge({ aud: 'other.example', ts: Date.now(), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) });
+      const message = keyExchangeMessage({ address: client1Wallet.address, challenge });
+      const payload = { signerAddress: client1Wallet.address, signerPublicKey: client1Wallet.publicKey, contractAddress: null, challenge, message, signature: await client1Wallet.signMessage(message), walletSource: 'browser' };
+      await testApp.supertest.post('/.well-known/epistery/connect').send(payload).expect(401);
+    });
+
+    it('refuses a stale challenge, and a bare random one from an old client', async () => {
+      for (const challenge of [
+        connectChallenge({ aud: '127.0.0.1', ts: Date.now() - 10 * 60_000, nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) }),
+        ethers.utils.hexlify(ethers.utils.randomBytes(32)),
+      ]) {
+        const message = keyExchangeMessage({ address: client1Wallet.address, challenge });
+        const payload = { signerAddress: client1Wallet.address, signerPublicKey: client1Wallet.publicKey, contractAddress: null, challenge, message, signature: await client1Wallet.signMessage(message), walletSource: 'browser' };
+        await testApp.supertest.post('/.well-known/epistery/connect').send(payload).expect(401);
+      }
     });
 
     it('should return 401 for invalid signature', async () => {

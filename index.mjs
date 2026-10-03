@@ -45,6 +45,7 @@ import {
   messageForEnvelope,
   EMPTY_BODY_SHA256,
 } from "./client/bot-auth-message.mjs";
+import { SIGNED_MAX_AGE_MS, SIGNED_MAX_SKEW_MS } from "./client/key-exchange-message.mjs";
 import { createHash } from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,8 +55,10 @@ const __dirname = path.dirname(__filename);
 // remembered. Bot auth is a live-request credential, not an archival record —
 // the window is deliberately short. (Archival signing has different needs and
 // belongs in the signed-result envelope, not here.)
-const BOT_AUTH_MAX_AGE_MS = 120_000;
-const BOT_AUTH_MAX_SKEW_MS = 30_000;
+// The one freshness window for a signed request — shared with the /connect
+// handshake (client/key-exchange-message.mjs).
+const BOT_AUTH_MAX_AGE_MS = SIGNED_MAX_AGE_MS;
+const BOT_AUTH_MAX_SKEW_MS = SIGNED_MAX_SKEW_MS;
 
 /**
  * Replay store. A nonce is single-use inside its validity window; past the
@@ -392,6 +395,11 @@ class EpisteryAttach {
     // back — it is the whole point.
     return sessionFromJar(req);
   }
+
+  // The one atomic nonce claim (the bot-auth store, shared across instances when
+  // setBotNonceStore was given one) — lent to the /connect handshake so a
+  // device's challenge is honoured once.
+  claimNonce(nonce, expiresAtMs) { return _botNonceStore.claim(nonce, expiresAtMs); }
 
   async attach(app, rootPath, options = {}) {
     this.rootPath = rootPath || WELL_KNOWN_PATH;

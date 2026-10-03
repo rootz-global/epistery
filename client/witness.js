@@ -19,7 +19,8 @@ import {
   unpinWallet,
   installTabHeader,
 } from "./tab.js?v=1";
-import { keyExchangeMessage, serverResponseMessage } from "./key-exchange-message.mjs";
+import { keyExchangeMessage, serverResponseMessage, connectChallenge } from "./key-exchange-message.mjs";
+import { audienceFor } from "./bot-auth-message.mjs";
 
 // Every same-origin request from this tab names this tab, from module load —
 // before any code below runs a fetch. Inert until the tab is armed by its first
@@ -508,8 +509,10 @@ export default class Witness {
   }
 
   generateChallenge() {
-    // Generate a random 32-byte challenge for key exchange
-    return ethers.utils.hexlify(ethers.utils.randomBytes(32));
+    // The /connect challenge names the host it is for and the moment it was
+    // made, around a random nonce — so the host can refuse a handshake minted
+    // for another host, an old one, or one it has already honoured.
+    return connectChallenge({ aud: audienceFor(location.host), ts: Date.now(), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) });
   }
 
   async performKeyExchange() {

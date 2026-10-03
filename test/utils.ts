@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { keyExchangeMessage } from '../client/key-exchange-message.mjs';
+import { keyExchangeMessage, connectChallenge } from '../client/key-exchange-message.mjs';
 import { createHash, randomBytes } from 'crypto';
 import express, { Express } from 'express';
 import cookieParser from 'cookie-parser';
@@ -130,7 +130,8 @@ export async function createKeyExchangePayload(wallet: ethers.Wallet): Promise<{
   signature: string;
   walletSource: string;
 }> {
-  const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
+  // supertest sends Host: 127.0.0.1:<port>; the handshake holds the challenge to that audience.
+  const challenge = connectChallenge({ aud: '127.0.0.1', ts: Date.now(), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) });
   const message = keyExchangeMessage({ address: wallet.address, challenge });
   const signature = await wallet.signMessage(message);
 

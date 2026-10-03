@@ -4,6 +4,7 @@ import { Epistery } from "../dist/epistery.js";
 import * as jar from "../session-jar.mjs";
 import { issueOriginCertificate } from "../client/origin-certificate.mjs";
 import { chainReader, isChainReadFailure } from "../client/chain-read.mjs";
+import { audienceFor } from "../client/bot-auth-message.mjs";
 import { attestationConfig } from "../dist/chains/index.js";
 
 const require = createRequire(import.meta.url);
@@ -59,8 +60,13 @@ export default function connectRoutes(epistery) {
         return res.status(500).json({ error: "Server wallet not found" });
       }
 
-      // Handle key exchange request
-      const keyExchangeResponse = await Epistery.handleKeyExchange(data, signer);
+      // The handshake, held to this host: the device's challenge must name this
+      // audience, be fresh, and be seen once (the bot-auth nonce store).
+      const host = req.hostname || req.headers.host?.split(":")[0] || "";
+      const keyExchangeResponse = await Epistery.handleKeyExchange(data, signer, {
+        audience: audienceFor(host),
+        claimNonce: (nonce, expiresAt) => epistery.claimNonce(nonce, expiresAt),
+      });
 
       if (!keyExchangeResponse) {
         return res.status(401).json({

@@ -233,9 +233,12 @@ export class CliWallet {
     const baseUrl = serverUrl.replace(/\/$/, '');
     const connectUrl = await CliWallet.discoverConnect(baseUrl);
 
-    // Generate challenge for key exchange
-    const challenge = ethers.utils.hexlify(ethers.utils.randomBytes(32));
-    const { keyExchangeMessage, serverResponseMessage } = await loadClientModule('key-exchange-message.mjs');
+    // The challenge names the host it is for and the moment it was made, around
+    // a random nonce (connectChallenge) — the host refuses it for another host,
+    // stale, or seen before.
+    const { keyExchangeMessage, serverResponseMessage, connectChallenge } = await loadClientModule('key-exchange-message.mjs');
+    const { audienceFor } = await loadClientModule('bot-auth-message.mjs');
+    const challenge = connectChallenge({ aud: audienceFor(new URL(connectUrl).host), ts: Date.now(), nonce: ethers.utils.hexlify(ethers.utils.randomBytes(32)) });
     const message = keyExchangeMessage({ address: this.address, challenge });
 
     // Sign the message
