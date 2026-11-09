@@ -223,6 +223,14 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         return isAuthorized[rivet] && rivetActive[rivet];
     }
 
+    // The contract's logic version — readers use it to know which invariants this
+    // contract guarantees without inspecting bytecode. Version 1 (the unversioned era:
+    // no version() getter, so the call reverts) kept removed rivets in the append-only
+    // array, so re-adding the same address duplicated it and bricked getRivets().
+    // Version 2 keeps authorizedRivets compacted (swap-and-pop), so add/remove/re-add
+    // is safe. Clients gate the re-add guard on version() >= 2.
+    uint256 public constant version = 2;
+
     // ── act as the identity ─────────────────────────────────────────────────
 
     function executeTransaction(address target, uint256 value, bytes memory data)

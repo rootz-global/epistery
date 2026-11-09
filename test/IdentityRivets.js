@@ -71,6 +71,10 @@ describe('IdentityContract rivets', function () {
     assert.deepEqual(set(await id.getRivets()), set([owner.address, a.address]));
   });
 
+  it('reports contract version 2 (the swap-and-pop fix)', async function () {
+    assert.equal((await id.version()).toString(), '2');
+  });
+
   it('cannot remove the last rivet', async function () {
     await expectRevert(id.removeRivet(owner.address), 'cannot remove last rivet');
   });
