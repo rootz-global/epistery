@@ -67,6 +67,10 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     mapping(address => uint256) public rivetAddedAt;
     mapping(address => string) public rivetPublicKeys;  // per-device key (communications fabric)
     uint256 public rivetCount;
+    // authorizedRivets is kept compacted to EXACTLY the active rivets (swap-and-pop
+    // on remove), mirroring the ACL's _aclIndex pattern in {EpisteryAccess}. This map
+    // gives O(1) removal; stored as index+1 so 0 means "absent".
+    mapping(address => uint256) private _rivetIndex;
 
     uint256 public removeRivetThreshold = 1;    // N-of-M to remove a rivet (governance knob)
     uint256 public messageCount;
@@ -165,6 +169,21 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         require(rivetCount > 1, "cannot remove last rivet");
         // (removeRivetThreshold is the intended N-of-M knob; enforcement lands with governance.)
 
+        // Swap-and-pop so authorizedRivets stays == the active set. The prior version
+        // left the removed address in the append-only array; re-adding the SAME address
+        // then pushed a second copy, and getRivets() — which allocated a rivetCount-sized
+        // buffer but looped the whole array — wrote past the end and reverted, bricking
+        // every read of the identity's signers.
+        uint256 idx = _rivetIndex[rivet] - 1;
+        uint256 last = authorizedRivets.length - 1;
+        if (idx != last) {
+            address moved = authorizedRivets[last];
+            authorizedRivets[idx] = moved;
+            _rivetIndex[moved] = idx + 1;
+        }
+        authorizedRivets.pop();
+        delete _rivetIndex[rivet];
+
         isAuthorized[rivet] = false;
         rivetActive[rivet] = false;
         rivetCount--;
@@ -181,6 +200,7 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
 
     function _addRivet(address rivet, string memory name) private {
         authorizedRivets.push(rivet);
+        _rivetIndex[rivet] = authorizedRivets.length;   // index + 1
         isAuthorized[rivet] = true;
         rivetActive[rivet] = true;
         rivetNames[rivet] = name;
@@ -196,18 +216,20 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     }
 
     function getRivets() external view returns (address[] memory) {
-        address[] memory active = new address[](rivetCount);
-        uint256 n;
-        for (uint256 i; i < authorizedRivets.length; i++) {
-            address r = authorizedRivets[i];
-            if (isAuthorized[r] && rivetActive[r]) { active[n++] = r; }
-        }
-        return active;
+        return authorizedRivets;   // kept == the active set; see _addRivet / removeRivet
     }
 
     function isRivet(address rivet) external view returns (bool) {
         return isAuthorized[rivet] && rivetActive[rivet];
     }
+
+    // The contract's logic version — readers use it to know which invariants this
+    // contract guarantees without inspecting bytecode. Version 1 (the unversioned era:
+    // no version() getter, so the call reverts) kept removed rivets in the append-only
+    // array, so re-adding the same address duplicated it and bricked getRivets().
+    // Version 2 keeps authorizedRivets compacted (swap-and-pop), so add/remove/re-add
+    // is safe. Clients gate the re-add guard on version() >= 2.
+    uint256 public constant version = 2;
 
     // ── act as the identity ─────────────────────────────────────────────────
 
