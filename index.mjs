@@ -637,7 +637,7 @@ export { CliWallet, defaultChain, findChain, setDefaultChain, providerConfigFor,
 // owned endpoints from config, the reader over them, and the one classifier of a
 // failed read versus the chain's answer.
 export { attestationConfig };
-export { chainReader, isChainReadFailure, ROLE, ROLE_NAME, roleName } from './client/chain-read.mjs';
+export { chainReader, isChainReadFailure, isUnanswered, ROLE, ROLE_NAME, roleName } from './client/chain-read.mjs';
 export { auditTree, secureTree, formatMode };
 export { storageWriteMessage };
 // The rest of the storage-write wire and the key-exchange message — one home each

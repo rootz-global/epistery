@@ -68,6 +68,16 @@ export function isChainReadFailure(e) {
   return false;
 }
 
+// Was the read UNANSWERED — the chain could not be reached or would not agree —
+// as opposed to a proven on-chain "no"? The ONE owner of that distinction: core
+// throws CHAIN_UNREACHABLE / CHAIN_DISAGREES when a k-of-n read is refused, and
+// isChainReadFailure classifies a single node's error. A caller gates a 503
+// ("could not read the chain", retry) on this — never a 403 / forbidden / role 0.
+// Relay (storage-auth, index) consume THIS; they do not re-derive it.
+export function isUnanswered(e) {
+  return e?.code === "CHAIN_UNREACHABLE" || e?.code === "CHAIN_DISAGREES" || isChainReadFailure(e);
+}
+
 const ABI = [
   "function isAuthorized(address) view returns (bool)",
   "function getRivets() view returns (address[])",
@@ -164,7 +174,9 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
         Promise.resolve().then(() => assertFresh(node)).then(() => ask(provider)).then(
           (out) => ({ answer: out == null || out === "0x" || isRevertPayload(out) ? null : String(out) }),
           (e) => (e?.code === "CHAIN_STALE" ? { failure: e.message }
-            : isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` } : { answer: null }),   // a revert is an answer: no
+            : isChainReadFailure(e) ? { failure: `${host(url)} ${e.reason || e.code}` }
+            : e?.code === "CALL_EXCEPTION" ? { answer: null }                        // a genuine revert ('0x' / transport-underneath already failed above) is an answer: no
+            : { failure: `${host(url)} ${e?.code || "unclassified read error"}` }),  // fail CLOSED: an UNclassified error abstains (a non-answer), never a spurious "no"
         ).then((o) => {
           if (done) return;
           pending -= 1;
@@ -239,7 +251,16 @@ export function chainReader({ rpcs, quorum = null, chainId, ethers = globalThis.
   }
 
   async function roleOf(contract, section, addr, { fresh = false } = {}) {
-    return cached(`role|${lc(contract)}|${section}|${lc(addr)}`, async () => Number((await read(contract, "roleOf", [section, addr])) || 0), fresh);
+    return cached(`role|${lc(contract)}|${section}|${lc(addr)}`, async () => {
+      // A real role is a uint8 the contract returns — a non-member is a 32-byte zero
+      // that decodes to 0, NOT null. null means the chain could not be read (a revert,
+      // no contract, a node that reached quorum with nothing); it is never "role none".
+      // Fail CLOSED, honouring sectionRole's "THROWS when it could not be read" contract,
+      // so a caller answers "could not read the chain" — never a false deny ("forbidden").
+      const raw = await read(contract, "roleOf", [section, addr]);
+      if (raw == null) { const e = new Error(`roleOf(${section}) on ${contract}: chain returned no value`); e.code = "CHAIN_UNREACHABLE"; throw e; }
+      return Number(raw);
+    }, fresh);
   }
 
   // The section role of a request signed by `signer` claiming `identity` — the
