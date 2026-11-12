@@ -5,7 +5,10 @@
   "author": "Rootz Corp.",
   "license": "MIT",
   "homepage": "https://epistery.com",
-  "repository": "https://github.com/rootz-global/epistery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rootz-global/epistery.git"
+  },
   "main": "index.mjs",
   "types": "dist/epistery.d.ts",
   "scripts": {
