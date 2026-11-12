@@ -36,7 +36,7 @@ import "./EpisteryAccess.sol";
  */
 /** The claim side of a domain's registrar — see {DomainContract}. */
 interface IDomainRegistrar {
-    function claim(string calldata name) external;
+    function claim(string calldata name) external payable;
 }
 
 interface IERC1271 {
@@ -117,7 +117,7 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         string memory firstRivetPubKey,
         address registrar_,
         string memory name_
-    ) {
+    ) payable {
         require(firstRivet != address(0), "first rivet required");
         _addRivet(firstRivet, bytes(firstRivetName).length > 0 ? firstRivetName : "device");
         if (bytes(firstRivetPubKey).length > 0) rivetPublicKeys[firstRivet] = firstRivetPubKey;
@@ -125,7 +125,9 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         registrar = registrar_;
         if (registrar_ != address(0) && bytes(name_).length > 0) {
             entityName = name_;
-            IDomainRegistrar(registrar_).claim(name_);
+            // Forward any value the mint carried — a domain with no free term
+            // requires the first year's fee here (see DomainContract.claim).
+            IDomainRegistrar(registrar_).claim{value: msg.value}(name_);
         } else {
             require(registrar_ == address(0) && bytes(name_).length == 0, "name needs a registrar");
         }

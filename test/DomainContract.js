@@ -11,7 +11,8 @@
 const assert = require('node:assert/strict');
 const { ethers } = require('hardhat');
 
-const YEAR = 365 * 24 * 60 * 60;
+const DAY = 24 * 60 * 60;
+const YEAR = 365 * DAY;
 const PUB = '0x04' + 'ab'.repeat(64);
 
 async function expectRevert(promise, fragment) {
@@ -62,12 +63,38 @@ describe('DomainContract', function () {
       assert.equal(await domain.available('mjs'), false);
     });
 
-    it('the first year comes with the claim', async function () {
+    it('the free term (30 days by default) comes with the claim', async function () {
       const id = await mint('mjs'); await id.deployed();
       const now = (await ethers.provider.getBlock('latest')).timestamp;
       const expires = (await domain.expiresAt('mjs')).toNumber();
-      assert.ok(Math.abs(expires - (now + YEAR)) <= 5, `expiry ${expires} ≈ now + a year`);
-      assert.equal((await domain.graceEndsAt('mjs')).toNumber(), expires + YEAR);
+      assert.equal(await domain.freeTermDays(), 30);
+      assert.ok(Math.abs(expires - (now + 30 * DAY)) <= 5, `expiry ${expires} ≈ now + 30 days`);
+      assert.equal((await domain.graceEndsAt('mjs')).toNumber(), expires + YEAR);   // grace is still a year
+    });
+
+    it('a rivet sets the free term, in days, for later claims', async function () {
+      await domain.setFreeTermDays(90);
+      assert.equal(await domain.freeTermDays(), 90);
+      const id = await mint('mjs'); await id.deployed();
+      const now = (await ethers.provider.getBlock('latest')).timestamp;
+      const expires = (await domain.expiresAt('mjs')).toNumber();
+      assert.ok(Math.abs(expires - (now + 90 * DAY)) <= 5, 'a later claim uses the new term');
+      await expectRevert(domain.connect(other).setFreeTermDays(5), 'not an active rivet');
+    });
+
+    it('a free-term claim takes no payment', async function () {
+      await expectRevert(domain.connect(other).claim('x', { value: 1 }), 'free term takes no payment');
+    });
+
+    it('with the free term set to zero, the claim must pay the first year', async function () {
+      const price = ethers.utils.parseEther('50');
+      await domain.setFee('name.renewal', price);
+      await domain.setFreeTermDays(0);
+      await expectRevert(domain.connect(other).claim('paid'), 'renewal fee required');
+      await domain.connect(other).claim('paid', { value: price });
+      const now = (await ethers.provider.getBlock('latest')).timestamp;
+      const expires = (await domain.expiresAt('paid')).toNumber();
+      assert.ok(Math.abs(expires - (now + YEAR)) <= 5, 'a paid claim buys a full year');
     });
 
     it('a mint whose name is taken reverts as a whole', async function () {
@@ -130,7 +157,7 @@ describe('DomainContract', function () {
   describe('renting', function () {
     const price = ethers.utils.parseEther('50');
 
-    beforeEach(async function () { await domain.setFee('name.renewal', price); });
+    beforeEach(async function () { await domain.setFreeTermDays(365); await domain.setFee('name.renewal', price); });
 
     it('charges the price the registrar holds', async function () {
       const id = await mint('mjs'); await id.deployed();
@@ -167,6 +194,10 @@ describe('DomainContract', function () {
   });
 
   describe('lapsing', function () {
+    // Renewal/grace timing is year-based; give the claim a year's term so the
+    // travels land where these assertions expect.
+    beforeEach(async function () { await domain.setFreeTermDays(365); });
+
     it('stays with its holder through the grace period, then belongs to nobody', async function () {
       const id = await mint('mjs'); await id.deployed();
       await travel(YEAR + 10);                                       // expired, in grace
@@ -211,12 +242,52 @@ describe('DomainContract', function () {
   describe('what the domain cannot do', function () {
     it('has no way to assign, move, rename or take a name', async function () {
       const abi = Domain.interface.fragments.filter((f) => f.type === 'function').map((f) => f.name);
-      for (const forbidden of ['setAddressName', 'assignName', 'transferName', 'releaseName', 'setName']) {
+      for (const forbidden of ['setAddressName', 'assignName', 'transferName', 'setName', 'takeName']) {
         assert.ok(!abi.includes(forbidden), `${forbidden} should not exist`);
       }
       // claim takes no address: a caller can only ever claim for itself
       const claim = Domain.interface.fragments.find((f) => f.name === 'claim');
       assert.deepEqual(claim.inputs.map((i) => i.type), ['string']);
+    });
+
+    it('a domain rivet cannot release or move a name it does not hold', async function () {
+      const id = await mint('mjs'); await id.deployed();                           // held by the entity
+      await expectRevert(domain.release('mjs'), 'not the holder');                 // owner IS a domain rivet
+      await expectRevert(domain.reassign('mjs', other.address), 'not the holder');
+      assert.equal(await domain.holderOf('mjs'), id.address);                      // unmoved
+    });
+  });
+
+  describe('a holder lets go', function () {
+    it('releases its own name, available at once — no waiting out grace', async function () {
+      await domain.connect(other).claim('spare');
+      assert.equal(await domain.available('spare'), false);
+      await expectRevert(domain.connect(payer).release('spare'), 'not the holder');
+      await domain.connect(other).release('spare');
+      assert.equal(await domain.available('spare'), true);
+      assert.equal(await domain.holderOf('spare'), ethers.constants.AddressZero);
+      assert.equal(await domain.nameOf(other.address), '');
+      await domain.connect(other).claim('spare');                                  // the freed slot is claimable
+      assert.equal(await domain.holderOf('spare'), other.address);
+    });
+
+    it('hands its name to a successor in one tx, keeping the expiry', async function () {
+      await domain.setFreeTermDays(365);
+      await domain.connect(other).claim('mjs');
+      const expiry = (await domain.expiresAt('mjs')).toNumber();
+      await expectRevert(domain.connect(payer).reassign('mjs', payer.address), 'not the holder');
+      await domain.connect(other).reassign('mjs', payer.address);
+      assert.equal(await domain.holderOf('mjs'), payer.address);
+      assert.equal(await domain.nameOf(payer.address), 'mjs');
+      assert.equal(await domain.nameOf(other.address), '');
+      assert.equal((await domain.expiresAt('mjs')).toNumber(), expiry);            // term carried over, not reset
+    });
+
+    it('cannot hand a name to someone who already holds one, or to nobody', async function () {
+      await domain.connect(other).claim('a');
+      await domain.connect(payer).claim('b');
+      await expectRevert(domain.connect(other).reassign('a', payer.address), 'already holds a name');
+      await expectRevert(domain.connect(other).reassign('a', ethers.constants.AddressZero), 'newHolder required');
     });
   });
 });

@@ -35,9 +35,14 @@ interface ILegacyNamedEntity {
  *
  * **What the domain cannot do.** There is no function here through which the domain
  * can assign, move, rename or take a name. It sets prices and it is paid; a name is
- * claimed by the entity that will hold it, and leaves only by lapsing. A server that
- * can make a claim succeed can also make it fail, and nobody should live at its
- * pleasure.
+ * claimed by the entity that will hold it. A server that can make a claim succeed
+ * can also make it fail, and nobody should live at its pleasure.
+ *
+ * A name leaves its holder in only three ways, and the domain compels none of them:
+ * it lapses (expiry, then grace), its holder RELEASES it, or its holder REASSIGNS it
+ * straight to a successor. The last two are the holder's own act — the voluntary
+ * side of lapsing, so a holder retiring a contract need not wait out a year of grace
+ * — and each is gated on `msg.sender` being the current holder, never the domain.
  */
 contract DomainContract is IdentityContract {
 
@@ -46,13 +51,20 @@ contract DomainContract is IdentityContract {
 
     // ── the names it issues ────────────────────────────────────────────────
     //
-    // A name is rented. The first year comes with the claim; each renewal buys a
-    // year FROM THE CURRENT EXPIRY, so paying late buys no extra time. Once the
-    // grace period after expiry has passed the name is available again — no
-    // transaction releases it, the next claim takes it.
+    // A name is rented. A short free term comes with the claim — enough to prove
+    // real intent (pay, or let it go) without a long free squat — and each renewal
+    // then buys a full year FROM THE CURRENT EXPIRY, so paying late buys no extra
+    // time. Once the grace period after expiry has passed the name is available
+    // again — no transaction releases it, the next claim takes it.
     struct NameRecord { address holder; uint64 expiresAt; }
 
-    uint64 public constant TERM  = 365 days;    // what one payment buys
+    // The free term is a domain SETTING, measured in days and set by a rivet — not
+    // a constant, so a domain tunes it without a redeploy (surfaced in domain-admin
+    // beside the prices). Renewal and grace stay fixed: a paid year is a year, and a
+    // lapse always keeps its holder through a year of grace. Names already claimed
+    // keep the expiry they were given; a change applies only to later claims.
+    uint32 public freeTermDays = 30;            // the free term a claim comes with (days)
+    uint64 public constant TERM  = 365 days;    // what one paid year buys (renewals)
     uint64 public constant GRACE = 365 days;    // how long a lapsed name is still its holder's
 
     mapping(string => NameRecord) private _names;   // name => record
@@ -76,6 +88,7 @@ contract DomainContract is IdentityContract {
     event NameRenewed(string name, address indexed holder, uint64 expiresAt, uint256 paid, address indexed payer);
     event NameReleased(string name, address indexed priorHolder, address indexed newHolder);
     event FeeSet(string key, uint256 amount, address indexed by);
+    event FreeTermSet(uint32 termDays, address indexed by);
 
     /**
      * @param firstRivet the domain's first device — its rivets wield it, as an
@@ -105,7 +118,7 @@ contract DomainContract is IdentityContract {
      * caller is: an address with nothing to report back can hold a name, and will
      * never be confirmed, which is the same rule everyone is read by.
      */
-    function claim(string calldata name) external {
+    function claim(string calldata name) external payable {
         _requireValidName(name);
         NameRecord storage rec = _names[name];
         address prior = rec.holder;
@@ -116,8 +129,22 @@ contract DomainContract is IdentityContract {
         }
         require(bytes(_held[msg.sender]).length == 0, "caller already holds a name");
 
+        // A domain with a free term gives the claim that many days for nothing. A
+        // domain that sets the free term to zero has none — the first year must be
+        // PAID at the claim, exactly as a renewal is. (So a `name.renewal` of 0 then
+        // makes even a no-free-term claim free, the same convention a zero fee
+        // carries everywhere — absent and zero are the deliberate "free".)
+        uint64 term;
+        if (freeTermDays == 0) {
+            require(msg.value == _fees[FEE_NAME_RENEWAL], "renewal fee required");
+            term = TERM;
+        } else {
+            require(msg.value == 0, "free term takes no payment");
+            term = uint64(freeTermDays) * 1 days;
+        }
+
         rec.holder = msg.sender;
-        rec.expiresAt = uint64(block.timestamp) + TERM;   // the first year comes with the claim
+        rec.expiresAt = uint64(block.timestamp) + term;
         _held[msg.sender] = name;
         emit NameClaimed(name, msg.sender, rec.expiresAt);
     }
@@ -136,6 +163,46 @@ contract DomainContract is IdentityContract {
 
         rec.expiresAt += TERM * uint64(years_);           // from the expiry, never from today
         emit NameRenewed(name, rec.holder, rec.expiresAt, msg.value, msg.sender);
+    }
+
+    // ── a holder lets go ─────────────────────────────────────────────────────
+    //
+    // The voluntary other side of lapsing. The domain compels neither: both are
+    // gated on the caller BEING the current holder, so a server can no more take a
+    // name here than it can through claim. A held contract calls these through its
+    // own executeTransaction, so its rivets decide — not the registrar's.
+
+    /**
+     * Give up `name`. Only its current holder may, and the name is available again
+     * at once — so a holder done with a name (a contract being retired) need not
+     * wait out the grace period.
+     */
+    function release(string calldata name) external {
+        require(_names[name].holder == msg.sender, "not the holder");
+        delete _held[msg.sender];
+        delete _names[name];
+        emit NameReleased(name, msg.sender, address(0));
+    }
+
+    /**
+     * Hand `name` straight to `newHolder`, keeping its expiry: the holder's own
+     * succession in one transaction, with no release-and-reclaim gap and no reset of
+     * the term already paid. Only the current holder may, and `newHolder` must not
+     * already hold a name (one name per holder, as everywhere here). This is how a
+     * name moves onto a freshly minted successor without the registrar ever being
+     * reset. The NameClaimed is emitted too, so the relay's name cache — which
+     * follows NameClaimed — tracks the successor the same as any claim.
+     */
+    function reassign(string calldata name, address newHolder) external {
+        NameRecord storage rec = _names[name];
+        require(rec.holder == msg.sender, "not the holder");
+        require(newHolder != address(0), "newHolder required");
+        require(bytes(_held[newHolder]).length == 0, "newHolder already holds a name");
+        delete _held[msg.sender];
+        rec.holder = newHolder;
+        _held[newHolder] = name;
+        emit NameReleased(name, msg.sender, newHolder);
+        emit NameClaimed(name, newHolder, rec.expiresAt);
     }
 
     // ── reading (facts, no verdict) ────────────────────────────────────────
@@ -194,6 +261,13 @@ contract DomainContract is IdentityContract {
         if (!_feeKeySeen[key]) { _feeKeySeen[key] = true; _feeKeys.push(key); }
         _fees[key] = amount;
         emit FeeSet(key, amount, msg.sender);
+    }
+
+    /** Set the free term new names come with, in days. A rivet's public
+     *  transaction; names already claimed keep the expiry they were given. */
+    function setFreeTermDays(uint32 termDays) external onlyRivet {
+        freeTermDays = termDays;
+        emit FreeTermSet(termDays, msg.sender);
     }
 
     // ── internals ──────────────────────────────────────────────────────────
