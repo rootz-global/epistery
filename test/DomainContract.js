@@ -15,6 +15,8 @@ const DAY = 24 * 60 * 60;
 const YEAR = 365 * DAY;
 const PUB = '0x04' + 'ab'.repeat(64);
 
+// Reverts carry custom errors (a 4-byte selector), not reason strings; hardhat
+// surfaces the error NAME in the message, so a substring match on it still reads.
 async function expectRevert(promise, fragment) {
   try { await promise; } catch (e) {
     const m = (e.message || '').toLowerCase();
@@ -27,6 +29,12 @@ const travel = async (seconds) => {
   await ethers.provider.send('evm_increaseTime', [seconds]);
   await ethers.provider.send('evm_mine', []);
 };
+
+// A rivet sets a domain setting (price, free term, reservation) by writing the
+// contract's own public-attribute store — no bespoke setter. Prices (wei) live in
+// `_fees`, the free term (days) in `_policy`, reservations in `_reserved`.
+const setFee = (d, key, wei) => d.setPublic('_fees', key, wei.toString());
+const setFreeTermDays = (d, days) => d.setPublic('_policy', 'name.freeTermDays', String(days));
 
 describe('DomainContract', function () {
   let owner, other, payer, Domain, Identity, domain;
@@ -46,7 +54,7 @@ describe('DomainContract', function () {
     it('is bound to its domain and carries no name of its own', async function () {
       assert.equal(await domain.domain(), 'epistery.com');
       assert.equal(await domain.entityName(), '');
-      assert.equal(await domain.registrar(), ethers.constants.AddressZero);
+      assert.equal(await domain.domainName(), '');          // stands under no other domain
       assert.equal(await domain.isRivet(owner.address), true);
     });
   });
@@ -58,7 +66,7 @@ describe('DomainContract', function () {
       assert.equal(await domain.holderOf('mjs'), id.address);
       assert.equal(await domain.nameOf(id.address), 'mjs');
       assert.equal(await id.entityName(), 'mjs');
-      assert.equal(await id.registrar(), domain.address);
+      assert.equal(await id.domainName(), await domain.domain());   // bound to the domain by NAME
       assert.equal(await domain.confirmed('mjs'), true);
       assert.equal(await domain.available('mjs'), false);
     });
@@ -73,24 +81,24 @@ describe('DomainContract', function () {
     });
 
     it('a rivet sets the free term, in days, for later claims', async function () {
-      await domain.setFreeTermDays(90);
+      await setFreeTermDays(domain, 90);
       assert.equal(await domain.freeTermDays(), 90);
       const id = await mint('mjs'); await id.deployed();
       const now = (await ethers.provider.getBlock('latest')).timestamp;
       const expires = (await domain.expiresAt('mjs')).toNumber();
       assert.ok(Math.abs(expires - (now + 90 * DAY)) <= 5, 'a later claim uses the new term');
-      await expectRevert(domain.connect(other).setFreeTermDays(5), 'not an active rivet');
+      await expectRevert(setFreeTermDays(domain.connect(other), 5), 'NotAuthorizedToManageSection');
     });
 
     it('a free-term claim takes no payment', async function () {
-      await expectRevert(domain.connect(other).claim('x', { value: 1 }), 'free term takes no payment');
+      await expectRevert(domain.connect(other).claim('x', { value: 1 }), 'FreeTermTakesNoPayment');
     });
 
     it('with the free term set to zero, the claim must pay the first year', async function () {
       const price = ethers.utils.parseEther('50');
-      await domain.setFee('name.renewal', price);
-      await domain.setFreeTermDays(0);
-      await expectRevert(domain.connect(other).claim('paid'), 'renewal fee required');
+      await setFee(domain, 'name.renewal', price);
+      await setFreeTermDays(domain, 0);
+      await expectRevert(domain.connect(other).claim('paid'), 'RenewalFeeRequired');
       await domain.connect(other).claim('paid', { value: price });
       const now = (await ethers.provider.getBlock('latest')).timestamp;
       const expires = (await domain.expiresAt('paid')).toNumber();
@@ -99,30 +107,30 @@ describe('DomainContract', function () {
 
     it('a mint whose name is taken reverts as a whole', async function () {
       await (await mint('mjs')).deployed();
-      await expectRevert(mint('mjs', other), 'name is held');
+      await expectRevert(mint('mjs', other), 'NameIsHeld');
     });
 
     it('an entity may carry no name', async function () {
       const id = await Identity.deploy(owner.address, 'laptop', PUB, ethers.constants.AddressZero, '');
       await id.deployed();
       assert.equal(await id.entityName(), '');
-      assert.equal(await id.registrar(), ethers.constants.AddressZero);
+      assert.equal(await id.domainName(), '');
     });
 
     it('a name needs a registrar, and a registrar needs a name', async function () {
-      await expectRevert(Identity.deploy(owner.address, 'l', PUB, ethers.constants.AddressZero, 'mjs'), 'name needs a registrar');
-      await expectRevert(Identity.deploy(owner.address, 'l', PUB, domain.address, ''), 'name needs a registrar');
+      await expectRevert(Identity.deploy(owner.address, 'l', PUB, ethers.constants.AddressZero, 'mjs'), 'NameNeedsARegistrar');
+      await expectRevert(Identity.deploy(owner.address, 'l', PUB, domain.address, ''), 'NameNeedsARegistrar');
     });
 
     it('holds one name per holder', async function () {
       await domain.connect(other).claim('first');
-      await expectRevert(domain.connect(other).claim('second'), 'already holds a name');
+      await expectRevert(domain.connect(other).claim('second'), 'CallerAlreadyHoldsAName');
       assert.equal(await domain.nameOf(other.address), 'first');
     });
 
     it('takes one spelling of a name, and nothing else', async function () {
       for (const bad of ['MJS', 'mjs.', 'mjs ', 'm@js', '', 'x'.repeat(33)]) {
-        await expectRevert(domain.claim(bad), bad.length > 32 || bad.length === 0 ? 'name length' : 'name characters');
+        await expectRevert(domain.claim(bad), bad.length > 32 || bad.length === 0 ? 'NameLength' : 'NameCharacters');
       }
     });
 
@@ -157,12 +165,12 @@ describe('DomainContract', function () {
   describe('renting', function () {
     const price = ethers.utils.parseEther('50');
 
-    beforeEach(async function () { await domain.setFreeTermDays(365); await domain.setFee('name.renewal', price); });
+    beforeEach(async function () { await setFreeTermDays(domain, 365); await setFee(domain, 'name.renewal', price); });
 
     it('charges the price the registrar holds', async function () {
       const id = await mint('mjs'); await id.deployed();
-      await expectRevert(domain.renew('mjs', 1, { value: price.sub(1) }), 'wrong amount');
-      await expectRevert(domain.renew('mjs', 2, { value: price }), 'wrong amount');
+      await expectRevert(domain.renew('mjs', 1, { value: price.sub(1) }), 'WrongAmount');
+      await expectRevert(domain.renew('mjs', 2, { value: price }), 'WrongAmount');
       const before = (await domain.expiresAt('mjs')).toNumber();
       await domain.renew('mjs', 2, { value: price.mul(2) });
       assert.equal((await domain.expiresAt('mjs')).toNumber(), before + 2 * YEAR);
@@ -187,22 +195,22 @@ describe('DomainContract', function () {
       const id = await mint('mjs'); await id.deployed();
       await domain.renew('mjs', 1, { value: price });
       const paid = (await domain.expiresAt('mjs')).toNumber();
-      await domain.setFee('name.renewal', ethers.utils.parseEther('80'));
+      await setFee(domain, 'name.renewal', ethers.utils.parseEther('80'));
       assert.equal((await domain.expiresAt('mjs')).toNumber(), paid);
-      await expectRevert(domain.renew('mjs', 1, { value: price }), 'wrong amount');
+      await expectRevert(domain.renew('mjs', 1, { value: price }), 'WrongAmount');
     });
   });
 
   describe('lapsing', function () {
     // Renewal/grace timing is year-based; give the claim a year's term so the
     // travels land where these assertions expect.
-    beforeEach(async function () { await domain.setFreeTermDays(365); });
+    beforeEach(async function () { await setFreeTermDays(domain, 365); });
 
     it('stays with its holder through the grace period, then belongs to nobody', async function () {
       const id = await mint('mjs'); await id.deployed();
       await travel(YEAR + 10);                                       // expired, in grace
       assert.equal(await domain.available('mjs'), false);
-      await expectRevert(mint('mjs', other), 'name is held');
+      await expectRevert(mint('mjs', other), 'NameIsHeld');
 
       await travel(YEAR);                                            // grace over
       assert.equal(await domain.available('mjs'), true);
@@ -223,19 +231,19 @@ describe('DomainContract', function () {
 
     it('cannot be renewed once it has lapsed', async function () {
       const id = await mint('mjs'); await id.deployed();
-      await domain.setFee('name.renewal', ethers.utils.parseEther('50'));
+      await setFee(domain, 'name.renewal', ethers.utils.parseEther('50'));
       await travel(2 * YEAR + 10);
-      await expectRevert(domain.renew('mjs', 1, { value: ethers.utils.parseEther('50') }), 'has lapsed');
+      await expectRevert(domain.renew('mjs', 1, { value: ethers.utils.parseEther('50') }), 'NameHasLapsed');
     });
   });
 
   describe('prices', function () {
     it('are set by a rivet and read by anyone', async function () {
-      await domain.setFee('relay.toll', ethers.utils.parseEther('0.1'));
-      await domain.setFee('identity.starter', ethers.utils.parseEther('5'));
+      await setFee(domain, 'relay.toll', ethers.utils.parseEther('0.1'));
+      await setFee(domain, 'identity.starter', ethers.utils.parseEther('5'));
       assert.equal((await domain.fee('relay.toll')).toString(), ethers.utils.parseEther('0.1').toString());
-      assert.deepEqual([...(await domain.feeKeys())], ['relay.toll', 'identity.starter']);
-      await expectRevert(domain.connect(other).setFee('relay.toll', 1), 'not an active rivet');
+      assert.deepEqual([...(await domain.feeKeys())], ['relay.toll', 'identity.starter']);   // the free term is NOT a fee key
+      await expectRevert(setFee(domain.connect(other), 'relay.toll', 1), 'NotAuthorizedToManageSection');
     });
   });
 
@@ -252,8 +260,8 @@ describe('DomainContract', function () {
 
     it('a domain rivet cannot release or move a name it does not hold', async function () {
       const id = await mint('mjs'); await id.deployed();                           // held by the entity
-      await expectRevert(domain.release('mjs'), 'not the holder');                 // owner IS a domain rivet
-      await expectRevert(domain.reassign('mjs', other.address), 'not the holder');
+      await expectRevert(domain.release('mjs'), 'NotTheHolder');                   // owner IS a domain rivet
+      await expectRevert(domain.reassign('mjs', other.address), 'NotTheHolder');
       assert.equal(await domain.holderOf('mjs'), id.address);                      // unmoved
     });
   });
@@ -262,7 +270,7 @@ describe('DomainContract', function () {
     it('releases its own name, available at once — no waiting out grace', async function () {
       await domain.connect(other).claim('spare');
       assert.equal(await domain.available('spare'), false);
-      await expectRevert(domain.connect(payer).release('spare'), 'not the holder');
+      await expectRevert(domain.connect(payer).release('spare'), 'NotTheHolder');
       await domain.connect(other).release('spare');
       assert.equal(await domain.available('spare'), true);
       assert.equal(await domain.holderOf('spare'), ethers.constants.AddressZero);
@@ -272,10 +280,10 @@ describe('DomainContract', function () {
     });
 
     it('hands its name to a successor in one tx, keeping the expiry', async function () {
-      await domain.setFreeTermDays(365);
+      await setFreeTermDays(domain, 365);
       await domain.connect(other).claim('mjs');
       const expiry = (await domain.expiresAt('mjs')).toNumber();
-      await expectRevert(domain.connect(payer).reassign('mjs', payer.address), 'not the holder');
+      await expectRevert(domain.connect(payer).reassign('mjs', payer.address), 'NotTheHolder');
       await domain.connect(other).reassign('mjs', payer.address);
       assert.equal(await domain.holderOf('mjs'), payer.address);
       assert.equal(await domain.nameOf(payer.address), 'mjs');
@@ -286,8 +294,57 @@ describe('DomainContract', function () {
     it('cannot hand a name to someone who already holds one, or to nobody', async function () {
       await domain.connect(other).claim('a');
       await domain.connect(payer).claim('b');
-      await expectRevert(domain.connect(other).reassign('a', payer.address), 'already holds a name');
-      await expectRevert(domain.connect(other).reassign('a', ethers.constants.AddressZero), 'newHolder required');
+      await expectRevert(domain.connect(other).reassign('a', payer.address), 'NewHolderAlreadyHoldsAName');
+      await expectRevert(domain.connect(other).reassign('a', ethers.constants.AddressZero), 'NewHolderRequired');
+    });
+  });
+
+  describe('migrating to a redeployed registrar', function () {
+    // The domain's contract can be redeployed — a new address, same domain name —
+    // and re-vouch its existing identities WITHOUT re-minting them. An identity
+    // binds to the domain by NAME (domainName), not to a registrar address, so it
+    // confirms under any instance of the domain; declare() lets the fresh contract
+    // record a holder it does not yet know, by ratifying what the holder asserts.
+    it('declares an existing holder onto a fresh contract, no re-mint', async function () {
+      const id = await mint('mjs'); await id.deployed();            // claimed on the first contract
+      assert.equal(await id.domainName(), 'epistery.com');
+
+      const fresh = await Domain.deploy(owner.address, 'laptop', PUB, 'epistery.com');
+      await fresh.deployed();
+      assert.equal(await fresh.holderOf('mjs'), ethers.constants.AddressZero);   // the fresh contract knows nothing
+      assert.equal(await fresh.confirmed('mjs'), false);
+
+      await fresh.declare('mjs', id.address);                       // a rivet ratifies the self-assertion
+      assert.equal(await fresh.holderOf('mjs'), id.address);
+      assert.equal(await fresh.confirmed('mjs'), true);             // the same two-way agreement now holds
+    });
+
+    it('will not declare a name the holder does not assert, and only a rivet may', async function () {
+      const id = await mint('mjs'); await id.deployed();
+      const fresh = await Domain.deploy(owner.address, 'laptop', PUB, 'epistery.com');
+      await fresh.deployed();
+      await expectRevert(fresh.declare('rootz', id.address), 'HolderDoesNotAssertThisName');
+      await expectRevert(fresh.connect(other).declare('mjs', id.address), 'CallerIsNotAnActiveRivet');
+    });
+  });
+
+  describe('the domain as biller', function () {
+    it('records a service payment on chain and holds the POL in its own treasury', async function () {
+      const amount = ethers.utils.parseEther('0.1');
+      const before = await ethers.provider.getBalance(domain.address);
+      await domain.connect(payer).bill('relay.toll', { value: amount });
+      assert.equal((await ethers.provider.getBalance(domain.address)).sub(before).toString(), amount.toString());
+      await expectRevert(domain.connect(payer).bill('relay.toll', { value: 0 }), 'NothingBilled');
+    });
+
+    it('a batch must sum to the value sent, each line non-zero', async function () {
+      const a = ethers.utils.parseEther('0.2'), b = ethers.utils.parseEther('0.3');
+      const charges = [{ service: 'storage.toll', amount: a }, { service: 'chat.toll', amount: b }];
+      const before = await ethers.provider.getBalance(domain.address);
+      await domain.connect(payer).billBatch(charges, { value: a.add(b) });
+      assert.equal((await ethers.provider.getBalance(domain.address)).sub(before).toString(), a.add(b).toString());
+      await expectRevert(domain.connect(payer).billBatch(charges, { value: a }), 'ChargesValue');
+      await expectRevert(domain.connect(payer).billBatch([], { value: 0 }), 'NoCharges');
     });
   });
 });

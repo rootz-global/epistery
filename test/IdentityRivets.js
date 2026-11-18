@@ -76,6 +76,6 @@ describe('IdentityContract rivets', function () {
   });
 
   it('cannot remove the last rivet', async function () {
-    await expectRevert(id.removeRivet(owner.address), 'cannot remove last rivet');
+    await expectRevert(id.removeRivet(owner.address), 'CannotRemoveLastRivet');
   });
 });

@@ -37,6 +37,7 @@ import "./EpisteryAccess.sol";
 /** The claim side of a domain's registrar — see {DomainContract}. */
 interface IDomainRegistrar {
     function claim(string calldata name) external payable;
+    function domain() external view returns (string memory);
 }
 
 interface IERC1271 {
@@ -50,6 +51,24 @@ interface IERC20 {
 }
 
 contract IdentityContract is EpisteryAccess, IERC1271 {
+    // ── errors (custom errors: a 4-byte selector, not an embedded string) ──
+    error FirstRivetRequired();
+    error NameNeedsARegistrar();
+    error CallerIsNotAnActiveRivet();
+    error InvalidRivet();
+    error RivetAlreadyAdded();
+    error NameRequired();
+    error RivetNotFound();
+    error CannotRemoveLastRivet();
+    error InvalidThreshold();
+    error InvalidTarget();
+    error InsufficientBalance();
+    error TransactionFailed();
+    error ZeroRecipient();
+    error TokenTransferFailed();
+    error TokenApprovalFailed();
+    error InvalidSignatureLength();
+
 
     bytes4 constant internal EIP1271_MAGIC_VALUE = 0x1626ba7e;
     bytes4 constant internal EIP1271_INVALID = 0xffffffff;
@@ -75,9 +94,15 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     uint256 public removeRivetThreshold = 1;    // N-of-M to remove a rivet (governance knob)
     uint256 public messageCount;
 
-    // ── the name, in a domain's registrar (both written once, at construction) ──
-    address public immutable registrar;         // the DomainContract that issued the name
-    string public entityName;                   // the name it issued, lowercase
+    // ── the name, in a domain (written once, at construction) ───────────────
+    //
+    // The binding is to the DOMAIN — its name, rooted in DNS — not to a registrar
+    // CONTRACT address. So a redeploy of the domain's registrar never orphans this
+    // identity: the domain is stable, the contract is only an instance of it. Both
+    // are written once — a different name is a different entity — or an entity is
+    // born nameless (registrar and name both empty).
+    string public entityName;                   // the name it holds, lowercase
+    string public domainName;                   // the domain it stands under (empty = none)
 
     // Reserved section for the entity's own world-readable profile — whatever it
     // chooses to publish about itself. The NAME is not here: it is `entityName`,
@@ -118,20 +143,29 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
         address registrar_,
         string memory name_
     ) payable {
-        require(firstRivet != address(0), "first rivet required");
+        if (!(firstRivet != address(0))) revert FirstRivetRequired();
         _addRivet(firstRivet, bytes(firstRivetName).length > 0 ? firstRivetName : "device");
         if (bytes(firstRivetPubKey).length > 0) rivetPublicKeys[firstRivet] = firstRivetPubKey;
 
-        registrar = registrar_;
         if (registrar_ != address(0) && bytes(name_).length > 0) {
-            entityName = name_;
-            // Forward any value the mint carried — a domain with no free term
-            // requires the first year's fee here (see DomainContract.claim).
-            IDomainRegistrar(registrar_).claim{value: msg.value}(name_);
+            _acquire(registrar_, name_);
         } else {
-            require(registrar_ == address(0) && bytes(name_).length == 0, "name needs a registrar");
+            if (!(registrar_ == address(0) && bytes(name_).length == 0)) revert NameNeedsARegistrar();
         }
         emit IdentityCreated(firstRivet, registrar_, name_, block.timestamp);
+    }
+
+    /** Claim `name_` on `registrar_` and bind this identity to the DOMAIN that
+     *  registrar answers for — the stable identifier (its name, rooted in DNS), not
+     *  the contract address, so a redeploy of the domain's registrar never orphans
+     *  this identity. The names are written before the external claim (checks-effects-
+     *  interactions). Any value the mint carried is forwarded: a domain with no free
+     *  term requires the first year's fee here (see {DomainContract}.claim). */
+    function _acquire(address registrar_, string memory name_) private {
+        string memory dn = IDomainRegistrar(registrar_).domain();
+        entityName = name_;
+        domainName = dn;
+        IDomainRegistrar(registrar_).claim{value: msg.value}(name_);
     }
 
     /** The entity's name — the one this contract claims, and the one a registrar
@@ -152,23 +186,23 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     }
 
     modifier onlyRivet() {
-        require(_isSteward(msg.sender), "caller is not an active rivet");
+        if (!(_isSteward(msg.sender))) revert CallerIsNotAnActiveRivet();
         _;
     }
 
     // ── rivet management ────────────────────────────────────────────────────
 
     function addRivet(address rivet, string memory name) external onlyRivet {
-        require(rivet != address(0), "invalid rivet");
-        require(!isAuthorized[rivet], "rivet already added");
-        require(bytes(name).length > 0, "name required");
+        if (!(rivet != address(0))) revert InvalidRivet();
+        if (isAuthorized[rivet]) revert RivetAlreadyAdded();
+        if (!(bytes(name).length > 0)) revert NameRequired();
         _addRivet(rivet, name);
         emit RivetAdded(rivet, msg.sender, name, block.timestamp);
     }
 
     function removeRivet(address rivet) external onlyRivet {
-        require(isAuthorized[rivet], "rivet not found");
-        require(rivetCount > 1, "cannot remove last rivet");
+        if (!(isAuthorized[rivet])) revert RivetNotFound();
+        if (!(rivetCount > 1)) revert CannotRemoveLastRivet();
         // (removeRivetThreshold is the intended N-of-M knob; enforcement lands with governance.)
 
         // Swap-and-pop so authorizedRivets stays == the active set. The prior version
@@ -195,7 +229,7 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     }
 
     function setRemoveRivetThreshold(uint256 newThreshold) external onlyRivet {
-        require(newThreshold > 0 && newThreshold <= rivetCount, "invalid threshold");
+        if (!(newThreshold > 0 && newThreshold <= rivetCount)) revert InvalidThreshold();
         emit RemoveRivetThresholdChanged(removeRivetThreshold, newThreshold);
         removeRivetThreshold = newThreshold;
     }
@@ -238,29 +272,29 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     function executeTransaction(address target, uint256 value, bytes memory data)
         external payable onlyRivet returns (bool success, bytes memory returnData)
     {
-        require(target != address(0), "invalid target");
-        require(address(this).balance >= value, "insufficient balance");
+        if (!(target != address(0))) revert InvalidTarget();
+        if (!(address(this).balance >= value)) revert InsufficientBalance();
         (success, returnData) = target.call{value: value}(data);
-        require(success, "transaction failed");
+        if (!(success)) revert TransactionFailed();
         emit TransactionExecuted(target, value, msg.sender, block.timestamp);
     }
 
     function sendETH(address payable recipient, uint256 amount) external onlyRivet {
-        require(recipient != address(0), "zero recipient");
-        require(address(this).balance >= amount, "insufficient balance");
+        if (!(recipient != address(0))) revert ZeroRecipient();
+        if (!(address(this).balance >= amount)) revert InsufficientBalance();
         recipient.transfer(amount);
         emit ETHSent(recipient, amount, msg.sender);
     }
 
     function sendToken(address token, address recipient, uint256 amount) external onlyRivet {
-        require(token != address(0) && recipient != address(0), "zero address");
-        require(IERC20(token).transfer(recipient, amount), "token transfer failed");
+        if (!(token != address(0) && recipient != address(0))) revert ZeroAddress();
+        if (!(IERC20(token).transfer(recipient, amount))) revert TokenTransferFailed();
         emit TokenSent(token, recipient, amount, msg.sender);
     }
 
     function approveToken(address token, address spender, uint256 amount) external onlyRivet {
-        require(token != address(0) && spender != address(0), "zero address");
-        require(IERC20(token).approve(spender, amount), "token approval failed");
+        if (!(token != address(0) && spender != address(0))) revert ZeroAddress();
+        if (!(IERC20(token).approve(spender, amount))) revert TokenApprovalFailed();
     }
 
     function getBalance() external view returns (uint256) { return address(this).balance; }
@@ -268,7 +302,7 @@ contract IdentityContract is EpisteryAccess, IERC1271 {
     // ── ERC-1271: the identity signs when any active rivet signed ──────────
 
     function isValidSignature(bytes32 hash, bytes memory signature) external view override returns (bytes4) {
-        require(signature.length == 65, "invalid signature length");
+        if (!(signature.length == 65)) revert InvalidSignatureLength();
         bytes32 r; bytes32 s; uint8 v;
         assembly {
             r := mload(add(signature, 32))

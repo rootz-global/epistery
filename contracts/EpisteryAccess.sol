@@ -26,6 +26,17 @@ pragma solidity ^0.8.19;
  * section's ACL grants them.
  */
 abstract contract EpisteryAccess {
+    // ── errors (custom errors: a 4-byte selector, not an embedded string) ──
+    error NotASteward();
+    error InvalidRole();
+    error UseRemoveMember();
+    error ZeroAddress();
+    error NotAuthorizedToManageSection();
+    error NotAMember();
+    error NotAuthorized();
+    error InviteExists();
+    error InvalidInvite();
+
 
     // ── roles ──────────────────────────────────────────────────────────────
     uint8 constant ROLE_NONE  = 0;
@@ -85,7 +96,7 @@ abstract contract EpisteryAccess {
      */
     function _isSteward(address who) internal view virtual returns (bool);
 
-    modifier onlySteward() { require(_isSteward(msg.sender), "not a steward"); _; }
+    modifier onlySteward() { if (!(_isSteward(msg.sender))) revert NotASteward(); _; }
 
     // ── authorization queries (the blind check callers use) ────────────────
 
@@ -120,10 +131,10 @@ abstract contract EpisteryAccess {
 
     /** Add or update a member's role on a section. Caller must manage the section. */
     function setMember(string memory section, address addr, string memory name, uint8 role, string memory meta) external {
-        require(role <= ROLE_OWNER, "invalid role");
-        require(role != ROLE_NONE, "use removeMember");
-        require(addr != address(0), "zero address");
-        require(_canManage(section, msg.sender), "not authorized to manage section");
+        if (!(role <= ROLE_OWNER)) revert InvalidRole();
+        if (!(role != ROLE_NONE)) revert UseRemoveMember();
+        if (!(addr != address(0))) revert ZeroAddress();
+        if (!(_canManage(section, msg.sender))) revert NotAuthorizedToManageSection();
         _trackSection(section);
 
         uint256 idx = _aclIndex[section][addr];
@@ -142,9 +153,9 @@ abstract contract EpisteryAccess {
 
     /** Remove a member from a section. Caller must manage the section. */
     function removeMember(string memory section, address addr) external {
-        require(_canManage(section, msg.sender), "not authorized to manage section");
+        if (!(_canManage(section, msg.sender))) revert NotAuthorizedToManageSection();
         uint256 idx = _aclIndex[section][addr];
-        require(idx != 0, "not a member");
+        if (!(idx != 0)) revert NotAMember();
 
         ACLEntry[] storage a = _acl[section];
         uint256 last = a.length - 1;
@@ -162,7 +173,7 @@ abstract contract EpisteryAccess {
 
     /** Set a world-readable attribute on a section. Caller must manage the section. */
     function setPublic(string memory section, string memory key, string memory value) external {
-        require(_canManage(section, msg.sender), "not authorized to manage section");
+        if (!(_canManage(section, msg.sender))) revert NotAuthorizedToManageSection();
         _setPublic(section, key, value);
     }
 
@@ -188,7 +199,7 @@ abstract contract EpisteryAccess {
 
     /** Set a secret attribute on a section. Caller must manage the section. */
     function setSecret(string memory section, string memory key, bytes memory value) external {
-        require(_canManage(section, msg.sender), "not authorized to manage section");
+        if (!(_canManage(section, msg.sender))) revert NotAuthorizedToManageSection();
         _trackSection(section);
         if (!_secretKeySeen[section][key]) { _secretKeySeen[section][key] = true; _secretKeyList[section].push(key); }
         _secret[section][key] = value;
@@ -197,7 +208,7 @@ abstract contract EpisteryAccess {
 
     /** Read a secret attribute — caller must hold read+ on the section. */
     function getSecret(string memory section, string memory key) external view returns (bytes memory) {
-        require(authorized(section, msg.sender, ROLE_READ), "not authorized");
+        if (!(authorized(section, msg.sender, ROLE_READ))) revert NotAuthorized();
         return _secret[section][key];
     }
 
@@ -205,9 +216,9 @@ abstract contract EpisteryAccess {
 
     /** Issue an invite to join a section at `role`. `codeHash` = keccak256 of an off-chain code. */
     function createInvite(bytes32 codeHash, string memory section, uint8 role) external {
-        require(role != ROLE_NONE && role <= ROLE_OWNER, "invalid role");
-        require(_canManage(section, msg.sender), "not authorized to manage section");
-        require(_invites[codeHash].issuer == address(0), "invite exists");
+        if (!(role != ROLE_NONE && role <= ROLE_OWNER)) revert InvalidRole();
+        if (!(_canManage(section, msg.sender))) revert NotAuthorizedToManageSection();
+        if (!(_invites[codeHash].issuer == address(0))) revert InviteExists();
         _trackSection(section);
         _invites[codeHash] = Invite({ section: section, role: role, issuer: msg.sender, used: false });
         emit InviteCreated(codeHash, section, role, msg.sender);
@@ -216,8 +227,8 @@ abstract contract EpisteryAccess {
     /** Redeem an invite, adding `redeemer` to its section. Anyone holding the code can redeem. */
     function redeemInvite(bytes32 codeHash, address redeemer, string memory name) external {
         Invite storage inv = _invites[codeHash];
-        require(inv.issuer != address(0) && !inv.used, "invalid invite");
-        require(redeemer != address(0), "zero address");
+        if (!(inv.issuer != address(0) && !inv.used)) revert InvalidInvite();
+        if (!(redeemer != address(0))) revert ZeroAddress();
         inv.used = true;
 
         if (_aclIndex[inv.section][redeemer] == 0) {
@@ -237,6 +248,11 @@ abstract contract EpisteryAccess {
     function getACL(string memory section) external view returns (ACLEntry[] memory) { return _acl[section]; }
     function getSectionsForMember(address who) external view returns (Membership[] memory) { return _memberships[who]; }
     function getPublicKeys(string memory section) external view returns (string[] memory) { return _publicKeyList[section]; }
+
+    /** Internal read of a section's public key list, so a concrete contract can
+     *  expose typed views over attributes it keeps (e.g. a domain's prices) without
+     *  an external self-call. */
+    function _getPublicKeys(string memory section) internal view returns (string[] memory) { return _publicKeyList[section]; }
     function getSecretKeys(string memory section) external view returns (string[] memory) { return _secretKeyList[section]; }
 
     // ── internals ──────────────────────────────────────────────────────────
